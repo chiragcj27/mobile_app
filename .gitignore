@@ -164,6 +164,9 @@ ios/Pods/
 Library/Caches/CocoaPods/
 
 # Android
+# Firebase — do not commit; obtain from Firebase Console / team secrets
+**/google-services.json
+
 android/app/build/
 android/app/build */
 android/app/build [0-9]*/
