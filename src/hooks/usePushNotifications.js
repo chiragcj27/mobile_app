@@ -52,9 +52,14 @@ export const usePushNotifications = () => {
             
             if (isServiceUnavailable) {
               if (__DEV__) {
-                console.warn('[PushNotification] Google Play Services not available. Check:', {
+                const isIosApns = Platform.OS === 'ios' &&
+                  (tokenError?.message?.includes('APNS') ||
+                    tokenError?.message?.includes('APNs'));
+                console.warn('[PushNotification] FCM token unavailable (transient or config).', {
                   error: tokenError?.message,
-                  hint: '1) Google Play Services installed/updated, 2) Network connection, 3) Device has GMS',
+                  hint: isIosApns
+                    ? 'Wait for APNs (real device, Push capability, permission). If "No APNS token", token was requested before the device token arrived — retry after a moment.'
+                    : 'Android: Google Play services, network. iOS: same as above.',
                 });
               }
               const storedToken = await getStoredPushToken();
@@ -80,6 +85,10 @@ export const usePushNotifications = () => {
             console.error('[PushNotification] Failed to get FCM token');
           }
           return;
+        }
+
+        if (__DEV__) {
+          console.log('[PushNotification] FCM token:', token);
         }
 
         const storedToken = await getStoredPushToken();

@@ -488,28 +488,6 @@ class SocketService {
   }
 
   /**
-   * Mark messages as read
-   * @param {string} chatId - Chat ID
-   * @param {string} userId - User ID
-   * @param {string[]} [messageIds] - Optional array of specific message IDs to mark as read. If not provided, marks all unread messages in the chat.
-   */
-  markMessagesRead(chatId, userId, messageIds = null) {
-    if (!this.socket?.connected) {
-      if (__DEV__) {
-        console.log('⚠️ Cannot mark messages as read: socket not connected');
-      }
-      return false;
-    }
-
-    if (__DEV__) {
-      console.log('📖 Marking messages as read:', { chatId, userId, messageIds });
-    }
-
-    this.socket.emit('markMessagesRead', { chatId, userId, messageIds });
-    return true;
-  }
-
-  /**
    * Edit a message
    * @param {string} messageId - Message ID
    * @param {string} userId - User ID

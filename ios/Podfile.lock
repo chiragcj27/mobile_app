@@ -2193,6 +2193,8 @@ PODS:
     - ReactCommon/turbomodule/core
     - SocketRocket
     - Yoga
+  - react-native-voice (3.2.4):
+    - React-Core
   - react-native-webview (13.16.1):
     - boost
     - DoubleConversion
@@ -3223,6 +3225,7 @@ DEPENDENCIES:
   - react-native-image-picker (from `../node_modules/react-native-image-picker`)
   - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
   - react-native-video (from `../node_modules/react-native-video`)
+  - "react-native-voice (from `../node_modules/@react-native-voice/voice`)"
   - react-native-webview (from `../node_modules/react-native-webview`)
   - React-NativeModulesApple (from `../node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios`)
   - React-oscompat (from `../node_modules/react-native/ReactCommon/oscompat`)
@@ -3386,6 +3389,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-safe-area-context"
   react-native-video:
     :path: "../node_modules/react-native-video"
+  react-native-voice:
+    :path: "../node_modules/@react-native-voice/voice"
   react-native-webview:
     :path: "../node_modules/react-native-webview"
   React-NativeModulesApple:
@@ -3546,6 +3551,7 @@ SPEC CHECKSUMS:
   react-native-image-picker: 43e6cd4231e670030fe09b079d696fa5a634ccfc
   react-native-safe-area-context: 0f4986a88ec555aff660503b483d6e4bd6980a9a
   react-native-video: f96a08ee6b99f74e2c000d529ac16e98cd785bba
+  react-native-voice: f5e8eec2278451d0017eb6a30a6ccc726aca34e0
   react-native-webview: 278eeb4df23d6202b559ceb21bd4088dbde30090
   React-NativeModulesApple: c4bee6aa736092cd347456488a4f97a8e7517604
   React-oscompat: 95875e81f5d4b3c7b2c888d5bd2c9d83450d8bdb
@@ -3597,6 +3603,6 @@ SPEC CHECKSUMS:
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
   Yoga: 689c8e04277f3ad631e60fe2a08e41d411daf8eb
 
-PODFILE CHECKSUM: 1fc3ccf7dfdcee11c631165911aecb2e132373da
+PODFILE CHECKSUM: b071e1898dca5827625e4c3d3f8912489c90ab3d
 
 COCOAPODS: 1.13.0

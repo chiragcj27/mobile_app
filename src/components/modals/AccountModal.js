@@ -8,6 +8,7 @@ import {
   Text,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { Card } from '../../components/cards/Cards';
 import { Button } from '../../components/common';
@@ -16,7 +17,7 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { getRoleDisplayName } from '../../utils/helpers';
 
-const AccountModal = ({ visible, onClose, onSwitchApp }) => {
+const AccountModal = ({ visible, onClose }) => {
   const { user, logout } = useAuth();
   
 
@@ -69,17 +70,6 @@ const AccountModal = ({ visible, onClose, onSwitchApp }) => {
 
   const menuItems = [
     {
-      icon: 'swap-horiz',
-      title: 'Switch App',
-      subtitle: 'Switch between Custom and Catalog apps',
-      onPress: () => {
-        onClose();
-        if (typeof onSwitchApp === 'function') {
-          onSwitchApp();
-        }
-      },
-    },
-    {
       icon: 'account',
       title: 'Profile',
       subtitle: 'View and edit your profile',
@@ -130,8 +120,7 @@ const AccountModal = ({ visible, onClose, onSwitchApp }) => {
       animationType="slide"
       transparent={false}
       onRequestClose={onClose}>
-      
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
         <View style={styles.header}>
           <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.textPrimary }}>
             My Account
@@ -194,7 +183,7 @@ const AccountModal = ({ visible, onClose, onSwitchApp }) => {
             />
           </Card>
         </ScrollView>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 };

@@ -905,50 +905,6 @@ export const useChat = (enquiryId, chatType, chatId = null, initialChat = null) 
     }
   }, [apiMessages, chatIdForQuery]);
 
-  // Mark messages as read when chat is viewed
-  const markMessagesAsRead = useCallback(() => {
-    if (!chatIdForQuery || !user || !socketService.isConnected()) {
-      return;
-    }
-
-    // Get unread messages (messages not sent by current user)
-    // CRITICAL: Only mark messages that are actually unread
-    const unreadMessages = messages.filter(msg => {
-      const senderId = msg.SenderId || msg.senderId;
-      const isMyMessage = user && String(senderId).trim() === String(user.id).trim();
-      
-      // Skip our own messages - we don't mark them as read
-      if (isMyMessage) {
-        return false;
-      }
-      
-      const isRead = msg.IsRead || msg.isRead || false;
-      const readBy = msg.ReadBy || msg.readBy || [];
-      const userIdStr = String(user.id).trim();
-      // Handle both object format [{userId, readAt}] and ID format ['id1', 'id2']
-      const isReadByMe = Array.isArray(readBy) && readBy.some(item => {
-        const readerId = typeof item === 'object' && item !== null && !Array.isArray(item)
-          ? String(item.userId || item.user_id || item.id || item.UserId || item.Id || '').trim()
-          : String(item).trim();
-        return readerId === userIdStr;
-      });
-      
-      // Mark as read if: not my message, not already read by me
-      return !isReadByMe;
-    });
-
-    if (unreadMessages.length > 0) {
-      // Only send specific message IDs that need to be marked as read
-      const messageIds = unreadMessages.map(msg => msg._id || msg.id).filter(Boolean);
-      if (messageIds.length > 0) {
-        if (__DEV__) {
-          console.log('📖 Marking specific messages as read:', { count: messageIds.length, messageIds });
-        }
-        socketService.markMessagesRead(chatIdForQuery, user.id, messageIds);
-      }
-    }
-  }, [chatIdForQuery, user, messages]);
-
   // Socket connection and event handlers
   // CRITICAL: Only depend on chatIdForQuery and user.id, NOT messages
   // Adding messages to dependencies causes infinite loop (messages change -> useEffect runs -> joinChat -> messages update -> loop)
@@ -1317,18 +1273,7 @@ export const useChat = (enquiryId, chatType, chatId = null, initialChat = null) 
           });
         });
 
-      // Mark new message as read if it's not from current user (user is viewing chat)
       const messageSenderId = normalizedMessage.SenderId || normalizedMessage.senderId;
-      const isNotMyMessage = user && String(messageSenderId).trim() !== String(user.id).trim();
-      if (isNotMyMessage && socketService.isConnected() && chatIdForQuery) {
-        // Mark this message as read immediately since user is viewing the chat
-        const messageId = normalizedMessage._id || normalizedMessage.id;
-        if (messageId) {
-          setTimeout(() => {
-            socketService.markMessagesRead(chatIdForQuery, user.id, [messageId]);
-          }, 300); // Small delay to ensure message is processed
-        }
-      }
       
       // CRITICAL: For our own messages, ensure they start as 'sent', not 'read'
       // Even if backend sends isRead=true, we should verify ReadBy contains others
@@ -1727,48 +1672,8 @@ export const useChat = (enquiryId, chatType, chatId = null, initialChat = null) 
     socketService.on('messageEdited', handleMessageEdited);
     socketService.on('messageDeleted', handleMessageDeleted);
     
-    // Mark messages as read when chat is opened and messages are loaded
-    // Use ref to access latest messages without adding to dependencies
-    let markReadTimeout = null;
-    if (messagesRef.current.length > 0 && socketService.isConnected()) {
-      // Small delay to ensure socket is ready
-      markReadTimeout = setTimeout(() => {
-        // Access messages from ref to avoid dependency issues
-        const currentMessages = messagesRef.current;
-        if (!chatIdForQuery || !user || !socketService.isConnected()) {
-          return;
-        }
-        const unreadMessages = currentMessages.filter(msg => {
-          const senderId = msg.SenderId || msg.senderId;
-          const isMyMessage = user && String(senderId).trim() === String(user.id).trim();
-          if (isMyMessage) return false;
-          const isRead = msg.IsRead || msg.isRead || false;
-          const readBy = msg.ReadBy || msg.readBy || [];
-          const userIdStr = String(user.id).trim();
-          const isReadByMe = Array.isArray(readBy) && readBy.some(item => {
-            const readerId = typeof item === 'object' && item !== null && !Array.isArray(item)
-              ? String(item.userId || item.user_id || item.id || item.UserId || item.Id || '').trim()
-              : String(item).trim();
-            return readerId === userIdStr;
-          });
-          return !isReadByMe;
-        });
-        if (unreadMessages.length > 0) {
-          const messageIds = unreadMessages.map(msg => msg._id || msg.id).filter(Boolean);
-          if (messageIds.length > 0) {
-            socketService.markMessagesRead(chatIdForQuery, user.id, messageIds);
-          }
-        }
-      }, 500);
-    }
-    
-    
-
     // Cleanup
     return () => {
-      if (markReadTimeout) {
-        clearTimeout(markReadTimeout);
-      }
       socketService.off('newMessage', handleNewMessage);
       socketService.off('messagesRead', handleMessagesRead);
       socketService.off('userTyping', handleUserTyping);
@@ -1782,7 +1687,7 @@ export const useChat = (enquiryId, chatType, chatId = null, initialChat = null) 
         joinedChatsRef.current.delete(chatKey);
       }
     };
-  }, [chatIdForQuery, user?.id]); // CRITICAL: Only depend on chatIdForQuery and user.id, NOT messages or markMessagesAsRead
+  }, [chatIdForQuery, user?.id]); // CRITICAL: Only depend on chatIdForQuery and user.id, NOT messages
 
   // Send message
   const sendMessage = useCallback(async (messageText, replyTo = null) => {

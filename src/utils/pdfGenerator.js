@@ -1860,8 +1860,13 @@ export const downloadEnquiriesPDFFromBackend = async (filters = {}, options = {}
     // Create filename with timestamp
     const timestamp = new Date().toISOString().split('T')[0];
     const filename = `Enquiries_Report_${timestamp}`;
-    const fileUri = `${RNFS.DownloadDirectoryPath}/${filename}.pdf`;
-
+    // iOS doesn't expose a public "Downloads" directory via react-native-fs.
+    // Use DocumentDirectoryPath on iOS, Downloads on Android (fallback to Documents if missing).
+    const baseDir =
+      Platform.OS === 'ios'
+        ? RNFS.DocumentDirectoryPath
+        : (RNFS.DownloadDirectoryPath || RNFS.DocumentDirectoryPath);
+    const fileUri = `${baseDir}/${filename}.pdf`;
     // Save file using react-native-fs
     await RNFS.writeFile(fileUri, base64, 'base64');
 

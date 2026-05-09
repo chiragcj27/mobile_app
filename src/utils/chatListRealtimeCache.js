@@ -90,8 +90,26 @@ function messageMatchesQueryType(message, queryArgs) {
     .toString()
     .toLowerCase()
     .trim();
-  if (!mType) return false;
+  // If backend didn't send a type, don't block list updates.
+  if (!mType) return true;
   return qType === mType;
+}
+
+function previewTextFromMessage(message) {
+  const raw =
+    message?.Message || message?.message || message?.Text || message?.text || '';
+  if (raw != null && String(raw).trim() !== '') return String(raw);
+
+  const t = (message?.MessageType || message?.messageType || '')
+    .toString()
+    .toLowerCase()
+    .trim();
+  if (!t || t === 'text') return '';
+  if (t === 'image') return '📷 Photo';
+  if (t === 'video') return '🎥 Video';
+  if (t === 'audio') return '🎤 Voice note';
+  if (t === 'file') return '📎 File';
+  return '';
 }
 
 function buildMinimalGetChatsRow(message, userId) {
@@ -106,7 +124,7 @@ function buildMinimalGetChatsRow(message, userId) {
   const senderId = normalizeEntityId(message?.SenderId || message?.senderId);
   const uid = normalizeEntityId(userId);
   const isMyMessage = uid && senderId && senderId === uid;
-  const messageText = message?.Message || message?.message || message?.Text || message?.text || '';
+  const messageText = previewTextFromMessage(message);
   const messageTimestamp =
     message?.Timestamp ||
     message?.timestamp ||
@@ -250,7 +268,7 @@ export function patchAllGetChatsCachesForNewMessage(dispatch, message, userId) {
   const senderId = normalizeEntityId(message?.SenderId || message?.senderId);
   const uid = normalizeEntityId(userId);
   const isMyMessage = uid && senderId && senderId === uid;
-  const messageText = message?.Message || message?.message || message?.Text || message?.text || '';
+  const messageText = previewTextFromMessage(message);
   const messageTimestamp =
     message?.Timestamp ||
     message?.timestamp ||
@@ -374,7 +392,7 @@ export function patchGetChatsByEnquiryV2ForNewMessage(dispatch, message, userId)
   const senderId = normalizeEntityId(message?.SenderId || message?.senderId);
   const uid = normalizeEntityId(userId);
   const isMyMessage = uid && senderId && senderId === uid;
-  const messageText = message?.Message || message?.message || message?.Text || message?.text || '';
+  const messageText = previewTextFromMessage(message);
   const messageTimestamp =
     message?.Timestamp ||
     message?.timestamp ||
@@ -396,14 +414,33 @@ export function patchGetChatsByEnquiryV2ForNewMessage(dispatch, message, userId)
     chat.lastMessageTime = messageTimestamp;
     chat.UnreadCount = isMyMessage ? oldUnread : oldUnread + 1;
     chat.unreadCount = chat.UnreadCount;
+    // ChatGroupsScreen prefers `chat.LastMessage` object (not `lastMessage` string).
+    // Keep it in sync for enquiry chat lists.
+    chat.LastMessage = {
+      Message: messageText,
+      MessageType: message?.MessageType || message?.messageType || 'text',
+      Timestamp: messageTimestamp,
+      SenderId: senderId,
+      Sender: message?.Sender || message?.sender || null,
+    };
 
     if (chat._originalData) {
       chat._originalData.UnreadCount = chat.UnreadCount;
       chat._originalData.unreadCount = chat.UnreadCount;
       if (chat._originalData.LastMessage && typeof chat._originalData.LastMessage === 'object') {
         chat._originalData.LastMessage.Message = messageText;
+        chat._originalData.LastMessage.MessageType =
+          message?.MessageType || message?.messageType || chat._originalData.LastMessage.MessageType || 'text';
         chat._originalData.LastMessage.Timestamp = messageTimestamp;
         chat._originalData.LastMessage.SenderId = senderId;
+      } else {
+        chat._originalData.LastMessage = {
+          Message: messageText,
+          MessageType: message?.MessageType || message?.messageType || 'text',
+          Timestamp: messageTimestamp,
+          SenderId: senderId,
+          Sender: message?.Sender || message?.sender || null,
+        };
       }
     }
 

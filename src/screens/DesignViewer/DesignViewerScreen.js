@@ -55,7 +55,10 @@ const DesignViewerScreen = ({ route, navigation }) => {
       console.log(`🎨 [DesignViewer] Image loaded for #${currentImageIndex}`);
     }
   }, [imageDataUri, currentImageIndex]);
-  const [useFetchDirectly, setUseFetchDirectly] = useState(Platform.OS === 'android');
+  
+  // Both platforms: load via fetch + Bearer token → data URI. iOS RN Image ignores auth headers on remote URLs,
+  // and OptimizedImage only forwards uri (not headers) to Image — so coral/CAD previews failed on iOS.
+  const [useFetchDirectly, setUseFetchDirectly] = useState(true);
   const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
   const [isDownloadingImage, setIsDownloadingImage] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);

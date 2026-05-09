@@ -3,6 +3,34 @@ import messaging, { AuthorizationStatus } from '@react-native-firebase/messaging
 import { Platform, Alert } from 'react-native';
 import notifee from '@notifee/react-native';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * iOS: FCM needs the APNs device token before getToken() (Firebase iOS SDK 10.4+).
+ * That token arrives asynchronously after registerForRemoteNotifications — JS often runs first.
+ */
+export const waitForIosApnsToken = async ({
+  maxAttempts = 40,
+  intervalMs = 250,
+} = {}) => {
+  if (Platform.OS !== 'ios') {
+    return true;
+  }
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const apnsToken = await messaging().getAPNSToken();
+
+      if (apnsToken) {
+        return true;
+      }
+    } catch {
+      // Still registering or bridge not ready — keep polling.
+    }
+    await sleep(intervalMs);
+  }
+  return false;
+};
+
 export const PUSH_TOKEN_STORAGE_KEY = '@chandra/pushToken';
 
 export const isPermissionGranted = (status) =>
@@ -244,7 +272,14 @@ export const requestPermissionsWithFeedback = async () => {
 
 export const registerForRemoteMessages = async () => {
   try {
+    if (Platform.OS === 'ios') {
+      // Default firebase.json keeps messaging_ios_auto_register_for_remote_messages enabled;
+      // AppDelegate already calls registerForRemoteNotifications. Avoid redundant
+      // registerDeviceForRemoteMessages() (library warns) and wait for APNs before getToken().
+      return await waitForIosApnsToken();
+    }
     await messaging().registerDeviceForRemoteMessages();
+    
     return true;
   } catch (error) {
     return false;
@@ -268,4 +303,3 @@ export const getDeviceMetadata = () => ({
   platform: Platform.OS,
   osVersion: Platform.Version?.toString() || 'unknown',
 });
-

@@ -335,60 +335,6 @@ const ChatDetailScreen = ({ route, navigation }) => {
     }, [chat?._id, chatId, refetchMessages, messagesLoading])
   );
 
-  // Mark messages as read when user views the chat
-  // This ensures unread counts are updated when user opens and views messages
-  useFocusEffect(
-    React.useCallback(() => {
-      if (chat?._id && messages.length > 0 && !messagesLoading) {
-        // Helper function to mark messages as read
-        const markMessagesAsRead = () => {
-          // Get unread messages (messages not sent by current user)
-          const unreadMessages = messages.filter(msg => {
-            const senderId = msg.SenderId || msg.senderId;
-            const isMyMessage = user && String(senderId).trim() === String(user.id).trim();
-            const isRead = msg.IsRead || msg.isRead || false;
-            const readBy = msg.ReadBy || msg.readBy || [];
-            const isReadByMe = Array.isArray(readBy) && readBy.some(item => {
-              const readerId = typeof item === 'object' && item !== null && !Array.isArray(item)
-                ? String(item.userId || item.user_id || item.id || item.UserId || item.Id || '').trim()
-                : String(item).trim();
-              return readerId === String(user.id).trim();
-            });
-            
-            // Mark as read if: not my message, not already read, and not already read by me
-            return !isMyMessage && !isRead && !isReadByMe;
-          });
-
-          if (unreadMessages.length > 0) {
-            const messageIds = unreadMessages.map(msg => msg._id || msg.id).filter(Boolean);
-            if (messageIds.length > 0 && socketService.isConnected()) {
-              if (__DEV__) {
-                console.log('📖 [ChatDetailScreen] Marking messages as read', {
-                  chatId: chat?._id,
-                  messageCount: messageIds.length,
-                });
-              }
-              socketService.markMessagesRead(chat?._id || chat?.id, user?.id, messageIds);
-            }
-          }
-        };
-
-        // Mark as read after a short delay (gives user time to see messages)
-        const markReadTimer = setTimeout(() => {
-          markMessagesAsRead();
-        }, 1000); // Reduced to 1 second for faster update
-        
-        // Cleanup: Also mark as read when user leaves the screen
-        // This ensures messages are marked even if user leaves quickly
-        return () => {
-          clearTimeout(markReadTimer);
-          // Mark as read immediately when leaving (user has viewed the chat)
-          markMessagesAsRead();
-        };
-      }
-    }, [chat?._id, messages, messagesLoading, user])
-  );
-
   // Socket listeners for message edit/delete events and error handling
   useEffect(() => {
     if (!user || !chat?._id) return;
@@ -580,7 +526,7 @@ const ChatDetailScreen = ({ route, navigation }) => {
   const [recordingPath, setRecordingPath] = useState(null);
   const recordingTimerRef = useRef(null);
   const audioRecorderPlayerRef = useRef(new AudioRecorderPlayer());
-  // WhatsApp-like recording UX state (hold to record; slide left to cancel; slide up to lock)
+  // iOS: WhatsApp-like hold/slide/lock (PanResponder). Android: single tap starts hands-free (locked) recording.
   const [isLocked, setIsLocked] = useState(false);
   const isRecordingRef = useRef(false);
   const isLockedRef = useRef(false);
@@ -588,7 +534,6 @@ const ChatDetailScreen = ({ route, navigation }) => {
   const [shouldCancel, setShouldCancel] = useState(false);
   const recordingStartTimeRef = useRef(null);
   const recordingTimeRef = useRef(0);
-  const panResponderRef = useRef(null);
   const startRecordingRef = useRef(async () => {});
   const stopRecordingRef = useRef(async () => {});
   const startLockPulseRef = useRef(() => {});
@@ -1689,47 +1634,64 @@ const ChatDetailScreen = ({ route, navigation }) => {
     startLockPulseRef.current = startLockPulse;
   }, [startLockPulse]);
 
-  // Single PanResponder instance so the finger that started recording keeps the gesture (WhatsApp-style).
-  useEffect(() => {
-    panResponderRef.current = PanResponder.create({
-      onStartShouldSetPanResponder: () => !isRecordingRef.current && !isLockedRef.current,
-      onMoveShouldSetPanResponder: (_, gestureState) =>
-        isRecordingRef.current &&
-        !isLockedRef.current &&
-        (Math.abs(gestureState.dx) > 12 || Math.abs(gestureState.dy) > 12),
-      onPanResponderGrant: () => {
-        if (!isRecordingRef.current && !isLockedRef.current) {
-          startRecordingRef.current();
-        }
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (!isRecordingRef.current || isLockedRef.current) return;
-        const { dx, dy } = gestureState;
-        setSlideOffsetX(Math.min(0, dx));
-        setShouldCancel(dx < VOICE_CANCEL_DX * 0.65);
-        if (dy < VOICE_LOCK_DY && Math.abs(dx) < 56) {
-          isLockedRef.current = true;
-          setIsLocked(true);
-          startLockPulseRef.current();
-        }
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (isRecordingRef.current && !isLockedRef.current) {
-          const cancel = gestureState.dx < VOICE_CANCEL_DX;
-          const elapsed = recordingTimeRef.current;
-          if (cancel) {
-            stopRecordingRef.current(false);
-          } else {
-            stopRecordingRef.current(elapsed >= 0.5);
+  // useMemo (not useEffect) so panHandlers exist on the first render; stale {} broke iOS until a random re-render.
+  const voiceNotePanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => !isRecordingRef.current && !isLockedRef.current,
+        onStartShouldSetPanResponderCapture: () => !isRecordingRef.current && !isLockedRef.current,
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          isRecordingRef.current &&
+          !isLockedRef.current &&
+          (Math.abs(gestureState.dx) > 12 || Math.abs(gestureState.dy) > 12),
+        onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+          isRecordingRef.current &&
+          !isLockedRef.current &&
+          (Math.abs(gestureState.dx) > 10 || Math.abs(gestureState.dy) > 10),
+        onPanResponderGrant: () => {
+          if (!isRecordingRef.current && !isLockedRef.current) {
+            startRecordingRef.current();
           }
-        }
-        setSlideOffsetX(0);
-        setShouldCancel(false);
-      },
-    });
-  }, []);
+        },
+        onPanResponderMove: (_, gestureState) => {
+          if (!isRecordingRef.current || isLockedRef.current) return;
+          const { dx, dy } = gestureState;
+          setSlideOffsetX(Math.min(0, dx));
+          setShouldCancel(dx < VOICE_CANCEL_DX * 0.65);
+          if (dy < VOICE_LOCK_DY && Math.abs(dx) < 56) {
+            isLockedRef.current = true;
+            setIsLocked(true);
+            startLockPulseRef.current();
+          }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+          if (isRecordingRef.current && !isLockedRef.current) {
+            const cancel = gestureState.dx < VOICE_CANCEL_DX;
+            const elapsed = recordingTimeRef.current;
+            if (cancel) {
+              stopRecordingRef.current(false);
+            } else {
+              stopRecordingRef.current(elapsed >= 0.5);
+            }
+          }
+          setSlideOffsetX(0);
+          setShouldCancel(false);
+        },
+      }),
+    []
+  );
 
-  /** Locked recording: tap send to finish. Do not start recording on tap (WhatsApp is hold-only). */
+  /** Android: one tap on mic starts recording in locked (hands-free) mode; use send / overlay to finish. */
+  const handleAndroidMicTap = useCallback(async () => {
+    if (isRecordingRef.current) return;
+    await startRecording();
+    if (!isRecordingRef.current) return;
+    isLockedRef.current = true;
+    setIsLocked(true);
+    startLockPulse();
+  }, [startRecording, startLockPulse]);
+
+  /** Locked recording: tap send to finish. */
   const handleMicPress = useCallback(() => {
     if (isRecording && isLocked) {
       stopRecording(true);
@@ -4500,10 +4462,7 @@ const ChatDetailScreen = ({ route, navigation }) => {
                     </TouchableOpacity>
                   </Animated.View>
                 ) : (
-                  <View
-                    {...(panResponderRef.current?.panHandlers || {})}
-                    style={styles.recordingBarMicButton}
-                  >
+                  <View {...voiceNotePanResponder.panHandlers} style={styles.recordingBarMicButton}>
                     <Icon name="mic" size={24} color={colors.textWhite} />
                   </View>
                 )}
@@ -4533,11 +4492,20 @@ const ChatDetailScreen = ({ route, navigation }) => {
                 <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
                   <Icon name="send" size={20} color={colors.textWhite} />
                 </TouchableOpacity>
+              ) : Platform.OS === 'android' ? (
+                <TouchableOpacity
+                  style={styles.micButton}
+                  onPress={handleAndroidMicTap}
+                  activeOpacity={0.7}
+                  disabled={isRecording}
+                >
+                  <Icon name="mic" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
               ) : (
-                <View {...(panResponderRef.current?.panHandlers || {})} style={styles.micButton}>
+                <View {...voiceNotePanResponder.panHandlers} style={styles.micButton}>
                   <Icon name="mic" size={20} color={colors.textSecondary} />
                 </View>
-            )}
+              )}
             </View>
             )}
           </View>
