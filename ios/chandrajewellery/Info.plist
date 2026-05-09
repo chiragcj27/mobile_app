@@ -65,6 +65,10 @@
 		<string>AvenirLTStd-LightOblique.otf</string>
 		<string>MaterialIcons.ttf</string>
 	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

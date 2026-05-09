@@ -61,6 +61,9 @@ const getOrderItemSubtext = (item) => {
   return String(snapshot.subcategoryProfileName || item?.meta?.subcategoryProfileName || '').trim();
 };
 
+const getDisplayOrderNo = (order) =>
+  String(order?.orderNumber || order?.orderNo || order?.order_number || order?._id || 'N/A');
+
 function OrderCard({ order, onPressOrderNo, onPressOpenDetails }) {
   const firstItem = order.items?.[0];
   const moreItemsCount = Math.max(0, (order.items?.length || 0) - 1);
@@ -80,7 +83,7 @@ function OrderCard({ order, onPressOrderNo, onPressOpenDetails }) {
           <Text style={styles.statusText}>{statusText}</Text>
         </View>
         <TouchableOpacity activeOpacity={0.85} style={styles.orderNoPill} onPress={() => onPressOrderNo(order)}>
-          <Text style={styles.orderNoText}>ORDER NO.</Text>
+          <Text style={styles.orderNoText}>{getDisplayOrderNo(order)}</Text>
         </TouchableOpacity>
       </View>
 
@@ -186,7 +189,7 @@ const MyOrdersScreen = ({ navigation }) => {
   }, [activeSection, orders]);
 
   const openOrderNoModal = useCallback((order) => {
-    setSelectedOrderNo(String(order?.orderNumber || order?._id || 'N/A'));
+    setSelectedOrderNo(getDisplayOrderNo(order));
     setCopied(false);
     setIsOrderNoModalVisible(true);
   }, []);

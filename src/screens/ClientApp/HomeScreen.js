@@ -113,8 +113,35 @@ const getOrderSummaryTitle = (order) => {
   const selectedFilters = normalizeSelectedFilters(firstMeta?.selectedFilters || {});
   const totalPieces = (order?.items || []).reduce((sum, item) => sum + Number(item?.quantity || 0), 0);
   const subcategory = firstMeta?.subcategoryName || firstMeta?.productSnapshot?.subcategoryName || '';
-  const metal = selectedFilters?.metal || '';
-  const bits = [`${totalPieces} pcs`, subcategory, metal].map((item) => String(item || '').trim()).filter(Boolean);
+  const rawMetal = firstDefined(
+    selectedFilters?.metal,
+    selectedFilters?.Metal,
+    selectedFilters?.metalType,
+    selectedFilters?.metal_type,
+    selectedFilters?.['Metal Type'],
+    '',
+  );
+  const metalKt = firstDefined(
+    selectedFilters?.metalKt,
+    selectedFilters?.metal_kt,
+    selectedFilters?.kt,
+    selectedFilters?.KT,
+    '',
+  );
+  const stoneType = firstDefined(
+    selectedFilters?.stoneType,
+    selectedFilters?.stone_type,
+    selectedFilters?.['Stone Type'],
+    selectedFilters?.stone,
+    selectedFilters?.Stone,
+    '',
+  );
+  const metal = String(rawMetal || '').trim();
+  const kt = String(metalKt || '').trim();
+  const metalDisplay = metal && kt && !metal.toLowerCase().includes(kt.toLowerCase()) ? `${metal} ${kt}` : metal || kt;
+  const bits = [`${totalPieces} pcs`, subcategory, metalDisplay, stoneType]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
   return bits.join(' | ');
 };
 

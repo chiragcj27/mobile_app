@@ -1,5 +1,15 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Animated, Image, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Animated,
+  Image,
+  PanResponder,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
@@ -73,6 +83,7 @@ const OrderCartScreen = ({ navigation }) => {
   const [displayRows, setDisplayRows] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [orderRemarks, setOrderRemarks] = useState('');
 
   const [swipeTrackWidth, setSwipeTrackWidth] = useState(0);
   const swipeTranslateX = useRef(new Animated.Value(0)).current;
@@ -170,17 +181,21 @@ const OrderCartScreen = ({ navigation }) => {
     const shippingAddress = resolveShippingAddress(cart);
     const currency = resolveCurrency(cart);
 
+    const sanitizedRemarks = orderRemarks.trim();
+
     return catalogApi.post('/orders', {
       items: payloadItems,
       shippingAddress,
       currency,
+      notes: sanitizedRemarks || undefined,
       totalAmount: totalAmount > 0 ? Number(totalAmount.toFixed(2)) : undefined,
       orderMeta: {
         source: 'mobile_cart_swipe_purchase',
         entryCount: entries.length,
+        hasOrderLevelRemarks: Boolean(sanitizedRemarks),
       },
     });
-  }, []);
+  }, [orderRemarks]);
 
   useFocusEffect(
     useCallback(() => {
@@ -289,42 +304,62 @@ const OrderCartScreen = ({ navigation }) => {
             <Text style={styles.emptySub}>Add items from order review to continue later.</Text>
           </View>
         ) : (
-          displayRows.map((item) => (
-            <View key={item.key} style={styles.card}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={styles.closeButton}
-                onPress={() => onRemoveRow(item.entryId, item.productId)}>
-                <MaterialIcons name="close" size={18} color="#C6C8CC" />
-              </TouchableOpacity>
+          <>
+            {displayRows.map((item) => (
+              <View key={item.key} style={styles.card}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={styles.closeButton}
+                  onPress={() => onRemoveRow(item.entryId, item.productId)}>
+                  <MaterialIcons name="close" size={18} color="#C6C8CC" />
+                </TouchableOpacity>
 
-              <View style={styles.topRow}>
-                <View style={styles.imageFrame}>
-                  {item.imageUrl ? (
-                    <Image source={{ uri: item.imageUrl }} style={styles.image} resizeMode="contain" />
-                  ) : (
-                    <View style={styles.imagePlaceholder} />
-                  )}
-                </View>
+                <View style={styles.topRow}>
+                  <View style={styles.imageFrame}>
+                    {item.imageUrl ? (
+                      <Image source={{ uri: item.imageUrl }} style={styles.image} resizeMode="contain" />
+                    ) : (
+                      <View style={styles.imagePlaceholder} />
+                    )}
+                  </View>
 
-                <View style={styles.textWrap}>
-                  <Text style={styles.name}>{item.cardHeading}</Text>
-                  <Text style={styles.description}>{item.description}</Text>
-                  <View style={styles.metaRow}>
-                    <Text style={styles.metaText}>{item.metaText}</Text>
-                    <TouchableOpacity activeOpacity={0.8}>
-                      <Image source={editIcon} style={styles.inlineEditIcon} resizeMode="contain" />
-                    </TouchableOpacity>
+                  <View style={styles.textWrap}>
+                    <Text style={styles.name}>{item.cardHeading}</Text>
+                    <Text style={styles.description}>{item.description}</Text>
+                    <View style={styles.metaRow}>
+                      <Text style={styles.metaText}>{item.metaText}</Text>
+                      <TouchableOpacity activeOpacity={0.8}>
+                        <Image source={editIcon} style={styles.inlineEditIcon} resizeMode="contain" />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
-              </View>
 
-              <View style={styles.bottomRow}>
-                <Text style={styles.totalUnits}>Total: {item.totalQty} Units</Text>
-                <Text style={styles.totalPrice}>{formatCurrency(item.totalAmount)}</Text>
+                <View style={styles.bottomRow}>
+                  <Text style={styles.totalUnits}>Total: {item.totalQty} Units</Text>
+                  <Text style={styles.totalPrice}>{formatCurrency(item.totalAmount)}</Text>
+                </View>
               </View>
+            ))}
+
+            <View style={styles.remarkCard}>
+              <View style={styles.remarkHeaderRow}>
+                <Text style={styles.remarkTitle}>Order Remark</Text>
+                <Text style={styles.remarkCounter}>{orderRemarks.length}/240</Text>
+              </View>
+              <Text style={styles.remarkHint}>This note will be visible to the admin with the full order.</Text>
+              <TextInput
+                style={styles.remarkInput}
+                value={orderRemarks}
+                onChangeText={(text) => setOrderRemarks(text.slice(0, 240))}
+                placeholder="Add delivery notes, urgency, or any special instruction..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+                textAlignVertical="top"
+                maxLength={240}
+              />
             </View>
-          ))
+          </>
         )}
       </ScrollView>
 
@@ -501,6 +536,48 @@ const styles = StyleSheet.create({
     color: '#111111',
     fontSize: 16,
     fontWeight: '400',
+  },
+  remarkCard: {
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DCEBEE',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  remarkHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  remarkTitle: {
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '500',
+  },
+  remarkCounter: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  remarkHint: {
+    marginTop: 6,
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  remarkInput: {
+    marginTop: 10,
+    minHeight: 92,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 10,
+    color: '#0F172A',
+    fontSize: 13,
+    lineHeight: 18,
   },
   footerWrap: {
     position: 'absolute',

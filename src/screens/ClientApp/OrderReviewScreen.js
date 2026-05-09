@@ -177,6 +177,16 @@ const OrderReviewScreen = ({ route, navigation }) => {
       }),
     );
   };
+  const removeLineItem = (lineId) => {
+    setLineItems((prev) => prev.filter((line, index) => getLineId(line, index) !== lineId));
+    if (editingLineId === lineId) {
+      setEditingLineId(null);
+    }
+  };
+  const totalSelectedQtyFromLines = useMemo(
+    () => lineItems.reduce((sum, line) => sum + Number(line?.totalQty || 0), 0),
+    [lineItems],
+  );
   const ringShapeCards = useMemo(() => {
     const grouped = new Map();
     lineItems.forEach((line) => {
@@ -394,12 +404,20 @@ const OrderReviewScreen = ({ route, navigation }) => {
                         <Text style={styles.headerValue}>{getLineHeading(line)}</Text>
                         <Text style={styles.headerDescription}>{getLineDescription(line)}</Text>
                       </View>
-                      <View style={styles.productImageFrame}>
-                        {lineImage ? (
-                          <Image source={{ uri: lineImage }} style={styles.productImage} resizeMode="contain" />
-                        ) : (
-                          <View style={styles.productImagePlaceholder} />
-                        )}
+                      <View style={styles.reorderImageWrap}>
+                        <TouchableOpacity
+                          style={styles.removeItemButton}
+                          activeOpacity={0.8}
+                          onPress={() => removeLineItem(lineId)}>
+                          <MaterialIcons name="close" size={13} color="#6A717B" />
+                        </TouchableOpacity>
+                        <View style={styles.productImageFrame}>
+                          {lineImage ? (
+                            <Image source={{ uri: lineImage }} style={styles.productImage} resizeMode="contain" />
+                          ) : (
+                            <View style={styles.productImagePlaceholder} />
+                          )}
+                        </View>
                       </View>
                     </View>
 
@@ -741,7 +759,7 @@ const OrderReviewScreen = ({ route, navigation }) => {
 
       <View style={styles.footerWrap}>
         <View style={styles.totalBadge}>
-          <Text style={styles.totalBadgeText}>{totalSelectedQty} Designs Added</Text>
+          <Text style={styles.totalBadgeText}>{totalSelectedQtyFromLines || totalSelectedQty} Designs Added</Text>
         </View>
         <TouchableOpacity
           activeOpacity={hasItems ? 0.85 : 1}
@@ -891,6 +909,20 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 8,
     backgroundColor: '#E6E6E6',
+  },
+  reorderImageWrap: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  removeItemButton: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D4D8DE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
   },
   divider: {
     marginTop: 12,
