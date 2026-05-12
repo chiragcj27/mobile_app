@@ -1,6 +1,7 @@
 import secureStorage from '../utils/secureStorage';
 import { decodeJWT } from '../utils/helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { classifyMetal, classifyStone, readDutyRates } from '../utils/pricingDuties';
 
 const API_BASE_URL = "https://workflowapi-quhn.onrender.com"
 const CLIENT_PRICING_CACHE_KEY = '@pricing_engine_client_pricing';
@@ -465,7 +466,7 @@ export const computeUnitPriceFromSource = (source, selectedFilters = {}, pricing
   const loss = safeNumber(firstDefined(pricingConfig?.loss, pricingConfig?.Loss));
   const labour = safeNumber(firstDefined(pricingConfig?.labour, pricingConfig?.Labour));
   const extraCharges = safeNumber(firstDefined(pricingConfig?.extraCharges, pricingConfig?.ExtraCharges));
-  const duties = safeNumber(firstDefined(pricingConfig?.duties, pricingConfig?.Duties));
+  const dutyRates = readDutyRates(pricingConfig);
 
   const { quality, weight } = resolveUnitMetal(source, selectedFilters);
   const metalRate = getMetalRateFromQuality(quality, pricingContext?.metalPrices || {});
@@ -476,8 +477,40 @@ export const computeUnitPriceFromSource = (source, selectedFilters = {}, pricing
   const diamondRows = resolveUnitDiamonds(source, selectedFilters);
   const diamondComputation = computeDiamondPrice(diamondRows, clientDiamondPrices);
   const diamondPrice = round3(diamondComputation.total);
+
+  // Five-bucket duty math — mirrors server semantics from /api/enquiries/pricingCalculate.
+  // The catalog engine treats extraCharges as a flat addition (legacy behavior); we leave
+  // that intact and compute duty bases against the same metalPrice/stone values.
+  const metalKind = classifyMetal(quality);
+  const labStoneValue = diamondComputation.breakdown.reduce(
+    (acc, row) => acc + (classifyStone(row.type) === 'lab' ? safeNumber(row.rowTotal) : 0),
+    0,
+  );
+  const naturalStoneValue = diamondComputation.breakdown.reduce(
+    (acc, row) => acc + (classifyStone(row.type) === 'natural' ? safeNumber(row.rowTotal) : 0),
+    0,
+  );
+  const lossAmount = weight * metalRate * (loss / 100);
+  const labourAmount = weight * labour;
+
+  const dutiesBreakdown = {
+    NaturalDuties: naturalStoneValue * (dutyRates.NaturalDuties / 100),
+    LabDuties: metalKind === 'gold' ? labStoneValue * (dutyRates.LabDuties / 100) : 0,
+    GoldDuties: metalKind === 'gold' ? metalPrice * (dutyRates.GoldDuties / 100) : 0,
+    SilverAndLabsDuties:
+      metalKind === 'silver'
+        ? (labStoneValue + metalPrice) * (dutyRates.SilverAndLabsDuties / 100)
+        : 0,
+    LossAndLabourDuties: (lossAmount + labourAmount) * (dutyRates.LossAndLabourDuties / 100),
+  };
+  const dutiesAmount =
+    dutiesBreakdown.NaturalDuties +
+    dutiesBreakdown.LabDuties +
+    dutiesBreakdown.GoldDuties +
+    dutiesBreakdown.SilverAndLabsDuties +
+    dutiesBreakdown.LossAndLabourDuties;
+
   const subtotal = metalPrice + diamondPrice + extraCharges;
-  const dutiesAmount = subtotal * (duties / 100);
   const total = Math.ceil(subtotal + dutiesAmount);
 
   if (__DEV__) {
@@ -508,7 +541,7 @@ export const computeUnitPriceFromSource = (source, selectedFilters = {}, pricing
       `metalPrice = weight(${round3(weight)}) * ${round3(metalPerGram)} = ${round3(metalPrice)}`,
       `diamondPrice = ${diamondComputation.breakdown.length ? diamondComputation.breakdown.map((row) => row.formula).join(' + ') : '0'} = ${round3(diamondPrice)}`,
       `subtotal = metalPrice(${round3(metalPrice)}) + diamondPrice(${round3(diamondPrice)}) + extraCharges(${round3(extraCharges)}) = ${round3(subtotal)}`,
-      `dutiesAmount = subtotal(${round3(subtotal)}) * ${round3(duties)}/100 = ${round3(dutiesAmount)}`,
+      `dutiesAmount = ${round3(dutiesAmount)} [natural=${round3(dutiesBreakdown.NaturalDuties)}, lab=${round3(dutiesBreakdown.LabDuties)}, gold=${round3(dutiesBreakdown.GoldDuties)}, silverLab=${round3(dutiesBreakdown.SilverAndLabsDuties)}, lossLabour=${round3(dutiesBreakdown.LossAndLabourDuties)}]`,
       `final = ceil(${round3(finalBeforeRound)}) = ${total}`,
     ];
 
@@ -531,13 +564,13 @@ export const computeUnitPriceFromSource = (source, selectedFilters = {}, pricing
           '',
         Length: lengthFilter,
       },
-      resolvedMetal: { quality, weight, metalRate, metalPrice },
-      pricingConfig: { loss, labour, extraCharges, duties },
+      resolvedMetal: { quality, weight, metalRate, metalPrice, metalKind },
+      pricingConfig: { loss, labour, extraCharges, dutyRates },
       diamondPayloadPreview,
       diamondRowsCount: diamondRows.length,
       diamondBreakdown: diamondComputation.breakdown,
       unmatchedDiamondRow: firstUnmatched || null,
-      computed: { diamondPrice, subtotal, dutiesAmount, total },
+      computed: { diamondPrice, subtotal, dutiesAmount, dutiesBreakdown, total },
       formulaSummary,
     });
   }

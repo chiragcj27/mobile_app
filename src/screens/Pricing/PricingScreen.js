@@ -28,6 +28,7 @@ import Share from 'react-native-share';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as XLSX from 'xlsx';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
+import { DUTY_FIELDS, computeApplicable, readDutyRates } from '../../utils/pricingDuties';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -140,6 +141,7 @@ const PricingScreen = ({ route, navigation }) => {
                               enquiry?.Metal?.Quality || 
                               '10K';
     
+    const rates = readDutyRates(pricingEntry || {});
     return {
       formData: {
         metalPrice: (pricingEntry?.MetalPrice || pricingEntry?.metalPrice || 0).toString(),
@@ -150,7 +152,11 @@ const PricingScreen = ({ route, navigation }) => {
         totalPieces: (pricingEntry?.TotalPieces || pricingEntry?.totalPieces || 0).toString(),
         lossPercent: (pricingEntry?.LossPercent || pricingEntry?.lossPercent || pricingEntry?.Loss || 0).toString(),
         labour: (pricingEntry?.Labour || pricingEntry?.labour || 0).toString(),
-        duties: (pricingEntry?.Duties || pricingEntry?.duties || 0).toString(),
+        naturalDuties: rates.NaturalDuties.toString(),
+        labDuties: rates.LabDuties.toString(),
+        goldDuties: rates.GoldDuties.toString(),
+        silverAndLabsDuties: rates.SilverAndLabsDuties.toString(),
+        lossAndLabourDuties: rates.LossAndLabourDuties.toString(),
         dutiesAmount: (pricingEntry?.DutiesAmount || pricingEntry?.dutiesAmount || 0).toString(),
         extraCharges: (pricingEntry?.ExtraCharges || pricingEntry?.extraCharges || 0).toString(),
         undercutPrice: (pricingEntry?.UndercutPrice || pricingEntry?.undercutPrice || 0).toString(),
@@ -160,6 +166,7 @@ const PricingScreen = ({ route, navigation }) => {
       },
       stones: normalizeStones(pricingEntry?.Stones || pricingEntry?.stones || []),
       undercutEnabled: !!(pricingEntry?.UndercutPrice || pricingEntry?.undercutPrice),
+      applicable: null,
     };
   }, [normalizeStones, originalData, enquiry]);
 
@@ -180,7 +187,11 @@ const PricingScreen = ({ route, navigation }) => {
         totalPieces: '0',
         lossPercent: '0',
         labour: '0',
-        duties: '0',
+        naturalDuties: '0',
+        labDuties: '0',
+        goldDuties: '0',
+        silverAndLabsDuties: '0',
+        lossAndLabourDuties: '0',
         dutiesAmount: '0',
         extraCharges: '0',
         undercutPrice: '0',
@@ -190,6 +201,7 @@ const PricingScreen = ({ route, navigation }) => {
       },
       stones: [],
       undercutEnabled: false,
+      applicable: null,
     }];
   });
 
@@ -198,7 +210,8 @@ const PricingScreen = ({ route, navigation }) => {
   const formData = pricingEntriesState[latestEntryIndex]?.formData || {
     metalPrice: '0', diamondPrice: '0', totalPrice: '0', metalWeight: '0',
     diamondWeight: '0', totalPieces: '0', lossPercent: '0', labour: '0',
-    duties: '0', dutiesAmount: '0', extraCharges: '0', undercutPrice: '0', clientPricingMessage: '',
+    naturalDuties: '0', labDuties: '0', goldDuties: '0', silverAndLabsDuties: '0', lossAndLabourDuties: '0',
+    dutiesAmount: '0', extraCharges: '0', undercutPrice: '0', clientPricingMessage: '',
     metalRateOverride: '',
   };
   const stones = pricingEntriesState[latestEntryIndex]?.stones || [];
@@ -274,11 +287,13 @@ const PricingScreen = ({ route, navigation }) => {
         formData: {
           metalPrice: '0', diamondPrice: '0', totalPrice: '0', metalWeight: '0',
           diamondWeight: '0', totalPieces: '0', lossPercent: '0', labour: '0',
-          duties: '0', extraCharges: '0', undercutPrice: '0', clientPricingMessage: '',
+          naturalDuties: '0', labDuties: '0', goldDuties: '0', silverAndLabsDuties: '0', lossAndLabourDuties: '0',
+          extraCharges: '0', undercutPrice: '0', clientPricingMessage: '',
           metalRateOverride: '',
         },
         stones: [],
         undercutEnabled: false,
+        applicable: null,
       }]);
     }
   }, [allPricingEntries]);
@@ -315,9 +330,9 @@ const PricingScreen = ({ route, navigation }) => {
   // Latest Metal Rate - always from current API call
   const latestMetalRate = apiMetalRate || 0;
 
-  // Duties considered for quotation - provided by backend pricing (falls back to 0)
+  // Duties amount considered for quotation - the persisted sum across all duty buckets.
   const dutiesConsidered =
-    parseFloat(existingPricing?.Duties ?? existingPricing?.duties ?? formData?.duties ?? 0) || 0;
+    parseFloat(existingPricing?.DutiesAmount ?? existingPricing?.dutiesAmount ?? formData?.dutiesAmount ?? 0) || 0;
   
   // Refetch metal prices when screen loads (when Pricing button is pressed)
   useEffect(() => {
@@ -450,7 +465,14 @@ const PricingScreen = ({ route, navigation }) => {
       const loss = parseFloat(formData.lossPercent);
       const labour = parseFloat(formData.labour);
       const extraCharges = parseFloat(formData.extraCharges);
-      const duties = parseFloat(formData.duties);
+      const dutyRates = readDutyRates({
+        NaturalDuties: formData.naturalDuties,
+        LabDuties: formData.labDuties,
+        GoldDuties: formData.goldDuties,
+        SilverAndLabsDuties: formData.silverAndLabsDuties,
+        LossAndLabourDuties: formData.lossAndLabourDuties,
+      });
+      const undercutPriceValue = parseFloat(formData.undercutPrice) || 0;
       // Quantity comes from "Total Pieces" input field (formData.totalPieces)
       // const quantity = parseInt(formData.totalPieces);
       const quantity = 1;
@@ -468,8 +490,8 @@ const PricingScreen = ({ route, navigation }) => {
         Alert.alert('Validation Error', 'Extra charges must be a valid positive number');
         return;
       }
-      if (isNaN(duties) || duties < 0) {
-        Alert.alert('Validation Error', 'Duties must be a valid positive number');
+      if (Object.values(dutyRates).some((v) => v < 0)) {
+        Alert.alert('Validation Error', 'Duty rates must be valid positive numbers');
         return;
       }
       if (isNaN(quantity) || quantity <= 0) {
@@ -497,7 +519,12 @@ const PricingScreen = ({ route, navigation }) => {
           Loss: Math.max(0, loss),
           Labour: Math.max(0, labour),
           ExtraCharges: Math.max(0, extraCharges),
-          Duties: Math.max(0, duties),
+          UndercutPrice: Math.max(0, undercutPriceValue),
+          NaturalDuties: Math.max(0, dutyRates.NaturalDuties),
+          LabDuties: Math.max(0, dutyRates.LabDuties),
+          GoldDuties: Math.max(0, dutyRates.GoldDuties),
+          SilverAndLabsDuties: Math.max(0, dutyRates.SilverAndLabsDuties),
+          LossAndLabourDuties: Math.max(0, dutyRates.LossAndLabourDuties),
           // Quantity is added to payload from "Total Pieces" input field (formData.totalPieces)
           Quantity: Math.max(1, Math.floor(quantity)), // Ensure integer and at least 1
         },
@@ -508,11 +535,15 @@ const PricingScreen = ({ route, navigation }) => {
       console.log('📦 Payload clientId:', payload.clientId);
       
       // Final payload validation - check for any invalid values
-      if (!isFinite(payload.details.Metal.Weight) || 
+      if (!isFinite(payload.details.Metal.Weight) ||
           !isFinite(payload.details.Loss) ||
           !isFinite(payload.details.Labour) ||
           !isFinite(payload.details.ExtraCharges) ||
-          !isFinite(payload.details.Duties) ||
+          !isFinite(payload.details.NaturalDuties) ||
+          !isFinite(payload.details.LabDuties) ||
+          !isFinite(payload.details.GoldDuties) ||
+          !isFinite(payload.details.SilverAndLabsDuties) ||
+          !isFinite(payload.details.LossAndLabourDuties) ||
           !isFinite(payload.details.Quantity)) {
         Alert.alert(
           'Validation Error',
@@ -613,12 +644,30 @@ const PricingScreen = ({ route, navigation }) => {
           if (response.Client.Labour !== undefined) {
             updates.labour = response.Client.Labour.toString();
           }
-          if (response.Client.Duties !== undefined) {
-            updates.duties = response.Client.Duties.toString();
-          }
           if (response.Client.ExtraCharges !== undefined) {
             updates.extraCharges = response.Client.ExtraCharges.toString();
           }
+          if (response.Client.UndercutPrice !== undefined) {
+            updates.undercutPrice = response.Client.UndercutPrice.toString();
+          }
+          if (response.Client.NaturalDuties !== undefined) {
+            updates.naturalDuties = response.Client.NaturalDuties.toString();
+          }
+          if (response.Client.LabDuties !== undefined) {
+            updates.labDuties = response.Client.LabDuties.toString();
+          }
+          if (response.Client.GoldDuties !== undefined) {
+            updates.goldDuties = response.Client.GoldDuties.toString();
+          }
+          if (response.Client.SilverAndLabsDuties !== undefined) {
+            updates.silverAndLabsDuties = response.Client.SilverAndLabsDuties.toString();
+          }
+          if (response.Client.LossAndLabourDuties !== undefined) {
+            updates.lossAndLabourDuties = response.Client.LossAndLabourDuties.toString();
+          }
+        }
+        if (response.DutiesAmount !== undefined) {
+          updates.dutiesAmount = parseFloat(response.DutiesAmount).toFixed(2);
         }
         
         // Update stones with calculated prices if provided
@@ -653,6 +702,16 @@ const PricingScreen = ({ route, navigation }) => {
           setFormData(prev => ({ ...prev, ...updates }));
         }
 
+        // Stash Applicable map on the latest entry so the form can hide irrelevant duty inputs.
+        if (response.Applicable) {
+          setPricingEntriesState(prev => {
+            const updated = [...prev];
+            if (updated[latestEntryIndex]) {
+              updated[latestEntryIndex] = { ...updated[latestEntryIndex], applicable: response.Applicable };
+            }
+            return updated;
+          });
+        }
 
         Alert.alert('Success', 'Pricing calculated successfully');
       } else {
@@ -1130,7 +1189,11 @@ const PricingScreen = ({ route, navigation }) => {
             Rate: entryMetalRate,
           },
           ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
-          Duties: parseFloat(entryFormData.duties) || 0,
+          NaturalDuties: parseFloat(entryFormData.naturalDuties) || 0,
+          LabDuties: parseFloat(entryFormData.labDuties) || 0,
+          GoldDuties: parseFloat(entryFormData.goldDuties) || 0,
+          SilverAndLabsDuties: parseFloat(entryFormData.silverAndLabsDuties) || 0,
+          LossAndLabourDuties: parseFloat(entryFormData.lossAndLabourDuties) || 0,
           Loss: parseFloat(entryFormData.lossPercent) || 0,
           Labour: parseFloat(entryFormData.labour) || 0,
           UndercutPrice: entryUndercutEnabled ? (parseFloat(entryFormData.undercutPrice) || 0) : 0,
@@ -1622,7 +1685,12 @@ const PricingScreen = ({ route, navigation }) => {
           Loss: parseFloat(entryFormData.lossPercent) || 0,
           Labour: parseFloat(entryFormData.labour) || 0,
           ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
-          Duties: parseFloat(entryFormData.duties) || 0,
+          UndercutPrice: parseFloat(entryFormData.undercutPrice) || 0,
+          NaturalDuties: parseFloat(entryFormData.naturalDuties) || 0,
+          LabDuties: parseFloat(entryFormData.labDuties) || 0,
+          GoldDuties: parseFloat(entryFormData.goldDuties) || 0,
+          SilverAndLabsDuties: parseFloat(entryFormData.silverAndLabsDuties) || 0,
+          LossAndLabourDuties: parseFloat(entryFormData.lossAndLabourDuties) || 0,
           // Quantity is added to payload from "Total Pieces" input field (entryFormData.totalPieces)
           Quantity: 1,
         },
@@ -1771,26 +1839,32 @@ const PricingScreen = ({ route, navigation }) => {
             // Loss %
             if (response.Client.Loss !== undefined && response.Client.Loss !== null) {
               updatedFormData.lossPercent = parseFloat(response.Client.Loss).toString();
-              console.log('✅ Updated lossPercent:', updatedFormData.lossPercent, 'from', response.Client.Loss);
             }
-            
+
             // Labour
             if (response.Client.Labour !== undefined && response.Client.Labour !== null) {
               updatedFormData.labour = parseFloat(response.Client.Labour).toString();
-              console.log('✅ Updated labour:', updatedFormData.labour, 'from', response.Client.Labour);
             }
-            
+
             // Extra Charges (can be negative)
             if (response.Client.ExtraCharges !== undefined && response.Client.ExtraCharges !== null) {
               updatedFormData.extraCharges = parseFloat(response.Client.ExtraCharges).toString();
-              console.log('✅ Updated extraCharges:', updatedFormData.extraCharges, 'from', response.Client.ExtraCharges);
             }
-            
-            // Duties
-            if (response.Client.Duties !== undefined && response.Client.Duties !== null) {
-              updatedFormData.duties = parseFloat(response.Client.Duties).toString();
-              console.log('✅ Updated duties:', updatedFormData.duties, 'from', response.Client.Duties);
+
+            // Undercut price (per-carat cap)
+            if (response.Client.UndercutPrice !== undefined && response.Client.UndercutPrice !== null) {
+              updatedFormData.undercutPrice = parseFloat(response.Client.UndercutPrice).toString();
             }
+
+            // Five duty rates
+            const dutyKeys = ['NaturalDuties', 'LabDuties', 'GoldDuties', 'SilverAndLabsDuties', 'LossAndLabourDuties'];
+            const dutyFormKeys = ['naturalDuties', 'labDuties', 'goldDuties', 'silverAndLabsDuties', 'lossAndLabourDuties'];
+            dutyKeys.forEach((key, i) => {
+              const v = response.Client[key];
+              if (v !== undefined && v !== null) {
+                updatedFormData[dutyFormKeys[i]] = parseFloat(v).toString();
+              }
+            });
           }
           
           // Handle DutiesAmount - check multiple possible locations in response
@@ -1822,6 +1896,7 @@ const PricingScreen = ({ route, navigation }) => {
           updated[entryIndex] = {
             ...updated[entryIndex],
             formData: updatedFormData,
+            applicable: response.Applicable || updated[entryIndex].applicable || null,
           };
           
           // Update stones if response includes updated stones
@@ -1856,7 +1931,6 @@ const PricingScreen = ({ route, navigation }) => {
           console.log('  Loss:', updatedFormData.lossPercent);
           console.log('  Labour:', updatedFormData.labour);
           console.log('  Extra Charges:', updatedFormData.extraCharges);
-          console.log('  Duties:', updatedFormData.duties);
           
           return updated;
         });
@@ -1935,7 +2009,10 @@ const PricingScreen = ({ route, navigation }) => {
         Price: parseFloat(stone.Price) || 0,
       })).filter(stone => stone.Type); // Only include stones with Type
 
-      // Build payload according to API specification
+      // Build payload according to API specification.
+      // For sync-client-pricing, we omit the rate fields so the server falls back
+      // to the client policy values (Loss/Labour/ExtraCharges/UndercutPrice + the
+      // five duty rates) and returns them in response.Client.
       const payload = {
         clientId: clientId,
         details: {
@@ -1944,10 +2021,6 @@ const PricingScreen = ({ route, navigation }) => {
             Quality: metalQuality,
           },
           Stones: formattedStones,
-          Loss: parseFloat(entryFormData.lossPercent) || 0,
-          Labour: parseFloat(entryFormData.labour) || 0,
-          ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
-          Duties: parseFloat(entryFormData.duties) || 0,
           Quantity: parseInt(entryFormData.totalPieces) || 1,
         },
       };
@@ -2030,9 +2103,27 @@ const PricingScreen = ({ route, navigation }) => {
           if (response.Client.ExtraCharges !== undefined) {
             updatePricingEntryFormData(entryIndex, 'extraCharges', response.Client.ExtraCharges.toString());
           }
-          if (response.Client.Duties !== undefined) {
-            updatePricingEntryFormData(entryIndex, 'duties', response.Client.Duties.toString());
+          if (response.Client.UndercutPrice !== undefined) {
+            updatePricingEntryFormData(entryIndex, 'undercutPrice', response.Client.UndercutPrice.toString());
           }
+          const syncDutyKeys = ['NaturalDuties', 'LabDuties', 'GoldDuties', 'SilverAndLabsDuties', 'LossAndLabourDuties'];
+          const syncDutyFormKeys = ['naturalDuties', 'labDuties', 'goldDuties', 'silverAndLabsDuties', 'lossAndLabourDuties'];
+          syncDutyKeys.forEach((key, i) => {
+            const v = response.Client[key];
+            if (v !== undefined && v !== null) {
+              updatePricingEntryFormData(entryIndex, syncDutyFormKeys[i], v.toString());
+            }
+          });
+        }
+
+        if (response.Applicable) {
+          setPricingEntriesState(prev => {
+            const updated = [...prev];
+            if (updated[entryIndex]) {
+              updated[entryIndex] = { ...updated[entryIndex], applicable: response.Applicable };
+            }
+            return updated;
+          });
         }
 
         Alert.alert('Success', 'Client pricing synced successfully');
@@ -2255,7 +2346,7 @@ const PricingScreen = ({ route, navigation }) => {
             />
           </View>
 
-          {/* Row 3 */}
+          {/* Row 3 — base charges */}
           <View style={styles.inputRowFour}>
             <Input
               label="Loss (%)"
@@ -2272,20 +2363,48 @@ const PricingScreen = ({ route, navigation }) => {
               style={[styles.gridInputQuarter, styles.compactInputField]}
             />
             <Input
-              label="Duties"
-              value={entryFormData.duties}
-              onChangeText={(value) => updatePricingEntryFormData(index, 'duties', value)}
-              keyboardType="numeric"
-              style={[styles.gridInputQuarter, styles.compactInputField]}
-            />
-            <Input
               label="Extra Charges"
               value={entryFormData.extraCharges}
               onChangeText={(value) => updatePricingEntryFormData(index, 'extraCharges', value)}
               keyboardType="numeric"
               style={[styles.gridInputQuarter, styles.compactInputField]}
             />
+            <Input
+              label="Undercut Price"
+              value={entryFormData.undercutPrice}
+              onChangeText={(value) => updatePricingEntryFormData(index, 'undercutPrice', value)}
+              keyboardType="numeric"
+              style={[styles.gridInputQuarter, styles.compactInputField]}
+            />
           </View>
+
+          {/* Row 4 — duty rates, filtered by Applicable. If we don't have an
+              Applicable map yet (e.g. user opened modal before pressing Calculate),
+              derive it from the current entry so the right inputs show on first paint. */}
+          {(() => {
+            const applicable = entryState.applicable || computeApplicable({
+              Metal: { Quality: entryFormData.metalQuality, Weight: entryFormData.metalWeight, Rate: entryFormData.metalRateOverride },
+              Stones: entryStones.map(s => ({ Type: s.Type, CtWeight: s.CaratWeight, Price: s.Price })),
+              Loss: entryFormData.lossPercent,
+              Labour: entryFormData.labour,
+            });
+            const visibleDuties = DUTY_FIELDS.filter(f => applicable[f.key]);
+            if (visibleDuties.length === 0) return null;
+            return (
+              <View style={styles.inputRowFour}>
+                {visibleDuties.map(field => (
+                  <Input
+                    key={field.key}
+                    label={field.label}
+                    value={entryFormData[field.formKey]}
+                    onChangeText={(value) => updatePricingEntryFormData(index, field.formKey, value)}
+                    keyboardType="numeric"
+                    style={[styles.gridInputQuarter, styles.compactInputField]}
+                  />
+                ))}
+              </View>
+            );
+          })()}
         </View>
 
         {/* Editable Stones Table for this pricing entry */}
@@ -2689,27 +2808,22 @@ const PricingScreen = ({ route, navigation }) => {
             </View>
           </View>
 
-          {/* Row 3 */}
-          <View style={styles.inputRowFour}>
-            <View style={styles.gridInputQuarter}>
+          {/* Row 3 — duty rates are summarized via "Duties Amount" above; we
+              only show the base charges here. */}
+          <View style={styles.inputRowThree}>
+            <View style={styles.gridInputThird}>
               <CustomText variant="label" style={styles.pricingEntryLabel}>Loss (%)</CustomText>
               <CustomText variant="body" style={styles.pricingEntryValue}>
                 {(pricingEntry?.Loss || pricingEntry?.lossPercent || pricingEntry?.loss || 0).toFixed(1)}%
               </CustomText>
             </View>
-            <View style={styles.gridInputQuarter}>
+            <View style={styles.gridInputThird}>
               <CustomText variant="label" style={styles.pricingEntryLabel}>Labour</CustomText>
               <CustomText variant="body" style={styles.pricingEntryValue}>
                 ${(pricingEntry?.Labour || pricingEntry?.labour || 0).toFixed(2)}
               </CustomText>
             </View>
-            <View style={styles.gridInputQuarter}>
-              <CustomText variant="label" style={styles.pricingEntryLabel}>Duties</CustomText>
-              <CustomText variant="body" style={styles.pricingEntryValue}>
-                {(pricingEntry?.Duties || pricingEntry?.duties || 0).toFixed(2)}%
-              </CustomText>
-            </View>
-            <View style={styles.gridInputQuarter}>
+            <View style={styles.gridInputThird}>
               <CustomText variant="label" style={styles.pricingEntryLabel}>Extra Charges</CustomText>
               <CustomText variant="body" style={styles.pricingEntryValue}>
                 ${(pricingEntry?.ExtraCharges || pricingEntry?.extraCharges || 0).toFixed(2)}
@@ -2915,7 +3029,11 @@ const PricingScreen = ({ route, navigation }) => {
                     totalPieces: '0',
                     lossPercent: '0',
                     labour: '0',
-                    duties: '0',
+                    naturalDuties: '0',
+                    labDuties: '0',
+                    goldDuties: '0',
+                    silverAndLabsDuties: '0',
+                    lossAndLabourDuties: '0',
                     extraCharges: '0',
                     undercutPrice: '0',
                     clientPricingMessage: '',
@@ -2923,6 +3041,7 @@ const PricingScreen = ({ route, navigation }) => {
                   },
                   stones: [],
                   undercutEnabled: false,
+                  applicable: null,
                 };
                 // Add to state temporarily for editing
                 setPricingEntriesState(prev => [...prev, newEntryState]);
@@ -2954,7 +3073,12 @@ const PricingScreen = ({ route, navigation }) => {
                 },
                 Loss: parseFloat(entryFormData.lossPercent) || 0,
                 Labour: parseFloat(entryFormData.labour) || 0,
-                Duties: parseFloat(entryFormData.duties) || 0,
+                NaturalDuties: parseFloat(entryFormData.naturalDuties) || 0,
+                LabDuties: parseFloat(entryFormData.labDuties) || 0,
+                GoldDuties: parseFloat(entryFormData.goldDuties) || 0,
+                SilverAndLabsDuties: parseFloat(entryFormData.silverAndLabsDuties) || 0,
+                LossAndLabourDuties: parseFloat(entryFormData.lossAndLabourDuties) || 0,
+                UndercutPrice: parseFloat(entryFormData.undercutPrice) || 0,
                 ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
                 ClientPricingMessage: entryFormData.clientPricingMessage || '',
                 Stones: entryStones.map(stone => ({

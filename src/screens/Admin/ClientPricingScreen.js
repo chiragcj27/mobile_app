@@ -18,6 +18,7 @@ import { useGetClientByIdQuery, useUpdateClientPricingMutation } from '../../sto
 import DiamondRow from './components/DiamondRow';
 import DiamondEditModal from './components/DiamondEditModal';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
+import { DUTY_FIELDS } from '../../utils/pricingDuties';
 
 // DocumentPicker is optional
 let DocumentPicker;
@@ -32,7 +33,12 @@ const ClientPricingScreen = ({ route, navigation }) => {
   const [loss, setLoss] = useState('0');
   const [labour, setLabour] = useState('0');
   const [extraCharges, setExtraCharges] = useState('0');
-  const [duties, setDuties] = useState('0');
+  const [naturalDuties, setNaturalDuties] = useState('0');
+  const [labDuties, setLabDuties] = useState('0');
+  const [goldDuties, setGoldDuties] = useState('0');
+  const [silverAndLabsDuties, setSilverAndLabsDuties] = useState('0');
+  const [lossAndLabourDuties, setLossAndLabourDuties] = useState('0');
+  const [undercutPrice, setUndercutPrice] = useState('0');
   const [pricingMessageFormat, setPricingMessageFormat] = useState('');
   const [diamonds, setDiamonds] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -93,7 +99,12 @@ const ClientPricingScreen = ({ route, navigation }) => {
       setLoss(pricing.Loss?.toString() || pricing.loss?.toString() || '0');
       setLabour(pricing.Labour?.toString() || pricing.labour?.toString() || '0');
       setExtraCharges(pricing.ExtraCharges?.toString() || pricing.extraCharges?.toString() || '0');
-      setDuties(pricing.Duties?.toString() || pricing.duties?.toString() || '0');
+      setNaturalDuties(pricing.NaturalDuties?.toString() ?? pricing.naturalDuties?.toString() ?? '0');
+      setLabDuties(pricing.LabDuties?.toString() ?? pricing.labDuties?.toString() ?? '0');
+      setGoldDuties(pricing.GoldDuties?.toString() ?? pricing.goldDuties?.toString() ?? '0');
+      setSilverAndLabsDuties(pricing.SilverAndLabsDuties?.toString() ?? pricing.silverAndLabsDuties?.toString() ?? '0');
+      setLossAndLabourDuties(pricing.LossAndLabourDuties?.toString() ?? pricing.lossAndLabourDuties?.toString() ?? '0');
+      setUndercutPrice(pricing.UndercutPrice?.toString() ?? pricing.undercutPrice?.toString() ?? '0');
       setPricingMessageFormat(pricing.PricingMessageFormat || pricing.pricingMessageFormat || '');
 
       const diamondsData = pricing.Diamonds || pricing.diamonds || [];
@@ -390,7 +401,12 @@ const ClientPricingScreen = ({ route, navigation }) => {
           Loss: parseFloat(loss) || 0,
           Labour: parseFloat(labour) || 0,
           ExtraCharges: parseFloat(extraCharges) || 0,
-          Duties: parseFloat(duties) || 0,
+          NaturalDuties: parseFloat(naturalDuties) || 0,
+          LabDuties: parseFloat(labDuties) || 0,
+          GoldDuties: parseFloat(goldDuties) || 0,
+          SilverAndLabsDuties: parseFloat(silverAndLabsDuties) || 0,
+          LossAndLabourDuties: parseFloat(lossAndLabourDuties) || 0,
+          UndercutPrice: parseFloat(undercutPrice) || 0,
           PricingMessageFormat: pricingMessageFormat || '',
           Diamonds: diamonds.map(d => ({
             Type: d.Type || '',
@@ -452,8 +468,28 @@ const ClientPricingScreen = ({ route, navigation }) => {
               <Input value={extraCharges} onChangeText={setExtraCharges} keyboardType="numeric" placeholder="0" />
             </View>
             <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
-              <Text style={styles.label}>Duties*</Text>
-              <Input value={duties} onChangeText={setDuties} keyboardType="numeric" placeholder="0" />
+              <Text style={styles.label}>Undercut Price</Text>
+              <Input value={undercutPrice} onChangeText={setUndercutPrice} keyboardType="numeric" placeholder="0" />
+            </View>
+            <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
+              <Text style={styles.label}>{DUTY_FIELDS[0].label}</Text>
+              <Input value={naturalDuties} onChangeText={setNaturalDuties} keyboardType="numeric" placeholder="0" />
+            </View>
+            <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
+              <Text style={styles.label}>{DUTY_FIELDS[1].label}</Text>
+              <Input value={labDuties} onChangeText={setLabDuties} keyboardType="numeric" placeholder="0" />
+            </View>
+            <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
+              <Text style={styles.label}>{DUTY_FIELDS[2].label}</Text>
+              <Input value={goldDuties} onChangeText={setGoldDuties} keyboardType="numeric" placeholder="0" />
+            </View>
+            <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
+              <Text style={styles.label}>{DUTY_FIELDS[3].label}</Text>
+              <Input value={silverAndLabsDuties} onChangeText={setSilverAndLabsDuties} keyboardType="numeric" placeholder="0" />
+            </View>
+            <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
+              <Text style={styles.label}>{DUTY_FIELDS[4].label}</Text>
+              <Input value={lossAndLabourDuties} onChangeText={setLossAndLabourDuties} keyboardType="numeric" placeholder="0" />
             </View>
           </View>
         </View>
@@ -519,7 +555,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
         </View>
       </View>
     </View>
-  ), [clientData, clientName, loss, labour, extraCharges, duties, pricingMessageFormat, isDownloadingExcel, isImportingExcel, handleAddDiamond]);
+  ), [clientData, clientName, loss, labour, extraCharges, naturalDuties, labDuties, goldDuties, silverAndLabsDuties, lossAndLabourDuties, undercutPrice, pricingMessageFormat, isDownloadingExcel, isImportingExcel, handleAddDiamond, isTablet]);
 
   // Render type sections
   const renderTypeSection = useCallback(({ item: [type, rows] }) => {
