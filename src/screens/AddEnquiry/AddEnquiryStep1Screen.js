@@ -741,6 +741,7 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
 
         // Get enquiry ID from response
         const enquiryId = result?.id || result?._id || result?.data?.id || result?.data?._id;
+        const enquiryPayload = result?.data || result || { id: enquiryId, _id: enquiryId };
         
         // Navigate to chat prompt screen
         Alert.alert(
@@ -758,7 +759,7 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
                 if (enquiryId) {
                   navigation.navigate('ChatGroups', {
                     enquiryId,
-                    enquiry: { id: enquiryId, _id: enquiryId },
+                    enquiry: enquiryPayload,
                   });
                 } else {
                   navigation.navigate('MainTabs', { screen: 'Enquiries' });
@@ -1188,7 +1189,8 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
 
   const renderClientInputTab = () => {
     const isSubmitReady =
-      enquiryDescription.trim().length > 0 && referenceImages.length > 0;
+      // enquiryDescription.trim().length > 0 && referenceImages.length > 0;
+      enquiryDescription.trim().length > 0 ;
     return (
       <View style={styles.inputBox}>
         <Text style={styles.inputLabel}>Upload Reference Images</Text>
