@@ -49,8 +49,8 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
     user?.roleId === 4 ||
     user?.roleNumber === 4;
 
-  /** Client & admin: step 1 = status tiles, step 2 = details, step 3 = upload images. */
-  const totalSteps = 3;
+  /** Client & admin: step 1 = status tiles, step 2 = details. */
+  const totalSteps = 2;
   const [currentStep, setCurrentStep] = useState(1);
   /** coral | cad | approvedCad — drives Status sent to API (client & admin) */
   const [projectType, setProjectType] = useState('coral');
@@ -629,6 +629,7 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
     console.log('🚀 [handleSubmit] ===== FUNCTION CALLED =====');
     console.log('🚀 Current Step:', currentStep);
     console.log('🚀 TextSubmitted:', TextSubmitted);
+    console.log('🚀 parsedData:', parsedData);
     console.log('🚀 Form Data:', formData);
     console.log('🚀 Missing Fields Data:', missingFieldsData);
     console.log('🚀 Reference Images Count:', referenceImages.length);
@@ -650,133 +651,228 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
     console.log('✅ [handleSubmit] User ID found:', user.id);
 
     try {
-      // Prepare final enquiry data - merge formData with missingFieldsData and parsedData
-      // Priority: missingFieldsData > parsedData > formData > defaults
-      const finalData = {
-        Name: missingFieldsData.Name || parsedData?.Name || formData.title || '',
-        ClientId: missingFieldsData.ClientId || parsedData.ClientId || (isClient
-          ? formData.clientId || user.clientId || user.id
-          : formData.clientId || user.id),
-        AssignedTo: missingFieldsData.AssignedTo || parsedData?.AssignedTo || (isClient ? null : formData.assignedTo || null),
-        Status: missingFieldsData.Status || parsedData?.Status || formData.status || 'Enquiry Created',
-        Priority: missingFieldsData.Priority || parsedData?.Priority || formData.priority || 'Normal',
-        Quantity: missingFieldsData.Quantity || parsedData?.Quantity || parseInt(formData.quantity) || 1,
-        Metal: {
-          Color: missingFieldsData.MetalColor || parsedData?.Metal?.Color || (
-            formData.metalColor && formData.metalColor.trim()
-              ? formData.metalColor.trim()
+      // Check if this is AI parsing flow or manual flow
+      const isAIParsingFlow = TextSubmitted && parsedData !== null;
+      
+      if (isAIParsingFlow) {
+        // AI PARSING FLOW - Use submitEnquiry (creates enquiry + uploads images)
+        console.log('🤖 [AI PARSING FLOW] Using submitEnquiry mutation');
+        
+        // Prepare final enquiry data - merge formData with missingFieldsData and parsedData
+        // Priority: missingFieldsData > parsedData > formData > defaults
+        const finalData = {
+          Name: missingFieldsData.Name || parsedData?.Name || formData.title || '',
+          ClientId: missingFieldsData.ClientId || parsedData.ClientId || (isClient
+            ? formData.clientId || user.clientId || user.id
+            : formData.clientId || user.id),
+          AssignedTo: missingFieldsData.AssignedTo || parsedData?.AssignedTo || (isClient ? null : formData.assignedTo || null),
+          Status: missingFieldsData.Status || parsedData?.Status || formData.status || 'Enquiry Created',
+          Priority: missingFieldsData.Priority || parsedData?.Priority || formData.priority || 'Normal',
+          Quantity: missingFieldsData.Quantity || parsedData?.Quantity || parseInt(formData.quantity) || 1,
+          Metal: {
+            Color: missingFieldsData.MetalColor || parsedData?.Metal?.Color || (
+              formData.metalColor && formData.metalColor.trim()
+                ? formData.metalColor.trim()
+                : null
+            ),
+            Quality: missingFieldsData.MetalQuality || parsedData?.Metal?.Quality || formData.metalQuality || '10K',
+          },
+          StoneType: missingFieldsData.StoneType || parsedData?.StoneType || (
+            formData.stoneType && formData.stoneType.trim()
+              ? formData.stoneType.trim()
               : null
           ),
-          Quality: missingFieldsData.MetalQuality || parsedData?.Metal?.Quality || formData.metalQuality || '10K',
-        },
-        StoneType: missingFieldsData.StoneType || parsedData?.StoneType || (
-          formData.stoneType && formData.stoneType.trim()
-            ? formData.stoneType.trim()
-            : null
-        ),
-        Stamping: missingFieldsData.Stamping || parsedData?.Stamping || formData.stamping || null,
-        Remarks: missingFieldsData.Remarks || parsedData?.Remarks || buildRemarksForApi() || '',
-        Category: missingFieldsData.Category || parsedData?.Category || formData.category || 'Ring',
-        Budget: missingFieldsData.Budget || parsedData?.Budget || (
-          formData.budget && formData.budget.trim()
-            ? formData.budget.trim()
-            : null
-        ),
-        SpecialRemarks: missingFieldsData.SpecialRemarks || parsedData?.SpecialRemarks || (
-          !isClient && formData.remark && formData.remark.trim()
-            ? formData.remark.trim()
-            : formData.specialRemarks && formData.specialRemarks.trim()
-            ? formData.specialRemarks.trim()
-            : null
-        ),
-        StyleNumber: missingFieldsData.StyleNumber || parsedData?.StyleNumber || null,
-        GatiOrderNumber: missingFieldsData.GatiOrderNumber || parsedData?.GatiOrderNumber || null,
-        ShippingDate: missingFieldsData.ShippingDate || parsedData?.ShippingDate || null,
-        CoralCode: missingFieldsData.CoralCode || parsedData?.CoralCode || null,
-        CadCode: missingFieldsData.CadCode || parsedData?.CadCode || null,
-        ApprovedDate: missingFieldsData.ApprovedDate || parsedData?.ApprovedDate || null,
-      };
-
-      // Add MetalWeight if provided in missing fields
-      if (missingFieldsData.MetalWeightFrom || missingFieldsData.MetalWeightTo || missingFieldsData.MetalWeightExact) {
-        finalData.MetalWeight = {
-          From: missingFieldsData.MetalWeightFrom || null,
-          To: missingFieldsData.MetalWeightTo || null,
-          Exact: missingFieldsData.MetalWeightExact || null,
+          Stamping: missingFieldsData.Stamping || parsedData?.Stamping || formData.stamping || null,
+          Remarks: missingFieldsData.Remarks || parsedData?.Remarks || buildRemarksForApi() || '',
+          Category: missingFieldsData.Category || parsedData?.Category || formData.category || 'Ring',
+          Budget: missingFieldsData.Budget || parsedData?.Budget || (
+            formData.budget && formData.budget.trim()
+              ? formData.budget.trim()
+              : null
+          ),
+          SpecialRemarks: missingFieldsData.SpecialRemarks || parsedData?.SpecialRemarks || (
+            !isClient && formData.remark && formData.remark.trim()
+              ? formData.remark.trim()
+              : formData.specialRemarks && formData.specialRemarks.trim()
+              ? formData.specialRemarks.trim()
+              : null
+          ),
+          StyleNumber: missingFieldsData.StyleNumber || parsedData?.StyleNumber || null,
+          GatiOrderNumber: missingFieldsData.GatiOrderNumber || parsedData?.GatiOrderNumber || null,
+          ShippingDate: missingFieldsData.ShippingDate || parsedData?.ShippingDate || null,
+          CoralCode: missingFieldsData.CoralCode || parsedData?.CoralCode || null,
+          CadCode: missingFieldsData.CadCode || parsedData?.CadCode || null,
+          ApprovedDate: missingFieldsData.ApprovedDate || parsedData?.ApprovedDate || null,
         };
-      }
 
-      // Add DiamondWeight if provided in missing fields
-      if (missingFieldsData.DiamondWeightFrom || missingFieldsData.DiamondWeightTo || missingFieldsData.DiamondWeightExact) {
-        finalData.DiamondWeight = {
-          From: missingFieldsData.DiamondWeightFrom || null,
-          To: missingFieldsData.DiamondWeightTo || null,
-          Exact: missingFieldsData.DiamondWeightExact || null,
+        // Add MetalWeight if provided in missing fields
+        if (missingFieldsData.MetalWeightFrom || missingFieldsData.MetalWeightTo || missingFieldsData.MetalWeightExact) {
+          finalData.MetalWeight = {
+            From: missingFieldsData.MetalWeightFrom || null,
+            To: missingFieldsData.MetalWeightTo || null,
+            Exact: missingFieldsData.MetalWeightExact || null,
+          };
+        }
+
+        // Add DiamondWeight if provided in missing fields
+        if (missingFieldsData.DiamondWeightFrom || missingFieldsData.DiamondWeightTo || missingFieldsData.DiamondWeightExact) {
+          finalData.DiamondWeight = {
+            From: missingFieldsData.DiamondWeightFrom || null,
+            To: missingFieldsData.DiamondWeightTo || null,
+            Exact: missingFieldsData.DiamondWeightExact || null,
+          };
+        }
+
+        if (__DEV__) {
+          console.log('📤 ===== AI PARSING FLOW - FINAL SUBMISSION =====');
+          console.log('📤 Final Data Object:', JSON.stringify(finalData, null, 2));
+          console.log('📤 Reference Images Count:', referenceImages.length);
+        }
+
+        const result = await submitEnquiry({
+          data: finalData,
+          referenceImages: referenceImages,
+        }).unwrap();
+
+        if (__DEV__) {
+          console.log('✅ AI PARSING FLOW - Enquiry submitted successfully!');
+          console.log('✅ Response:', JSON.stringify(result, null, 2));
+        }
+
+        // Get enquiry ID from response
+        const enquiryId = result?.id || result?._id || result?.data?.id || result?.data?._id;
+        const enquiryPayload = result?.data || result || { id: enquiryId, _id: enquiryId };
+        
+        // Navigate to chat prompt screen
+        Alert.alert(
+          'Enquiry Created!',
+          'Have more instructions or forgot to mention something?',
+          [
+            {
+              text: 'Done',
+              style: 'cancel',
+              onPress: () => navigation.navigate('MainTabs', { screen: 'Enquiries' }),
+            },
+            {
+              text: 'Chat with us',
+              onPress: () => {
+                if (enquiryId) {
+                  navigation.navigate('ChatGroups', {
+                    enquiryId,
+                    enquiry: enquiryPayload,
+                  });
+                } else {
+                  navigation.navigate('MainTabs', { screen: 'Enquiries' });
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        // MANUAL FLOW (OLD CODE BEHAVIOR) - Use submitEnquiry (same API as AI flow)
+        console.log('📝 [MANUAL FLOW] Using submitEnquiry mutation (OLD CODE BEHAVIOR)');
+        
+        // Map Priority from form values to API format (OLD CODE)
+        const priorityMap = {
+          'low': 'Low',
+          'medium': 'Medium',
+          'normal': 'Normal',
+          'high': 'High',
+          'super high': 'Super High',
+          'urgent': 'Urgent',
+          'Low': 'Low',
+          'Medium': 'Medium',
+          'Normal': 'Normal',
+          'High': 'High',
+          'Super High': 'Super High',
+          'Urgent': 'Urgent',
         };
+        
+        const mappedPriority = priorityMap[formData.priority?.toLowerCase()] || priorityMap[formData.priority] || formData.priority || 'Normal';
+        const enquiryStatus = formData.status || 'Enquiry Created';
+
+        // Prepare enquiry data according to API structure (OLD CODE)
+        const enquiryData = {
+          Name: formData.title || '',
+          ClientId: isClient
+            ? formData.clientId || user.clientId || user.id
+            : formData.clientId || user.id,
+          AssignedTo: isClient ? null : (formData.assignedTo || null),
+          Status: enquiryStatus,
+          Priority: mappedPriority,
+          Quantity: parseInt(formData.quantity) || 1,
+          Metal: {
+            Color: formData.metalColor && formData.metalColor.trim() ? formData.metalColor.trim() : null,
+            Quality: formData.metalQuality || '10K',
+          },
+          StyleNumber: null,
+          GatiOrderNumber: null,
+          StoneType: formData.stoneType && formData.stoneType.trim() ? formData.stoneType.trim() : null,
+          MetalWeight: {
+            From: null,
+            To: null,
+            Exact: null,
+          },
+          DiamondWeight: {
+            From: null,
+            To: null,
+            Exact: null,
+          },
+          Stamping: formData.stamping || null,
+          Remarks: buildRemarksForApi() || '',
+          ShippingDate: null,
+          CoralCode: null,
+          CadCode: null,
+          Category: formData.category || 'Ring',
+          Budget: formData.budget && formData.budget.trim() ? formData.budget.trim() : null,
+          SpecialRemarks:
+            !isClient && formData.remark && formData.remark.trim()
+              ? formData.remark.trim()
+              : formData.specialRemarks && formData.specialRemarks.trim()
+                ? formData.specialRemarks.trim()
+                : null,
+          ApprovedDate: formData.approvedDate && formData.approvedDate.trim() ? formData.approvedDate : null,
+        };
+
+        console.log('📤 Creating enquiry (Manual Flow - OLD CODE):', JSON.stringify(enquiryData, null, 2));
+        console.log('📋 [ENQUIRY CREATION] Initial Status:', enquiryStatus);
+        console.log('📋 [ENQUIRY CREATION] User Role:', user?.role);
+        console.log('📋 [ENQUIRY CREATION] Is Client:', isClient);
+
+        // Use submitEnquiry with empty referenceImages array (OLD CODE BEHAVIOR)
+        const result = await submitEnquiry({
+          data: enquiryData,
+          referenceImages: [], // No images in manual flow
+        }).unwrap();
+        
+        // Get enquiry ID from response (OLD CODE)
+        const enquiryId = result?.id || result?._id || result?.data?.id || result?.data?._id;
+        
+        if (!enquiryId) {
+          console.error('❌ Failed to extract enquiry ID from response:', result);
+          Alert.alert('Error', 'Failed to create enquiry. Enquiry ID not returned.');
+          return;
+        }
+
+        console.log('✅ Enquiry created successfully (OLD CODE):', {
+          'Enquiry ID': enquiryId,
+          'Name': result?.Name || result?.name || enquiryData.Name,
+        });
+
+        const formDataForUpload = {
+          ...formData,
+          description: buildRemarksForApi() || '',
+        };
+
+        // Navigate to Step 2 for image upload (OLD CODE BEHAVIOR)
+        navigation.navigate('AddEnquiryStep2', {
+          formData: formDataForUpload,
+          enquiryId,
+          isEditMode: false,
+        });
       }
-
-      if (__DEV__) {
-        console.log('📤 ===== FINAL ENQUIRY SUBMISSION DATA =====');
-        console.log('📤 Submitting enquiry with payload:');
-        console.log('📤 Final Data Object (Full):', JSON.stringify(finalData, null, 2));
-        console.log('📤 ===== DATA SOURCES =====');
-        console.log('📤 missingFieldsData:', JSON.stringify(missingFieldsData, null, 2));
-        console.log('📤 parsedData:', JSON.stringify(parsedData, null, 2));
-        console.log('📤 formData:', JSON.stringify(formData, null, 2));
-        console.log('📤 ===== CLIENT ID RESOLUTION =====');
-        console.log('📤 missingFieldsData.ClientId:', missingFieldsData.ClientId);
-        console.log('📤 parsedData?.ClientId:', parsedData?.ClientId);
-        console.log('📤 formData.clientId:', formData.clientId);
-        console.log('📤 user.clientId:', user.clientId);
-        console.log('📤 user.id:', user.id);
-        console.log('📤 isClient:', isClient);
-        console.log('📤 FINAL ClientId being sent:', finalData.ClientId);
-        console.log('📤 ===== REFERENCE IMAGES =====');
-        console.log('📤 Reference Images Count:', referenceImages.length);
-        console.log('📤 Reference Images:', referenceImages.map((img, i) => ({
-          index: i,
-          uri: img.uri?.substring(0, 50) + '...',
-          type: img.type,
-          name: img.name,
-        })));
-        console.log('📤 ===== ALL FIELD VALUES =====');
-        console.log('📤 Name:', finalData.Name);
-        console.log('📤 ClientId:', finalData.ClientId);
-        console.log('📤 AssignedTo:', finalData.AssignedTo);
-        console.log('📤 Status:', finalData.Status);
-        console.log('📤 Priority:', finalData.Priority);
-        console.log('📤 Category:', finalData.Category);
-        console.log('📤 Metal:', finalData.Metal);
-        console.log('📤 StoneType:', finalData.StoneType);
-        console.log('📤 Quantity:', finalData.Quantity);
-        console.log('📤 Budget:', finalData.Budget);
-        console.log('📤 Remarks:', finalData.Remarks);
-        console.log('📤 SpecialRemarks:', finalData.SpecialRemarks);
-        console.log('📤 ==========================================');
-      }
-
-      const result = await submitEnquiry({
-        data: finalData,
-        referenceImages: referenceImages,
-      }).unwrap();
-
-      if (__DEV__) {
-        console.log('✅ ===== ENQUIRY SUBMISSION RESPONSE =====');
-        console.log('✅ Enquiry submitted successfully!');
-        console.log('✅ Response from backend:', JSON.stringify(result, null, 2));
-        console.log('✅ Response ClientId:', result?.ClientId || result?.clientId || result?.data?.ClientId);
-        console.log('✅ Response Enquiry ID:', result?.id || result?._id || result?.data?.id);
-        console.log('✅ ==========================================');
-      }
-
-      Alert.alert('Success', 'Enquiry created successfully!', [
-        {
-          text: 'OK',
-          onPress: () => navigation.goBack(),
-        },
-      ]);
     } catch (error) {
-      console.error('❌ Error submitting enquiry:', error);
+      console.error('❌ Error creating/submitting enquiry:', error);
       Alert.alert(
         'Error',
         error?.data?.message ||
@@ -1093,7 +1189,8 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
 
   const renderClientInputTab = () => {
     const isSubmitReady =
-      enquiryDescription.trim().length > 0 && referenceImages.length > 0;
+      // enquiryDescription.trim().length > 0 && referenceImages.length > 0;
+      enquiryDescription.trim().length > 0 ;
     return (
       <View style={styles.inputBox}>
         <Text style={styles.inputLabel}>Upload Reference Images</Text>
@@ -1430,9 +1527,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
               {renderRequiredFields()}
             </View>
           );
-        } else if (currentStep === 3) {
-          // Step 3: Already have images from AI parser flow, just show them
-          return renderImageUploadStep();
         }
       }
       
@@ -1445,9 +1539,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
           } else {
             return renderAdminStep2Fields();
           }
-        } else if (currentStep === 3) {
-          // Step 3: Upload images (NEW - same as AI parser flow)
-          return renderImageUploadStep();
         }
       }
     }
@@ -1457,8 +1548,7 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
   const mainActionLabel =
     currentStep === totalSteps ? 'Create enquiry' : 'Next';
   
-  // Disable submit button on step 3 if no images uploaded (manual flow only)
-  const isSubmitDisabled = currentStep === 3 && parsedData === null && referenceImages.length === 0;
+  const isSubmitDisabled = false;
 
   const onPrimaryPress = () => {
     console.log('🔘 [onPrimaryPress] Button clicked!');
