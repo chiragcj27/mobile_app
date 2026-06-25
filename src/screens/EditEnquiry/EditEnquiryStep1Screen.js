@@ -235,7 +235,7 @@ const EditEnquiryStep1Screen = ({ route, navigation }) => {
         } else if (statusLower.includes('production') || statusLower === 'production') {
           enquiryStatus = 'Production';
         } else if (statusLower === 'cad' || (statusLower.includes('cad') && !statusLower.includes('approved'))) {
-          enquiryStatus = 'CAD';
+          enquiryStatus = 'Cad';
         } else if (statusLower === 'coral' || statusLower.includes('coral')) {
           enquiryStatus = 'Coral';
         } else if (statusLower.includes('rejected') || statusLower === 'rejected') {

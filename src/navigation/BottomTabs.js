@@ -12,7 +12,6 @@ import EnquiryListScreen from '../screens/Enquiries/EnquiryListScreen';
 import ChatsScreen from '../screens/Chats/ChatsScreen';
 import AppsSelectionScreen from '../screens/AppSelection/AppSelectionScreen';
 import ClientHandlerDashboardScreen from '../screens/ClientHandler/ClientHandlerDashboardScreen';
-import ClientHandlerEnquiryScreen from '../screens/ClientHandler/ClientHandlerEnquiryScreen';
 import {useAuth} from '../context/AuthContext';
 
 const Tab = createBottomTabNavigator();
@@ -130,7 +129,7 @@ const BottomTabs = () => {
         />
         <Tab.Screen
           name="Enquiries"
-          component={ClientHandlerEnquiryScreen}
+          component={EnquiryListScreen}
           options={{
             title: 'Enquiries',
             tabBarIcon: ({ color, size }) => <Icon name="assignment" size={size || 24} color={color} />,

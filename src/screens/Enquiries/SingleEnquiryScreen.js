@@ -389,6 +389,9 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const showAlert = (title, message, type = 'info', buttons = []) =>
     setAlertConfig({ visible: true, title, message, type, buttons });
   const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [specialRemarksExpanded, setSpecialRemarksExpanded] = useState(false);
+  const [coralExpanded, setCoralExpanded] = useState(true);
 
   // Handle sharing to WhatsApp
   const handleShareToWhatsApp = useCallback(async () => {
@@ -1466,8 +1469,8 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     const cadVersions   = src?.Cad   || [];
     const coralVersions = src?.Coral || [];
 
-    // Follow the flow: prefer the latest CAD version (Quotation → Approved Cad),
-    // fall back to Coral only if no CAD versions exist.
+    console.log('[handleApprove] cadVersions:', cadVersions.length, 'coralVersions:', coralVersions.length, 'status:', status);
+
     let designType, versions;
     if (cadVersions.length > 0) {
       designType = 'cad';
@@ -1485,6 +1488,8 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     const currentStatus = (status || '').toLowerCase();
     const isApprovedCadStatus = currentStatus === 'approved cad';
 
+    console.log('[handleApprove] designType:', designType, 'version:', version, 'isApprovedCadStatus:', isApprovedCadStatus);
+
     showAlert(
       'Approve Design Version',
       `Approve ${designType.toUpperCase()} ${version}?`,
@@ -1498,14 +1503,24 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
               const eid = enquiry.id || enquiry._id;
 
               if (isApprovedCadStatus) {
-                // Final approval (Approved Cad → upload → Quotation → approve here → Production)
-                // Only update the enquiry status; no separate approveDesignVersion call to avoid double StatusHistory.
-                await approveDesignVersion({ enquiryId: eid, designType, version }).unwrap();
-                // Note: backend handles status transition on IsFinalVersion=true upload.
-                // Just refetch to reflect the new status.
+                // Quotation approved → Final Cad Upload
+                console.log('[handleApprove] CAD approved status → intent: approveDesign');
+                await approveDesignVersion({
+                  enquiryId: eid,
+                  designType,
+                  version,
+                  intent: 'approveDesign',
+                }).unwrap();
               } else {
-                // First approval (Quotation → Approved Cad)
-                await approveDesignVersion({ enquiryId: eid, designType, version }).unwrap();
+                // First approval — send for approval (Quotation → Approved Cad)
+                const intent = designType === 'cad' ? 'forApproval' : 'approveDesign';
+                console.log('[handleApprove] First approval → intent:', intent, 'designType:', designType);
+                await approveDesignVersion({
+                  enquiryId: eid,
+                  designType,
+                  version,
+                  intent,
+                }).unwrap();
               }
 
               showAlert('Success', `${designType.toUpperCase()} ${version} approved successfully`, 'success');
@@ -1613,19 +1628,34 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     }
   };
 
+  const getReturnRoute = () => {
+    const state = navigation.getState();
+    if (!state?.routes) return 'MainTabs';
+    const prevRoute = state.routes[state.routes.length - 2];
+    if (prevRoute?.name === 'ClientHandlerEnquiries') return 'ClientHandlerEnquiries';
+    return 'MainTabs';
+  };
+
   const handleUploadCoral = () => {
     navigation.navigate('UploadDesign', {
       designType: 'coral',
       enquiry: enquiry,
       enquiryId: enquiryId,
+      returnRoute: getReturnRoute(),
     });
   };
 
   const handleUploadCAD = () => {
+    const src = enquiry._originalData || enquiry;
+    const statusHistory = Array.isArray(src?.StatusHistory) ? src.StatusHistory : [];
+    const lastHistory = statusHistory.length > 0 ? statusHistory[statusHistory.length - 1] : null;
+    const isFinalVersion = lastHistory?.SubStatus === 'Final Cad Upload';
     navigation.navigate('UploadDesign', {
       designType: 'cad',
       enquiry: enquiry,
       enquiryId: enquiryId,
+      returnRoute: getReturnRoute(),
+      isFinalVersion,
     });
   };
 
@@ -2104,356 +2134,204 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
 
     return (
       <>
-        {/* Basic Information Card */}
-        <Card style={styles.detailsCard}>
-          <View style={styles.detailsHeader}>
-            <Text
-              style={{
-                fontSize: 18,
-                fontWeight: 'bold',
-                color: colors.textPrimary,
-                marginBottom: 8,
-              }}
-            >
-              {originalData?.Name ||
-                enquiry?.Name ||
-                enquiry?.title ||
-                'Untitled Enquiry'}
-            </Text>
-            <View style={styles.statusContainer}>
-              <View
-                style={[
-                  styles.statusBadge,
-                  { backgroundColor: getStatusColor(status) },
-                ]}
-              >
-                <Text
-                  style={{
-                    color: colors.textWhite,
-                    fontSize: fonts.sm,
-                    textAlign: 'center',
-                  }}
-                  numberOfLines={2}
-                  adjustsFontSizeToFit={false}
-                >
-                  {status.toUpperCase()}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.priorityBadge,
-                  { backgroundColor: getPriorityColor(priority) },
-                ]}
-              >
-                <Text
-                  style={{ color: colors.textWhite, fontSize: fonts.sm }}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit={true}
-                  minimumFontScale={0.8}
-                >
-                  {priority.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.detailsGrid}>
+        {/* Hero Section */}
+        <View style={styles.heroSection}>
+          <View style={styles.heroImageWrap}>
             {(() => {
-              // Debug: Log values right before rendering
-              console.log('[SingleEnquiry] 🎨 Rendering AssignedTo row:', {
-                'assignedTo value': assignedTo,
-                'assignedTo type': typeof assignedTo,
-                'assignedTo === "-"': assignedTo === '-',
-                assignedToId: assignedToId,
-                assignedToName: assignedToName,
-                showIfEmpty: true,
-              });
-              return renderDetailRow(
-                { icon: 'person', label: 'Client', value: clientName },
-                {
-                  icon: 'supervisor-account',
-                  label: 'Assigned To',
-                  value: assignedTo,
-                  showIfEmpty: true,
-                },
+              const allImgs = enquiry?.images || enquiry?.ReferenceImages || enquiry?.Images || originalData?.ReferenceImages || originalData?.Images || [];
+              const firstImg = Array.isArray(allImgs) && allImgs.length > 0 ? allImgs[0] : null;
+              let imgUri = null;
+              if (firstImg) {
+                if (typeof firstImg === 'object') {
+                  imgUri = firstImg.Url || firstImg.url || firstImg.URI || firstImg.uri || firstImg.Location || firstImg.location || null;
+                } else if (typeof firstImg === 'string') {
+                  if (firstImg.startsWith('http') || firstImg.startsWith('https')) {
+                    imgUri = firstImg;
+                  }
+                }
+              }
+              return imgUri ? (
+                <Image source={{ uri: imgUri }} style={styles.heroImage} resizeMode="contain" />
+              ) : (
+                <View style={styles.heroImagePlaceholder}>
+                  <Icon name="diamond" size={28} color={colors.primary} />
+                </View>
               );
             })()}
           </View>
-        </Card>
-
-        {/* Upload Coral/CAD buttons - Only for coral and cad roles */}
-        {(user?.role === 'coral' || user?.role === 'cad') && (
-          <View style={styles.UploadCoralCadd}>
-            {user?.role === 'coral' && (
-              <TouchableOpacity
-                style={[
-                  styles.adminActionButton,
-                  styles.adminActionButtonPrimary,
-                ]}
-                activeOpacity={0.85}
-                onPress={handleUploadCoral}
-              >
-                <Icon name="cloud-upload" size={18} color={colors.textWhite} />
-                <Text style={styles.adminActionText}>Upload Coral Design</Text>
-              </TouchableOpacity>
-            )}
-
-            {user?.role === 'cad' && (
-              <TouchableOpacity
-                style={[
-                  styles.adminActionButton,
-                  styles.adminActionButtonPrimary,
-                ]}
-                activeOpacity={0.85}
-                onPress={handleUploadCAD}
-              >
-                <Icon name="cloud-upload" size={18} color={colors.textWhite} />
-                <Text style={styles.adminActionText}>Upload CAD Design</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        {/* Description Card - remarks + stamping */}
-        <Card style={styles.detailsCard}>
-          <Text
-            style={[
-              styles.sectionTitle,
-              {
-                fontSize: 16,
-                fontWeight: 'bold',
-                color: colors.textPrimary,
-                marginBottom: 12,
-              },
-            ]}
-          >
-            Description
-          </Text>
-          <Text
-            style={[
-              styles.descriptionText,
-              { color: colors.textSecondary, fontSize: 15, lineHeight: 20 },
-            ]}
-          >
-            {originalData?.Remarks ||
-              enquiry?.Remarks ||
-              enquiry?.description ||
-              'No description available'}
-          </Text>
-          {renderDetailRow(
-            {
-              icon: 'label',
-              label: 'Stamping',
-              value: stamping,
-              showIfEmpty: true,
-            },
-            null,
-            { showIfEmpty: !!stamping },
-          )}
-        </Card>
-
-        {/* Special Remarks Card - Hidden for clients */}
-        {specialRemarks &&
-          user?.role?.toLowerCase() !== 'client' &&
-          user?.roleId !== 4 &&
-          user?.roleNumber !== 4 && (
-            <Card style={styles.detailsCard}>
-              <Text
-                style={[
-                  styles.sectionTitle,
-                  {
-                    fontSize: 16,
-                    fontWeight: 'bold',
-                    color: colors.textPrimary,
-                    marginBottom: 12,
-                  },
-                ]}
-              >
-                Special Remarks
-              </Text>
-              <Text
-                style={[
-                  styles.descriptionText,
-                  { color: colors.textSecondary, fontSize: 15, lineHeight: 20 },
-                ]}
-              >
-                {specialRemarks}
-              </Text>
-            </Card>
-          )}
-
-        {/* Metal Details Card */}
-        <Card style={styles.detailsCard}>
-          <Text
-            style={[
-              styles.sectionTitle,
-              {
-                fontSize: 16,
-                fontWeight: 'bold',
-                color: colors.textPrimary,
-                marginBottom: 12,
-              },
-            ]}
-          >
-            Metal Details
-          </Text>
-          <View style={styles.detailsGrid}>
-            {renderDetailRow(
-              { icon: 'palette', label: 'Metal Color', value: metalColor },
-              { icon: 'verified', label: 'Metal Quality', value: metalQuality },
-            )}
-          </View>
-        </Card>
-
-        {/* Product Details Card */}
-        <Card style={styles.detailsCard}>
-          <Text
-            style={[
-              styles.sectionTitle,
-              {
-                fontSize: 16,
-                fontWeight: 'bold',
-                color: colors.textPrimary,
-                marginBottom: 12,
-              },
-            ]}
-          >
-            Product Details
-          </Text>
-          <View style={styles.detailsGrid}>
-            {renderDetailRow(
-              { icon: 'category', label: 'Category', value: category },
-              {
-                icon: 'inventory',
-                label: 'Quantity',
-                value: quantity ? `${quantity}` : null,
-              },
-            )}
-            {/* Budget - Only visible to Client and Admin */}
-            {(user?.role === 'client' || user?.role === 'admin') &&
-              budget &&
-              renderDetailRow(
-                {
-                  icon: 'account-balance-wallet',
-                  label: 'Budget',
-                  value: budget ? `${budget}` : null,
-                },
-                null,
-              )}
-            {renderDetailRow(
-              { icon: 'grain', label: 'Stone Type', value: stoneType },
-              { icon: 'label', label: 'Style Number', value: styleNumber },
-            )}
-            {renderDetailRow(
-              { icon: 'scale', label: 'Metal Weight', value: metalWeightText },
-              {
-                icon: 'grain',
-                label: 'Diamond Weight',
-                value: diamondWeightText,
-              },
-            )}
-            {renderDetailRow(
-              {
-                icon: 'label',
-                label: 'Stamping',
-                value: stamping,
-                showIfEmpty: true,
-              },
-              {
-                icon: 'receipt',
-                label: 'Gati Order Number',
-                value: gatiOrderNumber,
-                showIfEmpty: true,
-              },
-              { showIfEmpty: !!stamping || !!gatiOrderNumber },
-            )}
-          </View>
-        </Card>
-
-        {/* Dates Card */}
-        <Card style={styles.detailsCard}>
-          <Text
-            style={[
-              styles.sectionTitle,
-              {
-                fontSize: 16,
-                fontWeight: 'bold',
-                color: colors.textPrimary,
-                marginBottom: 12,
-              },
-            ]}
-          >
-            Dates
-          </Text>
-          <View style={styles.detailsGrid}>
-            {renderDetailRow(
-              {
-                icon: 'schedule',
-                label: 'Created',
-                value: formatDate(createdAt),
-              },
-              {
-                icon: 'update',
-                label: 'Last Updated',
-                value: formatDate(updatedAt),
-              },
-            )}
-            {renderDetailRow(
-              {
-                icon: 'calendar-today',
-                label: 'Shipping Date',
-                value: shippingDate ? formatDate(shippingDate) : null,
-              },
-              {
-                icon: 'check-circle',
-                label: 'Approved Date',
-                value:
-                  approvedDate &&
-                  user?.role?.toLowerCase() !== 'client' &&
-                  user?.roleId !== 4 &&
-                  user?.roleNumber !== 4
-                    ? formatDate(approvedDate)
-                    : null,
-              },
-            )}
-          </View>
-        </Card>
-
-        {/* Assignment & Codes Card (for admin/viewing) */}
-        {((assignedTo && assignedTo !== '-') ||
-          (coralCode && coralCode !== 'N/A') ||
-          (cadCode && cadCode !== 'N/A')) && (
-          <Card style={styles.detailsCard}>
-            <Text
-              style={[
-                styles.sectionTitle,
-                {
-                  fontSize: 16,
-                  fontWeight: 'bold',
-                  color: colors.textPrimary,
-                  marginBottom: 12,
-                },
-              ]}
-            >
-              Assignment & Codes
+          <View style={styles.heroContent}>
+            <Text style={styles.heroTitle} numberOfLines={2}>
+              {originalData?.Name || enquiry?.Name || enquiry?.title || 'Untitled Enquiry'}
             </Text>
-            <View style={styles.detailsGrid}>
-              {renderDetailRow(
-                {
-                  icon: 'person',
-                  label: 'Assigned To',
-                  value: assignedTo || '-',
-                  showIfEmpty: true,
-                },
-                { icon: 'description', label: 'Coral Code', value: coralCode },
-              )}
-              {renderDetailRow(
-                { icon: 'description', label: 'CAD Code', value: cadCode },
-                null,
-              )}
+            <Text style={styles.heroCode}>{styleNumber || 'N/A'}</Text>
+            <View style={styles.heroBadgeRow}>
+              <View style={[styles.heroBadge, { backgroundColor: getStatusColor(status) }]}>
+                <Text style={styles.heroBadgeText}>
+                  {status ? status.toUpperCase() : 'PENDING'}
+                </Text>
+              </View>
+              <View style={[styles.heroBadge, { backgroundColor: getPriorityColor(priority) }]}>
+                <Text style={styles.heroBadgeText}>
+                  {priority ? priority.toUpperCase() : 'NORMAL'}
+                </Text>
+              </View>
             </View>
-          </Card>
-        )}
+          </View>
+        </View>
+
+        {/* Data Grid */}
+        <View style={styles.dataGrid}>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>BUDGET RANGE</Text>
+            <Text style={styles.dataCellValue}>{budget ? `₹${budget}` : '-'}</Text>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>METAL QUALITY</Text>
+            <Text style={styles.dataCellValue}>{metalQuality || '-'}</Text>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>GOLD WEIGHT</Text>
+            <Text style={styles.dataCellValue}>{metalWeightText || '-'}</Text>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>DIAMONDS</Text>
+            <Text style={styles.dataCellValue}>{diamondWeightText || '-'}</Text>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>ASSIGNED TO</Text>
+            <View style={styles.assignedRow}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {assignedTo ? assignedTo.charAt(0).toUpperCase() : '?'}
+                </Text>
+              </View>
+              <Text style={styles.dataCellValue} numberOfLines={1}>{assignedTo || '-'}</Text>
+            </View>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>CLIENT CODE</Text>
+            <Text style={styles.dataCellValue}>{clientName || '-'}</Text>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>QUANTITY</Text>
+            <Text style={styles.dataCellValue}>{quantity ? `${quantity}` : '-'}</Text>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>STONE TYPE</Text>
+            <Text style={styles.dataCellValue}>{stoneType || '-'}</Text>
+          </View>
+          <View style={[styles.dataCell, styles.dataCellAccent]}>
+            <Text style={[styles.dataCellLabel, { color: colors.primary }]}>CURRENT STATUS</Text>
+            <View style={styles.statusRow}>
+              <Icon name="check-circle" size={14} color={colors.textPrimary} />
+              <Text style={[styles.dataCellValue, { color: colors.textPrimary }]}>{status || '-'}</Text>
+            </View>
+          </View>
+          {stamping ? (
+            <View style={styles.dataCell}>
+              <Text style={styles.dataCellLabel}>STAMPING</Text>
+              <Text style={styles.dataCellValue}>{stamping}</Text>
+            </View>
+          ) : null}
+          {gatiOrderNumber ? (
+            <View style={styles.dataCell}>
+              <Text style={styles.dataCellLabel}>GATI ORDER NO.</Text>
+              <Text style={styles.dataCellValue}>{gatiOrderNumber}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Timeline Section */}
+        <Text style={styles.sectionLabel}>TIMELINE</Text>
+        <View style={styles.dataGrid}>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>CREATED</Text>
+            <Text style={styles.dataCellValue}>{formatDate(createdAt)}</Text>
+          </View>
+          <View style={styles.dataCell}>
+            <Text style={styles.dataCellLabel}>LAST UPDATED</Text>
+            <Text style={styles.dataCellValue}>{formatDate(updatedAt)}</Text>
+          </View>
+          {shippingDate ? (
+            <View style={styles.dataCell}>
+              <Text style={styles.dataCellLabel}>SHIPPING DATE</Text>
+              <Text style={styles.dataCellValue}>{formatDate(shippingDate)}</Text>
+            </View>
+          ) : null}
+          {approvedDate && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4 ? (
+            <View style={styles.dataCell}>
+              <Text style={styles.dataCellLabel}>APPROVED DATE</Text>
+              <Text style={styles.dataCellValue}>{formatDate(approvedDate)}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Description - Accordion */}
+        {(originalData?.Remarks || enquiry?.Remarks || enquiry?.description) ? (
+          <TouchableOpacity
+            style={styles.sectionCard}
+            activeOpacity={0.8}
+            onPress={() => setDescExpanded(prev => !prev)}
+          >
+            <View style={styles.accordionHeader}>
+              <Text style={styles.sectionLabel}>DESCRIPTION</Text>
+              <Icon
+                name={descExpanded ? 'expand-less' : 'expand-more'}
+                size={18}
+                color={colors.textSecondary}
+              />
+            </View>
+            <Text
+              style={styles.descriptionText}
+              numberOfLines={descExpanded ? undefined : 2}
+            >
+              {originalData?.Remarks || enquiry?.Remarks || enquiry?.description || ''}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {/* Special Remarks - Accordion, hidden for clients */}
+        {specialRemarks && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4 ? (
+          <TouchableOpacity
+            style={styles.sectionCard}
+            activeOpacity={0.8}
+            onPress={() => setSpecialRemarksExpanded(prev => !prev)}
+          >
+            <View style={styles.accordionHeader}>
+              <Text style={styles.sectionLabel}>SPECIAL REMARKS</Text>
+              <Icon
+                name={specialRemarksExpanded ? 'expand-less' : 'expand-more'}
+                size={18}
+                color={colors.textSecondary}
+              />
+            </View>
+            <Text
+              style={styles.descriptionText}
+              numberOfLines={specialRemarksExpanded ? undefined : 2}
+            >
+              {specialRemarks}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {/* Metal Color & Category */}
+        <View style={styles.dataGrid}>
+          {metalColor ? (
+            <View style={styles.dataCell}>
+              <Text style={styles.dataCellLabel}>METAL COLOR</Text>
+              <Text style={styles.dataCellValue}>{metalColor}</Text>
+            </View>
+          ) : null}
+          {category ? (
+            <View style={styles.dataCell}>
+              <Text style={styles.dataCellLabel}>CATEGORY</Text>
+              <Text style={styles.dataCellValue}>{category}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Assignment & Codes - inline */}
+   
       </>
     );
   };
@@ -3508,120 +3386,101 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     const hasCAD = cadCode || cadVersions.length > 0;
     console.log('🔍 [SingleEnquiryScreen] coralVersions:', coralVersions);
     return (
-      <Card style={styles.versionsCard}>
-        <Text
-          style={[
-            styles.sectionTitle,
-            { fontSize: 16, fontWeight: 'bold', color: colors.textPrimary },
-          ]}
-        >
-          Design Versions
-        </Text>
+      <View style={styles.versionsSection}>
+        <Text style={styles.sectionLabel}>DESIGN VERSIONS</Text>
 
-        <View style={styles.versionItem}>
-          <View style={styles.versionHeader}>
-            <Icon name="design-services" size={20} color={colors.primary} />
-            <Text
-              style={[
-                styles.versionTitle,
-                { color: colors.textPrimary, fontSize: 13, fontWeight: '500' },
-              ]}
-            >
-              Coral Design{' '}
-              {coralVersions.length > 0
-                ? `(${coralVersions.length} ${
-                    coralVersions.length === 1 ? 'version' : 'versions'
-                  })`
-                : ''}
+        {/* Coral Design */}
+        <View style={styles.versionBlock}>
+          <View style={styles.versionBlockHeader}>
+            <Icon name="brush" size={16} color={colors.textSecondary} />
+            <Text style={styles.versionBlockTitle}>
+              Coral Design{coralVersions.length > 0 ? ` (${coralVersions.length})` : ''}
             </Text>
           </View>
           {hasCoral ? (
-            <View>
+            <View style={styles.versionBlockBody}>
               {coralVersions.map((version, index) => (
                 <TouchableOpacity
                   key={index}
                   style={[
-                    styles.versionFile,
-                    { marginBottom: index < coralVersions.length - 1 ? 8 : 0 },
+                    styles.versionBlockItem,
+                    index < coralVersions.length - 1 && styles.versionBlockItemBorder,
+                    version.IsApprovedVersion === true && styles.versionBlockItemActive,
                   ]}
                   onPress={() => handleVersionSelect(index, 'coral')}
+                  activeOpacity={0.7}
                 >
-                  <Icon name="description" size={16} color={colors.primary} />
-                  <Text
-                    style={[
-                      styles.fileName,
-                      { color: colors.success, fontSize: 13 },
-                    ]}
-                  >
-                    Coral - {version.Version || `Version ${index + 1}`} -{' '}
-                    {version.CoralCode}{' '}
-                    {version.IsApprovedVersion == true ? '- Approved' : ''}
-                  </Text>
-                  <Icon name="visibility" size={16} color={colors.primary} />
+                  <View style={styles.versionBlockItemLeft}>
+                    <Text style={[
+                      styles.versionBlockItemText,
+                      version.IsApprovedVersion === true && styles.versionBlockItemTextActive,
+                    ]}>
+Coral - {version.Version || `Version ${index + 1}`} -{' '}
+                    {version.CoralCode || ''}
+                    </Text>
+                    {version.IsApprovedVersion === true && (
+                      <View style={styles.versionApprovedBadge}>
+                        <Text style={styles.versionApprovedBadgeText}>APPROVED</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Icon name="visibility" size={16} color={colors.textSecondary} />
                 </TouchableOpacity>
               ))}
             </View>
           ) : (
-            <Text style={{ color: colors.textLight, fontSize: fonts.sm }}>
-              No coral design uploaded yet
-            </Text>
+            <View style={styles.versionBlockBody}>
+              <Text style={styles.versionEmptyText}>No coral design uploaded yet</Text>
+            </View>
           )}
         </View>
 
-        <View style={styles.versionItem}>
-          <View style={styles.versionHeader}>
-            <Icon
-              name="precision-manufacturing"
-              size={20}
-              color={colors.primary}
-            />
-            <Text
-              style={[
-                styles.versionTitle,
-                { color: colors.textPrimary, fontSize: 13, fontWeight: '500' },
-              ]}
-            >
-              CAD Design{' '}
-              {cadVersions.length > 0
-                ? `(${cadVersions.length} ${
-                    cadVersions.length === 1 ? 'version' : 'versions'
-                  })`
-                : ''}
+        {/* CAD Design */}
+        <View style={styles.versionBlock}>
+          <View style={styles.versionBlockHeader}>
+            <Icon name="view-in-ar" size={16} color={colors.textSecondary} />
+            <Text style={styles.versionBlockTitle}>
+              CAD Design{cadVersions.length > 0 ? ` (${cadVersions.length})` : ''}
             </Text>
           </View>
           {hasCAD ? (
-            <View>
+            <View style={styles.versionBlockBody}>
               {cadVersions.map((version, index) => (
                 <TouchableOpacity
                   key={index}
                   style={[
-                    styles.versionFile,
-                    { marginBottom: index < cadVersions.length - 1 ? 8 : 0 },
+                    styles.versionBlockItem,
+                    index < cadVersions.length - 1 && styles.versionBlockItemBorder,
+                    version.IsApprovedVersion === true && styles.versionBlockItemActive,
                   ]}
                   onPress={() => handleVersionSelect(index, 'cad')}
+                  activeOpacity={0.7}
                 >
-                  <Icon name="description" size={16} color={colors.primary} />
-                  <Text
-                    style={[
-                      styles.fileName,
-                      { color: colors.success, fontSize: 13 },
-                    ]}
-                  >
-                    CAD - {version.Version || `Version ${index + 1}`} -{' '}
-                    {version.CadCode}{' '}
-                    {version.IsApprovedVersion == true ? '- Approved' : ''}
-                  </Text>
-                  <Icon name="visibility" size={16} color={colors.primary} />
+                  <View style={styles.versionBlockItemLeft}>
+                    <Text style={[
+                      styles.versionBlockItemText,
+                      version.IsApprovedVersion === true && styles.versionBlockItemTextActive,
+                    ]}>
+CAD - {version.Version || `Version ${index + 1}`} -{' '}
+                    {version.CadCode || ''}
+                    </Text>
+                    {version.IsApprovedVersion === true && (
+                      <View style={styles.versionApprovedBadge}>
+                        <Text style={styles.versionApprovedBadgeText}>APPROVED</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Icon name="visibility" size={16} color={colors.textSecondary} />
                 </TouchableOpacity>
               ))}
             </View>
           ) : (
-            <Text style={{ color: colors.textLight, fontSize: fonts.sm }}>
-              No CAD design uploaded yet
-            </Text>
+            <View style={styles.versionBlockBody}>
+              <Text style={styles.versionEmptyText}>No CAD design uploaded yet</Text>
+            </View>
           )}
         </View>
-      </Card>
+      </View>
     );
   };
 
@@ -3965,14 +3824,15 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
       >
-        {renderImages()}
         {renderEnquiryDetails()}
         {renderVersions()}
+        {renderImages()}
 
+        {user?.role === 'admin' && renderAdminActions()}
+     
         {user?.role === 'client' && renderClientActions()}
         {(user?.role === 'coral' || user?.role === 'cad') &&
           renderDesignerActions(user?.role)}
-        {user?.role === 'admin' && renderAdminActions()}
       </ScrollView>
 
       {isImageModalVisible && (
@@ -4227,6 +4087,273 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xl,
+  },
+  // Hero Section
+  heroSection: {
+    flexDirection: 'row',
+    gap: 16,
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(192, 200, 201, 0.2)',
+    marginBottom: 16,
+  },
+  heroImageWrap: {
+    width: 96,
+    height: 96,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 200, 201, 0.3)',
+    overflow: 'hidden',
+    flexShrink: 0,
+  },
+  heroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  heroImagePlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  heroContent: {
+    flex: 1,
+  },
+  heroTitle: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    marginBottom: 4,
+  },
+  heroCode: {
+    fontSize: 10,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    letterSpacing: 0.05,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  heroBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  heroBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 2,
+  },
+  heroBadgeText: {
+    fontSize: 9,
+    fontFamily: fonts.medium,
+    color: colors.textWhite,
+    letterSpacing: 0.05,
+    textTransform: 'uppercase',
+  },
+  // Data Grid (2-column compact)
+  dataGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  dataCell: {
+    width: '48.5%',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 200, 201, 0.3)',
+    padding: 12,
+    borderRadius: 8,
+  },
+  dataCellAccent: {
+    backgroundColor: 'rgba(0, 41, 46, 0.05)',
+    borderColor: 'rgba(0, 41, 46, 0.2)',
+  },
+  dataCellLabel: {
+    fontSize: 9,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    letterSpacing: 0.05,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+    opacity: 0.7,
+  },
+  dataCellValue: {
+    fontSize: 13,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+  },
+  assignedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  avatar: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#FFDEA3',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: 8,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  // Section labels
+  sectionLabel: {
+    fontSize: 10,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    letterSpacing: 0.05,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  sectionCard: {
+    marginBottom: 16,
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  codesRow: {
+    gap: 4,
+  },
+  codeText: {
+    fontSize: 13,
+    color: colors.textPrimary,
+    fontFamily: fonts.medium,
+  },
+  // Version blocks (HTML-inspired)
+  versionsSection: {
+    marginBottom: 16,
+  },
+  versionBlock: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 200, 201, 0.3)',
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  versionBlockHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#F3F4F3',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(192, 200, 201, 0.2)',
+  },
+  versionBlockTitle: {
+    fontSize: 10,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.05,
+  },
+  versionBlockBody: {
+    paddingVertical: 4,
+  },
+  versionBlockItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  versionBlockItemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(192, 200, 201, 0.1)',
+  },
+  versionBlockItemActive: {
+    backgroundColor: 'rgba(39, 62, 49, 0.05)',
+  },
+  versionBlockItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  versionBlockItemText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontFamily: fonts.regular,
+  },
+  versionBlockItemTextActive: {
+    fontSize: 13,
+    color: colors.primary,
+    fontFamily: fonts.bold,
+  },
+  versionApprovedBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: 'rgba(39, 62, 49, 0.1)',
+    borderRadius: 2,
+  },
+  versionApprovedBadgeText: {
+    fontSize: 8,
+    fontFamily: fonts.medium,
+    color: colors.textPrimary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.05,
+  },
+  versionEmptyText: {
+    fontSize: 13,
+    color: colors.textLight,
+    fontFamily: fonts.regular,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  // Bottom action buttons (HTML-inspired)
+  bottomActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  bottomActionPrimary: {
+    flex: 1,
+    height: 48,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bottomActionPrimaryText: {
+    fontSize: 11,
+    fontFamily: fonts.medium,
+    color: colors.textWhite,
+    letterSpacing: 0.05,
+    textTransform: 'uppercase',
+  },
+  bottomActionIcon: {
+    width: 48,
+    height: 48,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: colors.textSecondary,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bottomActionDelete: {
+    width: 48,
+    height: 48,
+    backgroundColor: 'rgba(186, 26, 26, 0.2)',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   detailsCard: {
     marginBottom: spacing.lg,

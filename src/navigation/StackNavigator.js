@@ -8,7 +8,6 @@ import LoginScreen from '../screens/Auth/LoginScreen';
 import OnboardingScreen from '../screens/Onboarding/OnboardingScreen';
 import BottomTabs from './BottomTabs';
 import EnquiryListScreen from '../screens/Enquiries/EnquiryListScreen';
-import ClientHandlerEnquiryScreen from '../screens/ClientHandler/ClientHandlerEnquiryScreen';
 import SingleEnquiryScreen from '../screens/Enquiries/SingleEnquiryScreen';
 import AddEnquiryStep1Screen from '../screens/AddEnquiry/AddEnquiryStep1Screen';
 import AddEnquiryStep2Screen from '../screens/AddEnquiry/AddEnquiryStep2Screen';
@@ -29,7 +28,9 @@ import UploadDesignScreen from '../screens/UploadDesign/UploadDesignScreen';
 import UploadExcelScreen from '../screens/UploadDesign/uploadExcel';
 import PdfViewerTestScreen from '../screens/Test/PdfViewerTestScreen';
 import PricingCalci from '../screens/Pricing/PricingCalci';
+import ClientHandlerDashboardScreen from '../screens/ClientHandler/ClientHandlerDashboardScreen';
 import Reports from '../screens/Reports/reports'
+import JwelleryEstimate from '../screens/Pricing/JwelleryEstimate';
 // TEST SCREENS - Commented out for production
 // Uncomment these lines if you need to test notifications in the future
 // import FontTest from '../components/FontTest';
@@ -72,7 +73,12 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           />
           <Stack.Screen
             name="ClientHandlerEnquiries"
-            component={ClientHandlerEnquiryScreen}
+            component={EnquiryListScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="AllClientsDashboard"
+            component={ClientHandlerDashboardScreen}
             options={{ headerShown: false }}
           />
           <Stack.Screen
@@ -191,6 +197,13 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           <Stack.Screen
           name="PricingCalci"
           component={PricingCalci}/>
+
+          <Stack.Screen
+          name="EstimateJwellery"
+          component={JwelleryEstimate}
+           options={({ route }) => ({
+              title: "Approx Pricing Calculator",
+            })}/>
 
           <Stack.Screen
             name="Reports"

@@ -10,7 +10,6 @@ export const isEnquiryClientUser = (user) =>
   user?.roleId === 4 ||
   user?.roleNumber === 4;
 
-/** Shared chat CTA — use standalone on Step 2; embedded inside EnquirySummaryCard */
 const enquiryChatCtaStyles = StyleSheet.create({
   wrapEmbedded: {
     marginTop: 20,
@@ -28,14 +27,6 @@ const enquiryChatCtaStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderLight,
   },
-  hint: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: 12,
-    textAlign: 'center',
-  },
   btn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -45,10 +36,15 @@ const enquiryChatCtaStyles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 12,
     backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 3,
   },
   btnText: {
     fontSize: fonts.sm,
-    fontFamily: fonts.medium,
+    fontFamily: fonts.bold,
     color: colors.textWhite,
     flexShrink: 1,
     textAlign: 'center',
@@ -57,20 +53,12 @@ const enquiryChatCtaStyles = StyleSheet.create({
 
 export const EnquiryChatCta = ({ user, onPress, visible = true, embedded = false }) => {
   if (!visible || !onPress) return null;
-  const wrapStyle = embedded
-    ? enquiryChatCtaStyles.wrapEmbedded
-    : enquiryChatCtaStyles.wrapStandalone;
+  const wrapStyle = embedded ? enquiryChatCtaStyles.wrapEmbedded : enquiryChatCtaStyles.wrapStandalone;
   const isClient = isEnquiryClientUser(user);
-  const buttonLabel = isClient
-    ? 'Have more instruction? Chat with Us'
-    : 'Add additional info on chat';
+  const buttonLabel = isClient ? 'Have more instructions? Chat with Us' : 'Add additional info on chat';
   return (
     <View style={wrapStyle}>
-      <TouchableOpacity
-        style={enquiryChatCtaStyles.btn}
-        onPress={onPress}
-        activeOpacity={0.88}
-      >
+      <TouchableOpacity style={enquiryChatCtaStyles.btn} onPress={onPress} activeOpacity={0.85}>
         <IconComponent name="chat" size={20} color={colors.textWhite} />
         <Text style={enquiryChatCtaStyles.btnText}>{buttonLabel}</Text>
       </TouchableOpacity>
@@ -89,11 +77,7 @@ const formatDateSafe = (dateString) => {
   try {
     const date = new Date(dateString);
     if (Number.isNaN(date.getTime())) return String(dateString);
-    return date.toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   } catch {
     return String(dateString);
   }
@@ -111,7 +95,7 @@ const SectionHeader = ({ title, icon }) => (
   <View style={styles.sectionHeaderRow}>
     {icon ? (
       <View style={styles.sectionHeaderIconWrap}>
-        <IconComponent name={icon} size={16} color={colors.primary} />
+        <IconComponent name={icon} size={18} color={colors.primary} />
       </View>
     ) : null}
     <Text style={styles.sectionHeaderText}>{title}</Text>
@@ -121,10 +105,7 @@ const SectionHeader = ({ title, icon }) => (
 const FieldBlock = ({ label, value, multiline }) => (
   <View style={styles.fieldBlock}>
     <Text style={styles.fieldLabel}>{label}</Text>
-    <Text
-      style={[styles.fieldValue, multiline && styles.fieldValueMultiline]}
-      numberOfLines={multiline ? undefined : 3}
-    >
+    <Text style={[styles.fieldValue, multiline && styles.fieldValueMultiline]} numberOfLines={multiline ? undefined : 6}>
       {value}
     </Text>
   </View>
@@ -145,374 +126,212 @@ const Pill = ({ text, variant = 'neutral' }) => {
     textStyles.push(styles.pillTextOnPrimary);
   } else if (variant === 'accent') {
     pillStyles.push(styles.pillAccent);
-    textStyles.push(styles.pillTextDark);
+    textStyles.push(styles.pillTextAccent);
   }
   return (
     <View style={pillStyles}>
-      <Text style={textStyles} numberOfLines={2}>
-        {text}
-      </Text>
+      <Text style={textStyles} numberOfLines={1}>{text}</Text>
     </View>
   );
 };
 
-/**
- * Professional enquiry summary for Step 2 (upload) flows.
- */
-const EnquirySummaryCard = ({
-  formData = {},
-  user,
-  getUserName,
-  onChatPress,
-  showChat,
-  existingImagesCount,
-}) => {
+// Formats long text strings with linebreaks into scannable lists
+const FormattedSummary = ({ text }) => {
+  if (!text) return null;
+  const lines = text.split('\n').filter(line => line.trim() !== '');
+
+  return (
+    <View style={styles.summaryBox}>
+      {lines.map((line, index) => {
+        // Look for "Key: Value" patterns in the text to bold the key
+        const colonIndex = line.indexOf(':');
+        if (colonIndex > -1 && colonIndex < 30) {
+          return (
+            <Text key={index} style={styles.summaryLine}>
+              <Text style={styles.summaryLineKey}>{line.substring(0, colonIndex + 1)} </Text>
+              <Text style={styles.summaryLineValue}>{line.substring(colonIndex + 1).trim()}</Text>
+            </Text>
+          );
+        }
+        return <Text key={index} style={styles.summaryLine}>{line}</Text>;
+      })}
+    </View>
+  );
+};
+
+const EnquirySummaryCard = ({ formData = {}, user, getUserName, onChatPress, showChat, existingImagesCount }) => {
   const isClient = isEnquiryClientUser(user);
 
-  const assignedLabel =
-    formData.assignedToName ||
-    (getUserName && formData.assignedTo
-      ? getUserName(formData.assignedTo)
-      : null) ||
-    (formData.assignedTo ? String(formData.assignedTo) : null);
+  const data = {
+    // Prioritize Remarks if it has better formatting (like the \n splits), otherwise fallback to Summary
+    summaryText: formData.Remarks || formData.remarks || formData.Summary || formData.summary || formData.description,
+    title: formData.Name || formData.title || formData.Title,
+    clientName: formData.ClientName || formData.clientName,
+    category: formData.Category || formData.category,
+    status: formData.CurrentStatus || formData.status || formData.Status,
+    priority: formData.Priority || formData.priority,
+    quantity: formData.Quantity || formData.quantity,
+    deadline: formData.ShippingDate || formData.deadline || formData.CreatedDate,
+    styleNumber: formData.StyleNumber || formData.styleNumber,
+    gatiOrder: formData.GatiOrderNumber || formData.gatiOrderNumber,
+    stamping: formData.Stamping || formData.stamping,
+    stoneType: formData.StoneType || formData.stoneType,
+    metalColor: formData.MetalColor || formData.metalColor,
+    metalQuality: formData.MetalQuality || formData.metalQuality,
+    budget: formData.Budget || formData.budget,
+    assignedTo: formData.AssignedTo || formData.assignedTo,
+    assignedToName: formData.AssignedToName || formData.assignedToName,
+    approvedDate: formData.ApprovedDate || formData.approvedDate,
+  };
 
-  const priorityDisplay = formData.priority
-    ? `${formData.priority.charAt(0).toUpperCase()}${formData.priority.slice(1)}`
-    : '—';
-
-  const metalLine = [formData.metalColor, formData.metalQuality]
-    .filter(Boolean)
-    .join(' · ');
+  const assignedLabel = data.assignedToName || (getUserName && data.assignedTo ? getUserName(data.assignedTo) : null) || (data.assignedTo ? String(data.assignedTo) : null);
+  const priorityDisplay = data.priority ? `${data.priority.charAt(0).toUpperCase()}${data.priority.slice(1)}` : '—';
+  const metalLine = [data.metalColor, data.metalQuality].filter(Boolean).join(' · ');
 
   return (
     <View style={styles.card}>
+      {/* Header */}
       <View style={styles.cardHeader}>
         <View style={styles.cardTitleRow}>
           <View style={styles.iconBadge}>
-            <IconComponent name="assignment" size={22} color={colors.primary} />
+            <IconComponent name="assignment" size={24} color={colors.primary} />
           </View>
           <View style={styles.cardTitleTextWrap}>
-            <Text style={styles.cardTitle}>Enquiry summary</Text>
-            <Text style={styles.cardSubtitle}>
-              Review all details before uploading references
-            </Text>
+            <Text style={styles.cardTitle}>Enquiry Summary</Text>
+            <Text style={styles.cardSubtitle}>Review details before uploading files</Text>
           </View>
         </View>
       </View>
 
       <View style={styles.divider} />
 
-      <SectionHeader title="Overview" icon="person" />
-      <FieldBlock label="Piece name" value={dash(formData.title)} />
-      <FieldPair
-        left={
-          <FieldBlock label="Client" value={dash(formData.clientName)} />
-        }
-        right={
-          <FieldBlock label="Category" value={dash(formData.category)} />
-        }
-      />
-      <FieldPair
-        left={
-          <View style={styles.fieldBlock}>
-            <Text style={styles.fieldLabel}>Status</Text>
-            <Pill text={dash(formData.status)} variant="primary" />
-          </View>
-        }
-        right={
-          <View style={styles.fieldBlock}>
-            <Text style={styles.fieldLabel}>Priority</Text>
-            <Pill text={priorityDisplay} variant="accent" />
-          </View>
-        }
-      />
-      {!isClient && (
-        <FieldBlock
-          label="Assigned to"
-          value={dash(assignedLabel)}
-        />
-      )}
-
-      <View style={styles.sectionSpacer} />
-      <SectionHeader title="Product & logistics" icon="category" />
-      <FieldPair
-        left={
-          <FieldBlock label="Quantity" value={dash(formData.quantity)} />
-        }
-        right={
-          <FieldBlock
-            label="Shipping date"
-            value={formatDateSafe(formData.deadline)}
-          />
-        }
-      />
-      <FieldPair
-        left={
-          <FieldBlock label="Style number" value={dash(formData.styleNumber)} />
-        }
-        right={
-          <FieldBlock
-            label="Gati order no."
-            value={dash(formData.GatiOrderNumber)}
-          />
-        }
-      />
-      <FieldBlock label="Stamping" value={dash(formData.stamping)} />
-
-      <View style={styles.sectionSpacer} />
-      <SectionHeader title="Materials" icon="star" />
-      <FieldBlock label="Stone type" value={dash(formData.stoneType)} />
-      <FieldBlock
-        label="Metal"
-        value={metalLine ? metalLine : '—'}
-      />
-      <FieldPair
-        left={
-          <FieldBlock
-            label="Metal weight"
-            value={formatWeightBlock(
-              formData.metalWeightFrom,
-              formData.metalWeightTo,
-              formData.metalWeightExact,
-            )}
-          />
-        }
-        right={
-          <FieldBlock
-            label="Diamond weight"
-            value={formatWeightBlock(
-              formData.diamondWeightFrom,
-              formData.diamondWeightTo,
-              formData.diamondWeightExact,
-            )}
-          />
-        }
-      />
-
-      <View style={styles.sectionSpacer} />
-      <SectionHeader title="Commercial" icon="attach-money" />
-      <FieldBlock
-        label="Budget"
-        value={dash(formData.budget)}
-      />
-
-      <View style={styles.sectionSpacer} />
-      <SectionHeader title="Notes" icon="note" />
-      {isClient ? (
-        <FieldBlock
-          label="Remark"
-          value={dash(formData.remark || formData.description)}
-          multiline
-        />
-      ) : (
-        <>
-          <FieldBlock
-            label="Internal remark"
-            value={dash(formData.remark)}
-            multiline
-          />
-          <FieldBlock
-            label="Special remarks"
-            value={dash(formData.specialRemarks)}
-            multiline
-          />
-          {formData.description?.trim() ? (
-            <FieldBlock
-              label="Remarks"
-              value={dash(formData.description)}
-              multiline
-            />
-          ) : null}
-        </>
-      )}
-      {!isClient ? (
-        <FieldBlock
-          label="Approved date"
-          value={formatDateSafe(formData.approvedDate)}
-        />
+      {/* Main Prose / Summary Data */}
+      {data.summaryText ? (
+        <View style={styles.sectionContainer}>
+          <SectionHeader title="Design Specifications" icon="description" />
+          <FormattedSummary text={data.summaryText} />
+        </View>
       ) : null}
 
-      {typeof existingImagesCount === 'number' ? (
-        <>
-          <View style={styles.sectionSpacer} />
-          <View style={styles.mediaRow}>
-            <IconComponent name="photo-library" size={18} color={colors.textSecondary} />
-            <Text style={styles.mediaRowText}>
-              Existing reference files:{' '}
-              <Text style={styles.mediaRowCount}>{existingImagesCount}</Text>
-            </Text>
-          </View>
-        </>
-      ) : null}
+      {/* Overview */}
+      <View style={styles.sectionGroup}>
+        <SectionHeader title="Overview" icon="person" />
+        <FieldBlock label="Piece Name" value={dash(data.title)} />
+        <FieldPair
+          left={<FieldBlock label="Client" value={dash(data.clientName)} />}
+          right={<FieldBlock label="Category" value={dash(data.category)} />}
+        />
+        <FieldPair
+          left={
+            <View style={styles.fieldBlock}>
+              <Text style={styles.fieldLabel}>Status</Text>
+              <Pill text={dash(data.status)} variant="primary" />
+            </View>
+          }
+          right={
+            <View style={styles.fieldBlock}>
+              <Text style={styles.fieldLabel}>Priority</Text>
+              <Pill text={priorityDisplay} variant="accent" />
+            </View>
+          }
+        />
+        {!isClient && <FieldBlock label="Assigned To" value={dash(assignedLabel)} />}
+      </View>
 
-      {showChat && onChatPress ? (
+      {/* Product & Logistics */}
+      <View style={styles.sectionGroup}>
+        <SectionHeader title="Product & Logistics" icon="category" />
+        <FieldPair
+          left={<FieldBlock label="Quantity" value={dash(data.quantity)} />}
+          right={<FieldBlock label="Shipping Date" value={formatDateSafe(data.deadline)} />}
+        />
+        <FieldPair
+          left={<FieldBlock label="Style Number" value={dash(data.styleNumber)} />}
+          right={<FieldBlock label="Gati Order No." value={dash(data.gatiOrder)} />}
+        />
+        <FieldBlock label="Stamping" value={dash(data.stamping)} />
+      </View>
+
+      {/* Materials */}
+      <View style={styles.sectionGroup}>
+        <SectionHeader title="Materials" icon="star" />
+        <FieldBlock label="Stone Type" value={dash(data.stoneType)} />
+        <FieldBlock label="Metal" value={metalLine ? metalLine : '—'} />
+        <FieldPair
+          left={<FieldBlock label="Metal Weight" value={formatWeightBlock(data.metalWeightFrom, data.metalWeightTo, data.metalWeightExact)} />}
+          right={<FieldBlock label="Diamond Weight" value={formatWeightBlock(data.diamondWeightFrom, data.diamondWeightTo, data.diamondWeightExact)} />}
+        />
+      </View>
+
+      {/* Commercial */}
+      <View style={styles.sectionGroup}>
+        <SectionHeader title="Commercial" icon="attach-money" />
+        <FieldPair 
+          left={<FieldBlock label="Budget" value={dash(data.budget)} />}
+          right={!isClient && data.approvedDate ? <FieldBlock label="Approved Date" value={formatDateSafe(data.approvedDate)} /> : null}
+        />
+      </View>
+
+      {/* Media Attachments */}
+      {typeof existingImagesCount === 'number' && (
+        <View style={styles.mediaRow}>
+          <IconComponent name="photo-library" size={20} color={colors.primary} />
+          <Text style={styles.mediaRowText}>
+            Existing reference files: <Text style={styles.mediaRowCount}>{existingImagesCount}</Text>
+          </Text>
+        </View>
+      )}
+
+      {/* Action Area */}
+      {showChat && onChatPress && (
         <EnquiryChatCta user={user} onPress={onChatPress} visible embedded />
-      ) : null}
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  card: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 8,
-    padding: 18,
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    shadowColor: colors.cardShadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  cardTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    paddingRight: 8,
-  },
-  iconBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: colors.primaryExtraLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  cardTitleTextWrap: {
-    flex: 1,
-  },
-  cardTitle: {
-    fontSize: fonts.lg,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    letterSpacing: 0.2,
-  },
-  cardSubtitle: {
-    marginTop: 4,
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: 16,
-    opacity: 0.9,
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  sectionHeaderIconWrap: {
-    marginRight: 8,
-  },
-  sectionHeaderText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.bold,
-    color: colors.primary,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  sectionSpacer: {
-    height: 20,
-  },
-  fieldBlock: {
-    marginBottom: 14,
-  },
-  fieldLabel: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-    marginBottom: 4,
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  fieldValue: {
-    fontSize: fonts.base,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    lineHeight: 22,
-  },
-  fieldValueMultiline: {
-    fontStyle: 'normal',
-    color: colors.textSecondary,
-  },
-  pairRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  pairHalf: {
-    flex: 1,
-  },
-  pairHalfLeft: {
-    paddingRight: 6,
-  },
-  pairHalfRight: {
-    paddingLeft: 6,
-  },
-  pill: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: colors.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-    maxWidth: '100%',
-  },
-  pillPrimary: {
-    backgroundColor: colors.primaryExtraLight,
-    borderColor: colors.primaryLight,
-  },
-  pillAccent: {
-    backgroundColor: '#FEF9E7',
-    borderColor: colors.accent,
-  },
-  pillText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.textPrimary,
-  },
-  pillTextOnPrimary: {
-    color: colors.primary,
-  },
-  pillTextDark: {
-    color: colors.textPrimary,
-  },
-  mediaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-  },
-  mediaRowText: {
-    marginLeft: 10,
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    flex: 1,
-  },
-  mediaRowCount: {
-    fontFamily: fonts.bold,
-    color: colors.primary,
-  },
+  card: { marginHorizontal: 16, marginTop: 12, marginBottom: 16, padding: 20, backgroundColor: colors.background, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight, shadowColor: colors.cardShadow, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 16, elevation: 5 },
+  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 },
+  cardTitleRow: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  iconBadge: { width: 48, height: 48, borderRadius: 14, backgroundColor: colors.primaryExtraLight, alignItems: 'center', justifyContent: 'center', marginRight: 16 },
+  cardTitleTextWrap: { flex: 1, justifyContent: 'center' },
+  cardTitle: { fontSize: fonts.xl, fontFamily: fonts.bold, color: colors.textPrimary, letterSpacing: -0.3, marginBottom: 2 },
+  cardSubtitle: { fontSize: fonts.sm, fontFamily: fonts.regular, color: colors.textSecondary },
+  divider: { height: 1, backgroundColor: colors.borderLight, marginVertical: 20, opacity: 0.7 },
+  
+  sectionContainer: { marginBottom: 24 },
+  sectionGroup: { marginBottom: 24, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: colors.borderLight, borderBottomStyle: 'dashed' },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  sectionHeaderIconWrap: { marginRight: 10, backgroundColor: colors.backgroundSecondary, padding: 6, borderRadius: 8 },
+  sectionHeaderText: { fontSize: fonts.base, fontFamily: fonts.bold, color: colors.textPrimary, letterSpacing: 0.5 },
+  
+  // Custom Summary Text Area
+  summaryBox: { backgroundColor: colors.backgroundSecondary || '#F8FAFC', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight },
+  summaryLine: { fontSize: fonts.sm, color: colors.textPrimary, lineHeight: 22, marginBottom: 6 },
+  summaryLineKey: { fontFamily: fonts.bold, color: colors.textSecondary },
+  summaryLineValue: { fontFamily: fonts.medium, color: colors.textPrimary },
+
+  fieldBlock: { marginBottom: 16 },
+  fieldLabel: { fontSize: fonts.xs, fontFamily: fonts.medium, color: colors.textSecondary, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' },
+  fieldValue: { fontSize: fonts.base, fontFamily: fonts.medium, color: colors.textPrimary, lineHeight: 22 },
+  fieldValueMultiline: { fontStyle: 'normal', color: colors.textSecondary, fontFamily: fonts.regular },
+  
+  pairRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  pairHalf: { flex: 1 },
+  pairHalfLeft: { paddingRight: 8 },
+  pairHalfRight: { paddingLeft: 8 },
+  
+  pill: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, borderWidth: 1, maxWidth: '100%' },
+  pillPrimary: { backgroundColor: colors.primaryExtraLight, borderColor: colors.primaryLight },
+  pillAccent: { backgroundColor: '#FFF4E5', borderColor: '#FFDDB3' }, // Warm tone for priority
+  pillText: { fontSize: fonts.sm, fontFamily: fonts.bold },
+  pillTextOnPrimary: { color: colors.primary },
+  pillTextAccent: { color: '#C26A00' },
+  
+  mediaRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, backgroundColor: colors.primaryExtraLight, borderRadius: 12, marginTop: 8 },
+  mediaRowText: { marginLeft: 12, fontSize: fonts.sm, fontFamily: fonts.medium, color: colors.textPrimary, flex: 1 },
+  mediaRowCount: { fontFamily: fonts.bold, color: colors.primary, fontSize: fonts.base },
 });
 
 export default EnquirySummaryCard;

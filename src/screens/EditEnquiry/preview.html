@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jewelry Customization B2B App Pipeline</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts for premium clean aesthetic -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #0f172a; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 999px; }
+    </style>
+</head>
+<body class="p-4 min-h-screen flex flex-col items-center justify-start text-slate-100">
+
+    <!-- Screen Wrapper Container resembling a premium mobile display framing -->
+    <div class="w-full max-w-md bg-slate-900 rounded-[2.5rem] shadow-2xl border-8 border-slate-800 overflow-hidden flex flex-col relative aspect-[9/19] h-[840px]">
+        
+        <!-- Mobile Top Status Bar Notch Emulation -->
+        <div class="w-full h-7 bg-slate-950 flex justify-between items-center px-6 text-[11px] font-medium text-slate-400 select-none shrink-0 z-50">
+            <span>3:14 PM</span>
+            <div class="w-24 h-4 bg-slate-900 rounded-full border border-slate-800 absolute left-1/2 transform -translate-x-1/2 top-1"></div>
+            <div class="flex items-center gap-1.5">
+                <span>5G</span>
+                <div class="w-5 h-2.5 border border-slate-400 rounded-sm p-0.5 flex items-center"><div class="w-full h-full bg-slate-400 rounded-2xs"></div></div>
+            </div>
+        </div>
+
+        <!-- Dynamic Header App Navigation -->
+        <header class="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 z-40 shrink-0">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-500 font-bold text-xs">J</div>
+                <div>
+                    <h1 class="text-xs font-bold uppercase tracking-wider text-slate-400">Pipeline Module</h1>
+                    <p id="current-screen-title" class="text-sm font-bold text-white transition-all">AI Verification & Review</p>
+                </div>
+            </div>
+            <span class="text-[10px] bg-slate-800 text-slate-300 font-semibold px-2 py-1 rounded-full border border-slate-700">Order #15409</span>
+        </header>
+
+        <!-- Dynamic Content Body Container -->
+        <main id="screen-viewport" class="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-gradient-to-b from-slate-950 to-slate-900 pb-24">
+            
+            <!-- SCREEN 3: AI VERIFICATION & PREVIEW PORTAL -->
+            <div id="screen-3" class="screen-view space-y-4">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 space-y-3">
+                    <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wide">1st Level Filter: Uploaded References</h3>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="relative bg-slate-950 rounded-lg overflow-hidden border border-slate-800 aspect-square flex flex-col items-center justify-center text-center p-2">
+                            <span class="text-2xl mb-1">💎</span>
+                            <span class="text-xs font-medium text-slate-400">Ref_Design.png</span>
+                            <span class="text-[10px] text-slate-600 mt-1">Client Sketch</span>
+                        </div>
+                        <div class="relative bg-slate-950 rounded-lg overflow-hidden border border-slate-800 aspect-square flex flex-col items-center justify-center text-center p-2">
+                            <span class="text-2xl mb-1">📸</span>
+                            <span class="text-xs font-medium text-slate-400 text-emerald-400">Screenshot.jpg</span>
+                            <span class="text-[10px] text-emerald-500/70 bg-emerald-500/10 px-1.5 py-0.5 rounded mt-1 font-mono">Cross-Check Active</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Assessment Box -->
+                <div class="bg-slate-900 border border-emerald-500/30 bg-emerald-950/10 rounded-2xl p-4 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                        <h3 class="text-xs font-bold text-emerald-400 uppercase tracking-wide">AI Screenshot Cross-Check</h3>
+                    </div>
+                    <div class="space-y-2 text-xs">
+                        <div class="p-2.5 bg-slate-950 rounded-lg border border-slate-800 flex items-start justify-between gap-2">
+                            <div>
+                                <p class="text-slate-300 font-medium">Metal Parameter Match</p>
+                                <p class="text-[10px] text-slate-500">Form: 14KT White Gold | Screenshot: 14K WG</p>
+                            </div>
+                            <span class="text-emerald-400 font-bold">✓ Match</span>
+                        </div>
+                        <div class="p-2.5 bg-slate-950 rounded-lg border border-amber-500/30 flex items-start justify-between gap-2">
+                            <div>
+                                <p class="text-slate-300 font-medium">Dimension Discrepancy</p>
+                                <p class="text-[10px] text-amber-400/90">Form states 7" Length. Reference note notes 7.5" wrist measurement.</p>
+                            </div>
+                            <span class="text-amber-400 font-bold">! Check</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCREEN 4: DESIGNER & GROUP ASSIGNMENT MATRIX -->
+            <div id="screen-4" class="screen-view space-y-4 hidden">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wide">Select Routing Group / Artist</h3>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="p-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 focus:border-amber-500 rounded-xl text-left transition-all group">
+                            <p class="text-xs font-bold text-white group-hover:text-amber-400">Hip Hop Design Team</p>
+                            <p class="text-[10px] text-slate-500">Internal CAD Group</p>
+                        </button>
+                        <button class="p-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 focus:border-amber-500 rounded-xl text-left transition-all group">
+                            <p class="text-xs font-bold text-white group-hover:text-amber-400">Bridal Specialization</p>
+                            <p class="text-[10px] text-slate-500">Internal CAD Group</p>
+                        </button>
+                        <button class="p-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 focus:border-amber-500 rounded-xl text-left transition-all group">
+                            <p class="text-xs font-bold text-white group-hover:text-amber-400">Saurabh / Suresh / Ganesh</p>
+                            <p class="text-[10px] text-slate-500">Freelance Corel</p>
+                        </button>
+                        <button class="p-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 focus:border-amber-500 rounded-xl text-left transition-all group">
+                            <p class="text-xs font-bold text-white group-hover:text-amber-400">Suman Team</p>
+                            <p class="text-[10px] text-slate-500">Freelancer CAD Group</p>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Generated Production Summary Checklist Card -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wide">Generated Spec Summary</h3>
+                        <span class="text-[9px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">Auto-Packaged</span>
+                    </div>
+                    <div class="space-y-2 text-xs">
+                        <div class="grid grid-cols-2 gap-2 bg-slate-950 p-2.5 rounded-lg border border-slate-800/60">
+                            <div><p class="text-[10px] text-slate-500">Metal Purity</p><p class="font-medium text-slate-200">14 KT Yellow Gold</p></div>
+                            <div><p class="text-[10px] text-slate-500">Production Size</p><p class="font-medium text-slate-200">Ring Size 7 / Chain 22"</p></div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 bg-slate-950 p-2.5 rounded-lg border border-slate-800/60">
+                            <div><p class="text-[10px] text-slate-500">Findings Track</p><p class="font-medium text-slate-200">Medium Weight Chain</p></div>
+                            <div><p class="text-[10px] text-slate-500">Earring Settings</p><p class="font-medium text-slate-200">Standard Post & Nut</p></div>
+                        </div>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/60">
+                            <p class="text-[10px] text-slate-500">Production Remarks & Engravings</p>
+                            <p class="font-medium text-amber-500 mt-0.5">Engrave "Unmol 2026" cleanly inside base framework.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCREEN 5: DESIGNER WORKSPACE & LAYOUT REVIEW -->
+            <div id="screen-5" class="screen-view space-y-4 hidden">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wide">Artist Workspace</span>
+                        <span class="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">Initial Layout Draft</span>
+                    </div>
+                    <p class="text-xs text-slate-400 leading-relaxed">Upload flat perspective layout lines here to let system parsing verify measurements prior to final heavy CAD rendering.</p>
+                    
+                    <div class="border-2 border-dashed border-slate-700 hover:border-amber-500/50 bg-slate-950 rounded-xl p-6 text-center cursor-pointer transition-all">
+                        <span class="text-2xl block mb-1">📤</span>
+                        <p class="text-xs font-semibold text-slate-300">Upload 1st Layout Framework</p>
+                        <p class="text-[10px] text-slate-500 mt-1">Supports PNG, SVG, or vector templates</p>
+                    </div>
+                </div>
+
+                <!-- Human Support Trigger Action -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-slate-200">Need structural clarification?</p>
+                        <p class="text-[10px] text-slate-500">Flag the system to loop in team leads</p>
+                    </div>
+                    <button class="bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white px-3 py-1.5 rounded-lg border border-slate-700 transition-all">
+                        Ask For Help
+                    </button>
+                </div>
+            </div>
+
+            <!-- SCREEN 6: FINAL TECHNICAL ASSET SUBMISSION -->
+            <div id="screen-6" class="screen-view space-y-4 hidden">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
+                    <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wide">Final Asset Signoff Manual</h3>
+                    
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Production Checklist Allocation Box</label>
+                            <textarea readonly class="w-full bg-slate-950 text-xs border border-slate-800 rounded-xl p-2.5 text-slate-300 font-mono focus:outline-none min-h-[80px]">REMARK ISOLATION LOGIC:
+- Post Type: 0.8mm friction prong post
+- Backing configuration: Butterfly Nut heavy
+- Dynamic additions: Chain link loops structural support</textarea>
+                        </div>
+
+                        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
+                            <div class="flex items-center gap-2.5">
+                                <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs">STL</div>
+                                <div>
+                                    <p class="text-xs font-medium text-slate-300">Final_Production_Corel.stl</p>
+                                    <p class="text-[9px] text-slate-500">14.2 MB • Ready for Cast Line</p>
+                                    <p class="text-[9px] text-emerald-400 font-medium mt-0.5">✓ Geometries match setup specifications</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCREEN 7: INTELLIGENT PRICING & QUOTATION ENGINE -->
+            <div id="screen-7" class="screen-view space-y-4 hidden">
+                <!-- 95% Automated Calculation Card -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+                    <h3 class="text-xs font-bold text-emerald-400 uppercase tracking-wide">95% Standardized Rule Cost Matrix</h3>
+                    <div class="space-y-2 text-xs">
+                        <div class="flex justify-between py-1 border-b border-slate-800"><span class="text-slate-400">Client Contract Level:</span><span class="text-slate-200 font-medium">Tier-1 Partner</span></div>
+                        <div class="flex justify-between py-1 border-b border-slate-800"><span class="text-slate-400">Metal Premium Rule:</span><span class="text-slate-200 font-medium">+12% overhead added to spot</span></div>
+                        <div class="flex justify-between py-1"><span class="text-slate-400">Computed Base Quote:</span><span class="text-emerald-400 font-bold">$4,250.00</span></div>
+                    </div>
+                </div>
+
+                <!-- 5% Edge Case Copy Paste Trigger -->
+                <div class="bg-slate-900 border border-amber-500/20 bg-amber-950/5 rounded-2xl p-4 space-y-3">
+                    <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wide">5% Exotic Material Outbound Request</h3>
+                    <p class="text-[11px] text-slate-400">Exotic gemstones detected without static back-end parameters. Forward to appraisal groups:</p>
+                    <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800 relative">
+                        <p id="whatsapp-text" class="text-[11px] text-slate-300 font-mono leading-relaxed">RFQ Request #15409: Need appraisal metrics evaluation for 3.5mm natural salt-water seed pearls, AAA symmetry grade. Reply with wholesale cost base.</p>
+                        <button onclick="copyWhatsAppSnippet()" class="mt-2 w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-[10px] font-bold tracking-wide rounded-md border border-slate-700 text-slate-200 transition-all">
+                            Copy Outbound WhatsApp Snippet
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Target Budget AI Calculator Dashboard -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wide">Target Budget Breakdowns</h3>
+                    <div class="space-y-2">
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Target Retail Boundary Max ($)</label>
+                            <input type="text" value="10000" class="w-full bg-slate-950 text-xs border border-slate-800 rounded-xl p-2.5 font-bold text-emerald-400 focus:outline-none">
+                        </div>
+                        <div class="p-2.5 bg-slate-950 rounded-xl space-y-1.5 text-xs border border-slate-800/80">
+                            <div class="flex justify-between text-[11px]"><span class="text-slate-400">- 20% Base Regional Duties:</span><span class="text-red-400 font-medium">-$2,000.00</span></div>
+                            <div class="flex justify-between text-[11px]"><span class="text-slate-400">- Bounding Metal Volumetric Cost (50g):</span><span class="text-slate-200 font-medium">-$4,000.00</span></div>
+                            <div class="h-px bg-slate-800 my-1"></div>
+                            <div class="flex justify-between font-bold text-amber-400 text-xs"><span>Remaining Stone Placement Pool:</span><span>$4,000.00</span></div>
+                        </div>
+                        <div class="p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-[10px] text-amber-300 leading-normal">
+                            ⚠️ <strong>AI Optimization:</strong> Setting an emerald backfill layout across a 3-inch plane will overrun this remaining stone allowance. Trim canvas dimensions to fit budget restrictions.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Static Bottom Navigation Tab Bar for Switching Screens -->
+        <nav class="absolute bottom-0 left-0 right-0 h-16 bg-slate-950/90 backdrop-blur-md border-t border-slate-800 flex justify-around items-center px-2 z-50">
+            <button onclick="switchScreen(3, 'AI Verification & Review')" class="nav-tab flex flex-col items-center justify-center gap-1 text-amber-500" data-screen="3">
+                <span class="text-xs">👁️</span><span class="text-[9px] font-bold tracking-tight">Preview</span>
+            </button>
+            <button onclick="switchScreen(4, 'Designer Routing Matrix')" class="nav-tab flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-200" data-screen="4">
+                <span class="text-xs">🧬</span><span class="text-[9px] font-bold tracking-tight">Route</span>
+            </button>
+            <button onclick="switchScreen(5, 'Designer Workspace')" class="nav-tab flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-200" data-screen="5">
+                <span class="text-xs">🛠️</span><span class="text-[9px] font-bold tracking-tight">Layout</span>
+            </button>
+            <button onclick="switchScreen(6, 'Technical Production Asset')" class="nav-tab flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-200" data-screen="6">
+                <span class="text-xs">📐</span><span class="text-[9px] font-bold tracking-tight">CAD Corel</span>
+            </button>
+            <button onclick="switchScreen(7, 'Intelligent Pricing Engine')" class="nav-tab flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-200" data-screen="7">
+                <span class="text-xs">💰</span><span class="text-[9px] font-bold tracking-tight">Pricing</span>
+            </button>
+        </nav>
+
+    </div>
+
+    <!-- UI Interactions Script -->
+    <script>
+        function switchScreen(screenNumber, screenTitle) {
+            // Hide all views
+            document.querySelectorAll('.screen-view').forEach(view => view.classList.add('hidden'));
+            // Display targeted view
+            document.getElementById(`screen-${screenNumber}`).classList.remove('hidden');
+            // Update Title Context
+            document.getElementById('current-screen-title').innerText = screenTitle;
+            
+            // Adjust active state color rules inside navigation tabs
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                if(tab.getAttribute('data-screen') == screenNumber) {
+                    tab.classList.remove('text-slate-400', 'hover:text-slate-200');
+                    tab.classList.add('text-amber-500');
+                } else {
+                    tab.classList.remove('text-amber-500');
+                    tab.classList.add('text-slate-400', 'hover:text-slate-200');
+                }
+            });
+        }
+
+        function copyWhatsAppSnippet() {
+            const copyText = document.getElementById("whatsapp-text").innerText;
+            navigator.clipboard.writeText(copyText);
+            alert("WhatsApp RFQ payload string copied to clipboard.");
+        }
+    </script>
+</body>
+</html>

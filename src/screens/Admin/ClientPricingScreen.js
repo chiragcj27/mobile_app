@@ -14,7 +14,7 @@ import BrandedAlert from '../../components/common/BrandedAlert';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { useGetClientByIdQuery, useUpdateClientPricingMutation } from '../../store/api';
+import { useGetClientByIdQuery, useUpdateClientPricingMutation, useGetStoneTypesQuery } from '../../store/api';
 import DiamondRow from './components/DiamondRow';
 import DiamondEditModal from './components/DiamondEditModal';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
@@ -39,6 +39,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
   const [silverAndLabsDuties, setSilverAndLabsDuties] = useState('0');
   const [lossAndLabourDuties, setLossAndLabourDuties] = useState('0');
   const [undercutPrice, setUndercutPrice] = useState('0');
+  const [applicableStoneTypes, setApplicableStoneTypes] = useState([]);
   const [pricingMessageFormat, setPricingMessageFormat] = useState('');
   const [diamonds, setDiamonds] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -64,6 +65,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
   });
 
   const [updateClientPricing, { isLoading: isUpdating }] = useUpdateClientPricingMutation();
+  const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
 
   const ensureFileLibraries = useCallback(async () => {
     try {
@@ -123,6 +125,8 @@ const ClientPricingScreen = ({ route, navigation }) => {
           ? diamondsData.map((diamond, index) => createDiamondEntry(diamond, index))
           : []
       );
+
+      setApplicableStoneTypes(clientData.ApplicableStoneTypes || []);
     }
   }, [clientData, createDiamondEntry]);
 
@@ -411,6 +415,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
 
       const pricingData = {
         Name: clientData?.Name || clientData?.name || clientName || '',
+        ApplicableStoneTypes: applicableStoneTypes,
         PricingMessageFormat: pricingMessageFormat || '',
         Pricing: {
           Loss: parseFloat(loss) || 0,
@@ -510,6 +515,32 @@ const ClientPricingScreen = ({ route, navigation }) => {
           </View>
         </View>
 
+        <View style={styles.applicableStonesSection}>
+          <Text style={styles.label}>Applicable Stone Types</Text>
+          <View style={styles.chipRow}>
+            {stoneTypesData.map(st => {
+              const active = applicableStoneTypes.includes(st.value);
+              return (
+                <TouchableOpacity
+                  key={st.value}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => {
+                    setApplicableStoneTypes(prev =>
+                      active
+                        ? prev.filter(v => v !== st.value)
+                        : [...prev, st.value]
+                    );
+                  }}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {st.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
         <View style={styles.messageFormatContainer}>
           <Text style={styles.label}>Pricing Message Format</Text>
           <Input
@@ -571,7 +602,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
         </View>
       </View>
     </View>
-  ), [clientData, clientName, loss, labour, extraCharges, naturalDuties, labDuties, goldDuties, silverAndLabsDuties, lossAndLabourDuties, undercutPrice, pricingMessageFormat, isDownloadingExcel, isImportingExcel, handleAddDiamond, isTablet]);
+  ), [clientData, clientName, loss, labour, extraCharges, naturalDuties, labDuties, goldDuties, silverAndLabsDuties, lossAndLabourDuties, undercutPrice, pricingMessageFormat, applicableStoneTypes, stoneTypesData, isDownloadingExcel, isImportingExcel, handleAddDiamond, isTablet]);
 
   // Render type sections
   const renderTypeSection = useCallback(({ item: [type, rows] }) => {
@@ -889,6 +920,34 @@ const styles = StyleSheet.create({
     fontSize: fonts.sm,
     color: colors.textSecondary,
     fontStyle: 'italic',
+  },
+  applicableStonesSection: {
+    marginBottom: 24,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  chipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  chipText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.medium,
+    color: colors.textPrimary,
+  },
+  chipTextActive: {
+    color: colors.textWhite,
   },
   messageFormatContainer: {
     marginBottom: 24,

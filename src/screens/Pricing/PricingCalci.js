@@ -15,6 +15,7 @@ import BrandedAlert from '../../components/common/BrandedAlert';
 import PdfViewer from '../../components/common/PdfViewer';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { launchImageLibrary } from 'react-native-image-picker';
 
 let DocumentPicker;
@@ -29,24 +30,40 @@ import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
-import { useGetStoneTypesQuery, useGetMetalPricesQuery, useCalculatePricingMutation,useImagepriceDataMutation } from '../../store/api';
+import {
+  useGetStoneTypesQuery,
+  useGetMetalPricesQuery,
+  useCalculatePricingMutation,
+  useImagepriceDataMutation,
+  useGetClientByIdQuery,
+} from '../../store/api';
 
 let generatePDFModule = null;
 try {
   const mod = require('react-native-html-to-pdf');
-  generatePDFModule = mod.generatePDF || mod.default?.generatePDF || mod.default;
+  generatePDFModule =
+    mod.generatePDF || mod.default?.generatePDF || mod.default;
 } catch (e) {}
 
-export default function PricingCalci() {
-  const [clientId, setClientId] = useState('');
-  const [stoneType, setStoneType] = useState('');
+export default function PricingCalci({ route }) {
+  const [clientId, setClientId] = useState(route?.params?.clientId || '');
+  const [selectedStoneTypes, setSelectedStoneTypes] = useState([]);
   const [metalKt, setMetalKt] = useState('18K');
   const [imageFile, setImageFile] = useState(null);
   const [excelFile, setExcelFile] = useState(null);
-  const [imageData, setImageData] = useState(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
+  // Unified State for Multiple Results
+  const [multiData, setMultiData] = useState({});
+  const [expandedStones, setExpandedStones] = useState({});
+
+  const [alertConfig, setAlertConfig] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info',
+    buttons: [],
+  });
   const showAlert = (title, message, type = 'info', buttons = []) =>
     setAlertConfig({ visible: true, title, message, type, buttons });
   const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
@@ -57,530 +74,524 @@ export default function PricingCalci() {
   const [showAllPricesModal, setShowAllPricesModal] = useState(false);
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingContext, setEditingContext] = useState({
+    type: null,
+    index: null,
+  });
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showCompactTypeModal, setShowCompactTypeModal] = useState(false);
+  const [showCompactQualityModal, setShowCompactQualityModal] = useState(false);
+  const [compactContext, setCompactContext] = useState({ type: null });
+
+  const handleCopyMsg = (text) => {
+    if (text) {
+      Clipboard.setString(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const { clients = [] } = useClients();
   const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
   const { data: metalPricesData } = useGetMetalPricesQuery(false);
-  const [calculatePricing, { isLoading: isCalculating }] = useCalculatePricingMutation();
-  const [GetimagepriceData, { isLoading: isImageLoading }] = useImagepriceDataMutation();
+  const { data: selectedClient } = useGetClientByIdQuery(clientId, {
+    skip: !clientId,
+  });
+  const [calculatePricing, { isLoading: isCalculating }] =
+    useCalculatePricingMutation();
+  const [GetimagepriceData, { isLoading: isImageLoading }] =
+    useImagepriceDataMutation();
 
-  const [editableStones, setEditableStones] = useState([]);
-  const [editableMetal, setEditableMetal] = useState({ Weight: 0, Quality: '18K', Rate: 0 });
-  const [editableCharges, setEditableCharges] = useState({ Loss: 10, Labour: 7, ExtraCharges: 0, UndercutPrice: 0 });
-  const [pricingResult, setPricingResult] = useState(null);
-  const [isRecalculating, setIsRecalculating] = useState(false);
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editingStoneIndex, setEditingStoneIndex] = useState(null);
-
-  const validatePricingData = useCallback(() => {
-    const hasMetalRate = editableMetal && parseFloat(editableMetal.Rate) > 0;
-    const allStonesHavePrices = editableStones.length > 0 && editableStones.every(stone => parseFloat(stone.Price || 0) > 0);
-    return hasMetalRate && allStonesHavePrices;
-  }, [editableMetal, editableStones]);
-
-  const canRecalculate = validatePricingData();
-
+  // Auto-fill stone types when client is selected
   useEffect(() => {
-    if (!imageData) return;
-    
-    const p = imageData.pricing || imageData.extractedData || imageData;
-    const extractedData = imageData.extractedData || {};
-    const hasStones = p.Stones && Array.isArray(p.Stones) && p.Stones.length > 0;
-    const hasExtractedStones = extractedData.Stones && Array.isArray(extractedData.Stones) && extractedData.Stones.length > 0;
-    const hasMetal = p.Metal && (parseFloat(p.Metal.Weight) > 0);
-    const hasExtractedMetal = extractedData.Metal && (parseFloat(extractedData.Metal.Weight) > 0);
-    const hasTotalPieces = (extractedData.TotalPieces && extractedData.TotalPieces > 0) || (p.TotalPieces && p.TotalPieces > 0);
+    if (clientId && selectedClient?.ApplicableStoneTypes) {
+      setSelectedStoneTypes(selectedClient.ApplicableStoneTypes);
+    } else {
+      setSelectedStoneTypes([]);
+    }
+  }, [clientId, selectedClient]);
 
-    if (!hasStones && !hasExtractedStones && !hasMetal && !hasExtractedMetal && !hasTotalPieces) {
-      showAlert(
-        'No Data Found',
-        'No pricing data was extracted from the image. Please reupload a clear image with visible pricing information.',
-        'warning',
-        [
+  const validatePricingData = useCallback(
+    type => {
+      const data = multiData[type];
+      if (!data) return false;
+      const hasMetalRate =
+        data.editableMetal && parseFloat(data.editableMetal.Rate) > 0;
+      const allStonesHavePrices =
+        data.editableStones.length > 0 &&
+        data.editableStones.every(stone => parseFloat(stone.Price || 0) > 0);
+      return hasMetalRate && allStonesHavePrices;
+    },
+    [multiData],
+  );
+
+  const hasAnyMissingStoneData = useCallback(() => {
+    const activeTypes = Object.keys(multiData);
+    if (activeTypes.length === 0) return true;
+
+    return activeTypes.some(type => {
+      const data = multiData[type];
+      return data.editableStones.some(
+        stone =>
+          !stone.MmSize?.toString().trim() ||
+          !stone.Color?.toString().trim() ||
+          !stone.Shape?.toString().trim() ||
+          !stone.SieveSize?.toString().trim() ||
+          parseFloat(stone.Weight) <= 0 ||
+          parseInt(stone.Pcs) <= 0 ||
+          parseFloat(stone.CtWeight) <= 0 ||
+          parseFloat(stone.Price) <= 0,
+      );
+    });
+  }, [multiData]);
+
+  const validateStoneType = clientId => {
+    if (clientId === '6871535a0798b31bfa7fe5e4') {
+      setSelectedStoneTypes();
+    }
+  };
+
+  const toggleAccordion = type => {
+    setExpandedStones(prev => ({ ...prev, [type]: !prev[type] }));
+  };
+
+  const updateMultiData = (type, key, val) => {
+    setMultiData(prev => ({
+      ...prev,
+      [type]: { ...prev[type], [key]: val },
+    }));
+  };
+
+  const updateStone = (type, index, field, value) => {
+    setMultiData(prev => {
+      const nextStones = [...prev[type].editableStones];
+      nextStones[index] = { ...nextStones[index], [field]: value };
+      return { ...prev, [type]: { ...prev[type], editableStones: nextStones } };
+    });
+  };
+
+  const deleteStone = (type, index) => {
+    setMultiData(prev => ({
+      ...prev,
+      [type]: {
+        ...prev[type],
+        editableStones: prev[type].editableStones.filter((_, i) => i !== index),
+      },
+    }));
+  };
+
+  const addStone = type => {
+    setMultiData(prev => ({
+      ...prev,
+      [type]: {
+        ...prev[type],
+        editableStones: [
+          ...prev[type].editableStones,
           {
-            text: 'OK',
-            onPress: () => {
-              setImageFile(null);
-              setImageData(null);
-              setEditableStones([]);
-              setEditableMetal({ Weight: 0, Quality: '18K', Rate: 0 });
-              setPricingResult(null);
-              hideAlert();
-            }
-          }
-        ]
+            Type: type,
+            Color: 'WH',
+            Shape: 'RD',
+            MmSize: '',
+            SieveSize: '',
+            Weight: 0,
+            Pcs: 0,
+            CtWeight: 0,
+            Price: 0,
+            Markup: 0,
+          },
+        ],
+      },
+    }));
+  };
+
+  const handleImagePick = async () => {
+    if (!clientId) {
+      showAlert('Validation Error', 'Please select a client first', 'warning');
+      return;
+    }
+    if (selectedStoneTypes.length === 0) {
+      showAlert(
+        'Validation Error',
+        'Please select at least one stone type',
+        'warning',
       );
       return;
     }
-    
-    if (!imageData.pricing) return;
 
-    setEditableStones(
-      (p.Stones || []).map(s => ({ ...s }))
-    );
-    setEditableMetal({
-      Weight: p.Metal?.Weight || 0,
-      Quality: p.Metal?.Quality || metalKt,
-      Rate: p.Metal?.Rate || 0,
-    });
-    setEditableCharges({
-      Loss: p.Client?.Loss ?? 10,
-      Labour: p.Client?.Labour ?? 7,
-      ExtraCharges: p.Client?.ExtraCharges ?? 0,
-      UndercutPrice: p.Client?.UndercutPrice ?? 0,
-    });
-    setPricingResult(p);
-  }, [imageData, metalKt]);
+    try {
+      const pickerResult = await launchImageLibrary({
+        mediaType: 'photo',
+        quality: 0.8,
+      });
+      if (pickerResult.didCancel) return;
 
-  const updateStone = (index, field, value) => {
-    setEditableStones(prev => {
-      const next = [...prev];
-      next[index] = { ...next[index], [field]: value };
-      return next;
-    });
-  };
+      if (pickerResult.assets && pickerResult.assets.length > 0) {
+        const asset = pickerResult.assets[0];
+        if (asset.fileSize && asset.fileSize > 20 * 1024 * 1024) {
+          showAlert(
+            'File too large',
+            'Maximum allowed image size is 20MB.',
+            'warning',
+          );
+          return;
+        }
 
-  const deleteStone = (index) => {
-    setEditableStones(prev => prev.filter((_, i) => i !== index));
-  };
+        const newImageFile = {
+          uri: asset.uri,
+          name: asset.fileName || `image_${Date.now()}.jpg`,
+          type: asset.type || 'image/jpeg',
+        };
+        setImageFile(newImageFile);
+        setIsExtracting(true);
 
-  const addStone = () => {
-    setEditableStones(prev => [...prev, {
-      Type: '', Color: 'WH', Shape: 'RD',
-      MmSize: '', SieveSize: '',
-      Weight: 0, Pcs: 0, CtWeight: 0,
-      Price: 0, Markup: 0,
-    }]);
-  };
+        try {
+          const requests = selectedStoneTypes.map(type =>
+            GetimagepriceData({
+              image: newImageFile,
+              clientId: clientId,
+              stoneType: type,
+              metalQuality: metalKt,
+            })
+              .unwrap()
+              .then(res => ({ type, data: res })),
+          );
 
+          const resultsArray = await Promise.all(requests);
+          const newMultiData = {};
+          const newExpanded = {};
 
+          resultsArray.forEach(({ type, data }) => {
+            const p = data.pricing || data.extractedData || data;
+            const extractedData = data.extractedData || {};
 
-  const handleRecalculate = async () => {
-    if (!clientId) {
-      showAlert('Validation Error', 'Client is required for pricing', 'warning');
-      return;
+            const hasData =
+              (p.Stones && p.Stones.length > 0) ||
+              (extractedData.Stones && extractedData.Stones.length > 0) ||
+              (p.Metal && parseFloat(p.Metal.Weight) > 0) ||
+              (extractedData.Metal &&
+                parseFloat(extractedData.Metal.Weight) > 0) ||
+              p.TotalPieces > 0 ||
+              extractedData.TotalPieces > 0;
+
+            if (hasData) {
+              newMultiData[type] = {
+                imageData: data,
+                // Ensure Type is set if missing
+                editableStones: (p.Stones || []).map(s => ({
+                  Type: type,
+                  ...s,
+                })),
+                editableMetal: {
+                  Weight: p.Metal?.Weight || 0,
+                  Quality: p.Metal?.Quality || metalKt,
+                  Rate: p.Metal?.Rate || 0,
+                },
+                editableCharges: {
+                  Loss: p.Client?.Loss ?? 10,
+                  Labour: p.Client?.Labour ?? 7,
+                  ExtraCharges: p.Client?.ExtraCharges ?? 0,
+                  UndercutPrice: p.Client?.UndercutPrice ?? 0,
+                },
+                pricingResult: p,
+              };
+              newExpanded[type] = true;
+            }
+          });
+
+          if (Object.keys(newMultiData).length === 0) {
+            showAlert(
+              'No Data Found',
+              'No pricing data was extracted from the image.',
+              'warning',
+            );
+            setImageFile(null);
+            setMultiData({});
+          } else {
+            setMultiData(newMultiData);
+            setExpandedStones(newExpanded);
+          }
+        } catch (apiError) {
+          console.error('❌ API Error:', apiError);
+          showAlert(
+            'Extraction Error',
+            'Failed to extract pricing data. Check configuration.',
+            'error',
+          );
+          setImageFile(null);
+        } finally {
+          setIsExtracting(false);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Image Picker Error:', error);
+      showAlert('Error', 'Failed to pick image.', 'error');
+      setIsExtracting(false);
     }
+  };
+
+  const handleRecalculate = async type => {
+    const data = multiData[type];
+    if (!clientId || !data) return;
+
     setIsRecalculating(true);
     try {
-      const formattedStones = editableStones.map(s => ({
-        Type: s.Type || stoneType || '',
-        Color: s.Color || '',
-        Shape: s.Shape || '',
-        MmSize: (s.MmSize || '0').toString(),
-        SieveSize: (s.SieveSize || '0').toString(),
-        CtWeight: parseFloat(s.CtWeight || 0) || 0,
-        Weight: parseFloat(s.Weight || 0) || 0,
-        Pcs: parseInt(s.Pcs || 0, 10) || 0,
-        Price: parseFloat(s.Price || 0) || 0,
-      })).filter(s => s.Type);
+      const formattedStones = data.editableStones
+        .map(s => ({
+          Type: s.Type || type,
+          Color: s.Color || '',
+          Shape: s.Shape || '',
+          MmSize: (s.MmSize || '0').toString(),
+          SieveSize: (s.SieveSize || '0').toString(),
+          CtWeight: parseFloat(s.CtWeight || 0) || 0,
+          Weight: parseFloat(s.Weight || 0) || 0,
+          Pcs: parseInt(s.Pcs || 0, 10) || 0,
+          Price: parseFloat(s.Price || 0) || 0,
+        }))
+        .filter(s => s.Type);
 
       const result = await calculatePricing({
         details: {
           Metal: {
-            Weight: parseFloat(editableMetal.Weight || 0) || 0,
-            Quality: editableMetal.Quality || metalKt,
-            Rate: parseFloat(editableMetal.Rate || 0) || 0,
+            Weight: parseFloat(data.editableMetal.Weight || 0) || 0,
+            Quality: data.editableMetal.Quality || metalKt,
+            Rate: parseFloat(data.editableMetal.Rate || 0) || 0,
           },
           Stones: formattedStones,
           Quantity: 1,
-          Loss:          parseFloat(editableCharges.Loss || 0) || 0,
-          Labour:        parseFloat(editableCharges.Labour || 0) || 0,
-          ExtraCharges:  parseFloat(editableCharges.ExtraCharges || 0) || 0,
-          UndercutPrice: parseFloat(editableCharges.UndercutPrice || 0) || 0,
+          Loss: parseFloat(data.editableCharges.Loss || 0) || 0,
+          Labour: parseFloat(data.editableCharges.Labour || 0) || 0,
+          ExtraCharges: parseFloat(data.editableCharges.ExtraCharges || 0) || 0,
+          UndercutPrice:
+            parseFloat(data.editableCharges.UndercutPrice || 0) || 0,
         },
         clientId,
         isRecalculate: true,
       }).unwrap();
 
-      setPricingResult(result);
-      showAlert('Recalculated', `Total Price: $${result.TotalPrice ?? result.totalPrice ?? 0}`, 'success');
+      setMultiData(prev => ({
+        ...prev,
+        [type]: {
+          ...prev[type],
+          editableStones:
+            result.Stones && Array.isArray(result.Stones)
+              ? result.Stones.map(s => ({ ...s }))
+              : prev[type].editableStones,
+          pricingResult: result,
+        },
+      }));
+
+      showAlert(
+        'Recalculated',
+        `${type} Total Price: $${result.TotalPrice ?? result.totalPrice ?? 0}`,
+        'success',
+      );
     } catch (error) {
-      const msg = error?.data?.message || error?.message || 'Recalculation failed';
-      showAlert('Error', msg, 'error');
+      showAlert(
+        'Error',
+        error?.data?.message || 'Recalculation failed',
+        'error',
+      );
     } finally {
       setIsRecalculating(false);
     }
   };
 
   const buildPricingHtml = useCallback(() => {
-    if (!pricingResult) return '';
+    const activeTypes = Object.keys(multiData);
+    if (activeTypes.length === 0) return '';
 
-    const stonesHtml = editableStones.map((s, idx) => `
-      <tr style="${idx % 2 === 0 ? 'background:#f9f9f9' : ''}">
-        <td style="padding:8px;border:1px solid #ddd;text-align:center">${s.MmSize || '-'}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:center">${s.Color || '-'}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:center">${s.Shape || '-'}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:center">${s.SieveSize || '-'}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:right">${s.Weight || 0}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:center">${s.Pcs || 0}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:right">${s.CtWeight || 0}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:right">${s.Markup || 0}</td>
-        <td style="padding:8px;border:1px solid #ddd;text-align:right">$${s.Price || 0}</td>
-      </tr>
-    `).join('');
+    const clientName =
+      clients.find(c => c.id === clientId || c._id === clientId)?.name || 'N/A';
+    const currentDate = new Date().toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
 
-    const applicableDuties = pricingResult.Applicable 
-      ? Object.entries(pricingResult.Applicable)
-          .filter(([_, value]) => value)
-          .map(([key]) => key.replace(/([A-Z])/g, ' $1').trim())
-          .join(', ')
-      : 'None';
+    let sectionsHtml = activeTypes
+      .map(type => {
+        const data = multiData[type];
+        const result = data.pricingResult;
 
-    const clientName = clients.find(c => c.id === clientId || c._id === clientId)?.name || 'N/A';
-    const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        const stonesHtml = data.editableStones
+          .map(
+            (s, idx) => `
+        <tr style="${idx % 2 === 0 ? 'background:#f9f9f9' : ''}">
+          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
+            s.Type || type
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
+            s.MmSize || '-'
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
+            s.Color || '-'
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
+            s.Shape || '-'
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
+            s.SieveSize || '-'
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:right">${
+            s.Weight || 0
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
+            s.Pcs || 0
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:right">${
+            s.CtWeight || 0
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:right">${
+            s.Markup || 0
+          }</td>
+          <td style="padding:8px;border:1px solid #ddd;text-align:right">$${
+            s.Price || 0
+          }</td>
+        </tr>`,
+          )
+          .join('');
 
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { font-family: Arial, sans-serif; padding: 30px; color: #333; }
-          .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid #D4AF37; padding-bottom: 20px; }
-          .header h1 { color: #D4AF37; margin: 0; font-size: 28px; }
-          .header p { color: #666; margin: 5px 0; font-size: 14px; }
-          .section { margin: 25px 0; }
-          .section-title { background: #D4AF37; color: white; padding: 10px 15px; font-size: 16px; font-weight: bold; margin-bottom: 15px; }
-          .info-grid { display: table; width: 100%; margin-bottom: 15px; }
-          .info-row { display: table-row; }
-          .info-label { display: table-cell; padding: 8px; font-weight: bold; color: #555; width: 40%; border-bottom: 1px solid #eee; }
-          .info-value { display: table-cell; padding: 8px; color: #333; border-bottom: 1px solid #eee; }
-          table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-          th { background: #8B4513; color: white; padding: 10px; text-align: center; font-size: 13px; border: 1px solid #ddd; }
-          td { padding: 8px; border: 1px solid #ddd; font-size: 12px; }
-          .total-section { background: #f5f5f5; padding: 20px; border-radius: 8px; margin-top: 20px; }
-          .total-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #ddd; }
-          .total-label { font-weight: bold; color: #555; }
-          .total-value { color: #333; font-weight: bold; }
-          .grand-total { font-size: 20px; color: #D4AF37; margin-top: 15px; padding-top: 15px; border-top: 2px solid #D4AF37; }
-          .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 2px solid #eee; color: #999; font-size: 11px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>Chandra Jewels</h1>
-          <p>Pricing Calculation Report</p>
-          <p>${currentDate}</p>
-        </div>
+        const applicableDuties = result.Applicable
+          ? Object.entries(result.Applicable)
+              .filter(([_, value]) => value)
+              .map(([key]) => key.replace(/([A-Z])/g, ' $1').trim())
+              .join(', ')
+          : 'None';
 
+        return `
         <div class="section">
-          <div class="section-title">Client Information</div>
+          <h2>${type} Report</h2>
           <div class="info-grid">
-            <div class="info-row">
-              <div class="info-label">Client Name:</div>
-              <div class="info-value">${clientName}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Stone Type:</div>
-              <div class="info-value">${stoneType || 'N/A'}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Total Pieces:</div>
-              <div class="info-value">${imageData?.extractedData?.TotalPieces || pricingResult.TotalPieces || 0}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Diamond Weight:</div>
-              <div class="info-value">${pricingResult.DiamondWeight || 0} ct</div>
-            </div>
+            <div class="info-row"><div class="info-label">Diamond Weight:</div><div class="info-value">${
+              result.DiamondWeight || 0
+            } ct</div></div>
+            <div class="info-row"><div class="info-label">Metal Details:</div><div class="info-value">${
+              data.editableMetal.Weight || 0
+            }g, ${data.editableMetal.Quality}, $${
+          data.editableMetal.Rate
+        }/g</div></div>
           </div>
-        </div>
 
-        <div class="section">
-          <div class="section-title">Metal Details</div>
-          <div class="info-grid">
-            <div class="info-row">
-              <div class="info-label">Weight:</div>
-              <div class="info-value">${editableMetal.Weight || 0} g</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Quality:</div>
-              <div class="info-value">${editableMetal.Quality || 'N/A'}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Rate:</div>
-              <div class="info-value">$${editableMetal.Rate || 0}/g</div>
-            </div>
-          </div>
-        </div>
-
-        ${editableStones.length > 0 ? `
-        <div class="section">
-          <div class="section-title">Stones Breakdown (${editableStones.length} items)</div>
+          ${
+            data.editableStones.length > 0
+              ? `
+          <h3>Stones Breakdown</h3>
           <table>
-            <thead>
-              <tr>
-                <th>MM</th>
-                <th>Color</th>
-                <th>Shape</th>
-                <th>Sieve</th>
-                <th>Avg Wt</th>
-                <th>Pcs</th>
-                <th>Ct Wt</th>
-                <th>Markup</th>
-                <th>$/Ct</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${stonesHtml}
-            </tbody>
-          </table>
-        </div>` : ''}
+            <thead><tr><th>Type</th><th>MM</th><th>Color</th><th>Shape</th><th>Sieve</th><th>Avg Wt</th><th>Pcs</th><th>Ct Wt</th><th>Markup</th><th>$/Ct</th></tr></thead>
+            <tbody>${stonesHtml}</tbody>
+          </table>`
+              : ''
+          }
 
-        <div class="section">
-          <div class="section-title">Client Charges</div>
-          <div class="info-grid">
-            <div class="info-row">
-              <div class="info-label">Loss:</div>
-              <div class="info-value">${pricingResult.Client?.Loss || editableCharges.Loss || 0}%</div>
+          <div style="display: flex; justify-content: space-between; margin-top: 20px;">
+            <div style="width: 48%;">
+              <h3>Client Charges Applied</h3>
+              <div class="info-grid">
+                <div class="info-row"><div class="info-label" style="font-size:12px;">Loss:</div><div class="info-value" style="font-size:12px;">${
+                  result.Client?.Loss || data.editableCharges.Loss || 0
+                }%</div></div>
+                <div class="info-row"><div class="info-label" style="font-size:12px;">Labour:</div><div class="info-value" style="font-size:12px;">$${
+                  result.Client?.Labour || data.editableCharges.Labour || 0
+                }/g</div></div>
+                <div class="info-row"><div class="info-label" style="font-size:12px;">Extra Charges:</div><div class="info-value" style="font-size:12px;">${
+                  result.Client?.ExtraCharges ||
+                  data.editableCharges.ExtraCharges ||
+                  0
+                }%</div></div>
+                ${
+                  (result.Client?.UndercutPrice ||
+                    data.editableCharges.UndercutPrice) > 0
+                    ? `
+                <div class="info-row"><div class="info-label" style="font-size:12px;">Undercut Price:</div><div class="info-value" style="font-size:12px;">$${
+                  result.Client?.UndercutPrice ||
+                  data.editableCharges.UndercutPrice ||
+                  0
+                }/ct</div></div>`
+                    : ''
+                }
+              </div>
             </div>
-            <div class="info-row">
-              <div class="info-label">Labour:</div>
-              <div class="info-value">$${pricingResult.Client?.Labour || editableCharges.Labour || 0}/g</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Extra Charges:</div>
-              <div class="info-value">${pricingResult.Client?.ExtraCharges || editableCharges.ExtraCharges || 0}%</div>
-            </div>
-            ${(pricingResult.Client?.UndercutPrice || editableCharges.UndercutPrice) > 0 ? `
-            <div class="info-row">
-              <div class="info-label">Undercut Price:</div>
-              <div class="info-value">$${pricingResult.Client?.UndercutPrice || editableCharges.UndercutPrice || 0}/ct</div>
-            </div>` : ''}
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-title">Applicable Duties</div>
-          <div class="info-grid">
-            <div class="info-row">
-              <div class="info-label">Applied Duties:</div>
-              <div class="info-value">${applicableDuties}</div>
+            
+            <div style="width: 48%;">
+              <h3>Applicable Duties</h3>
+              <p style="font-size: 12px; margin: 0; padding: 8px;">${applicableDuties}</p>
             </div>
           </div>
-        </div>
 
-        <div class="total-section">
-          <div class="total-row">
-            <span class="total-label">Metal Price:</span>
-            <span class="total-value">$${(pricingResult.MetalPrice || 0).toFixed(2)}</span>
-          </div>
-          <div class="total-row">
-            <span class="total-label">Diamonds Price:</span>
-            <span class="total-value">$${(pricingResult.DiamondsPrice || 0).toFixed(2)}</span>
-          </div>
-          <div class="total-row">
-            <span class="total-label">Duties Amount:</span>
-            <span class="total-value">$${(pricingResult.DutiesAmount || 0).toFixed(2)}</span>
-          </div>
-          <div class="total-row grand-total">
-            <span class="total-label">TOTAL PRICE:</span>
-            <span class="total-value">$${(pricingResult.TotalPrice || 0).toFixed(2)}</span>
+          <div class="total-section">
+            <div class="total-row"><span class="total-label">Metal Price:</span><span class="total-value">$${(
+              result.MetalPrice || 0
+            ).toFixed(2)}</span></div>
+            <div class="total-row"><span class="total-label">Diamonds Price:</span><span class="total-value">$${(
+              result.DiamondsPrice || 0
+            ).toFixed(2)}</span></div>
+            <div class="total-row"><span class="total-label">Duties Amount:</span><span class="total-value">$${(
+              result.DutiesAmount || 0
+            ).toFixed(2)}</span></div>
+            <div class="total-row grand-total" style="border-top: 2px solid #143F45; margin-top: 10px; padding-top: 10px;">
+              <span class="total-label" style="color: #D4AF37;">TOTAL PRICE:</span>
+              <span class="total-value" style="color: #D4AF37;">$${(
+                result.TotalPrice || 0
+              ).toFixed(2)}</span>
+            </div>
           </div>
         </div>
+      `;
+      })
+      .join('');
 
-        <div class="footer">
-          <p>Generated by Chandra Jewels Management App</p>
-          <p>This is a computer-generated document and does not require a signature</p>
-        </div>
-      </body>
-      </html>`;
-  }, [pricingResult, editableStones, editableMetal, editableCharges, imageData, clients, clientId, stoneType]);
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>@page{margin:0;padding:0}*{margin:0;padding:0;box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;padding:10px;color:#1A1A1A}.header{text-align:center;margin-bottom:12px;border-bottom:2px solid #143F45;padding-bottom:8px}.header h1{color:#143F45;margin:0 0 4px 0;font-size:22px}.header p{margin:2px 0;font-size:12px}.info-grid{display:table;width:100%;margin-bottom:10px}.info-row{display:table-row}.info-label{display:table-cell;padding:5px;font-weight:bold;width:40%;border-bottom:1px solid #F3F4F6;font-size:11px}.info-value{display:table-cell;padding:5px;border-bottom:1px solid #F3F4F6;font-size:11px}table{width:100%;border-collapse:collapse;margin:10px 0}th{background:#8B4513;color:white;padding:6px 3px;font-size:10px;border:1px solid #E5E7EB}td{padding:5px 3px;border:1px solid #E5E7EB;font-size:10px}.total-section{background:#F8F9FB;padding:12px;border-radius:4px;margin-top:12px}.total-row{display:flex;justify-content:space-between;padding:4px 0;font-size:11px}.grand-total{font-size:14px;font-weight:bold}.footer{text-align:center;margin-top:15px;padding-top:8px;border-top:1px solid #F3F4F6;color:#9CA3AF;font-size:9px}.section{page-break-inside:avoid;border:1px solid #eee;padding:12px;border-radius:4px;margin-bottom:12px}.section h2{color:#143F45;border-bottom:1px solid #143F45;padding-bottom:6px;margin:0 0 10px 0;font-size:16px}.section h3{background:#143F45;color:white;padding:5px 6px;font-size:12px;margin:10px 0 6px 0}</style></head><body><div class="header"><h1>Chandra Jewels</h1><p>Multi-Stone Pricing Report - ${clientName}</p><p>${currentDate}</p></div>${sectionsHtml}<div class="footer"><p>Generated by Chandra Jewels Management App</p><p>This is a computer-generated document and does not require a signature</p></div></body></html>`;
+  }, [multiData, clients, clientId]);
 
   const generatePdfFile = useCallback(async () => {
-    if (!pricingResult) {
-      throw new Error('No pricing data available to export');
-    }
-    
-    if (typeof generatePDFModule !== 'function') {
-      throw new Error('PDF generation library is not available. Please install react-native-html-to-pdf');
-    }
-    
+    if (typeof generatePDFModule !== 'function')
+      throw new Error('PDF library not available');
     const html = buildPricingHtml();
-    if (!html) {
-      throw new Error('Failed to generate PDF content');
-    }
-    
-    const clientName = clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client';
-    const fileName = `Pricing_${clientName.replace(/\s+/g, '_')}_${Date.now()}`;
-    
-    const options = {
+    const clientName =
+      clients.find(c => c.id === clientId || c._id === clientId)?.name ||
+      'Client';
+    return await generatePDFModule({
       html,
-      fileName,
+      fileName: `Pricing_${clientName.replace(/\s+/g, '_')}_${Date.now()}`,
       directory: 'Documents',
       base64: false,
-    };
-    
-    const result = await generatePDFModule(options);
-    return result;
-  }, [buildPricingHtml, pricingResult, clients, clientId]);
+      padding: 0,
+    });
+  }, [buildPricingHtml, clients, clientId]);
 
-  const handleSharePDF = useCallback(async () => {
-    if (!pricingResult) {
-      showAlert('No Data', 'Please calculate pricing first before sharing', 'info');
-      return;
-    }
-    
+  const handleSharePDF = async () => {
     try {
       const pdf = await generatePdfFile();
-      
-      if (!pdf || !pdf.filePath) {
-        throw new Error('PDF generation failed - no file path returned');
-      }
-      
-      // Check if file exists
-      const fileExists = await RNFS.exists(pdf.filePath);
-      if (!fileExists) {
-        throw new Error('PDF file was not created successfully');
-      }
-      
-      // Copy to cache directory for sharing
-      const clientName = clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client';
-      const fileName = `Pricing_${clientName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
-      const cachePath = `${RNFS.CachesDirectoryPath}/${fileName}`;
-      
+      const cachePath = `${
+        RNFS.CachesDirectoryPath
+      }/PricingReport_${Date.now()}.pdf`;
       await RNFS.copyFile(pdf.filePath, cachePath);
-      
-      // Verify cache file exists
-      const cacheExists = await RNFS.exists(cachePath);
-      if (!cacheExists) {
-        throw new Error('Failed to copy PDF to cache');
-      }
-      
-      const shareOptions = {
+      await Share.open({
         title: 'Share Pricing Report',
-        message: 'Chandra Jewellery Pricing Report',
         url: Platform.OS === 'android' ? `file://${cachePath}` : cachePath,
         type: 'application/pdf',
-        subject: 'Pricing Report',
-        failOnCancel: false,
-      };
-      
-      const result = await Share.open(shareOptions);
-      
-      // Clean up cache file after sharing
-      setTimeout(async () => {
-        try {
-          await RNFS.unlink(cachePath);
-        } catch (cleanupError) {
-          console.log('Cache cleanup error:', cleanupError);
-        }
-      }, 5000);
-      
+      });
+      setTimeout(() => RNFS.unlink(cachePath).catch(() => {}), 5000);
     } catch (e) {
-      console.error('Share PDF Error:', e);
-      if (e?.message && !e.message.includes('User did not share') && !e.message.includes('cancelled') && !e.message.includes('User cancelled')) {
-        showAlert('Share Failed', e.message || 'Failed to share PDF. Please try again.', 'error');
-      }
+      if (e?.message && !e.message.includes('cancel'))
+        showAlert('Share Failed', 'Failed to share PDF.', 'error');
     }
-  }, [pricingResult, generatePdfFile, clients, clientId]);
+  };
 
-  const handleExportDownload = useCallback(async () => {
-    if (!pricingResult) {
-      showAlert('No Data', 'Please calculate pricing first before exporting', 'info');
-      return;
-    }
-    
-    try {
-      // Request storage permission for Android
-      if (Platform.OS === 'android') {
-        const { PermissionsAndroid } = require('react-native');
-        
-        // For Android 13+ (API 33+), we don't need WRITE_EXTERNAL_STORAGE
-        const androidVersion = Platform.Version;
-        
-        if (androidVersion < 33) {
-          const granted = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-            {
-              title: 'Storage Permission',
-              message: 'App needs access to your storage to save PDF files',
-              buttonNeutral: 'Ask Me Later',
-              buttonNegative: 'Cancel',
-              buttonPositive: 'OK',
-            }
-          );
-          
-          if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-            showAlert('Permission Denied', 'Storage permission is required to download files', 'warning');
-            return;
-          }
-        }
-      }
-      
-      const pdf = await generatePdfFile();
-      
-      if (!pdf || !pdf.filePath) {
-        throw new Error('PDF generation failed - no file path returned');
-      }
-      
-      // Check if source file exists
-      const fileExists = await RNFS.exists(pdf.filePath);
-      if (!fileExists) {
-        throw new Error('PDF file was not created successfully');
-      }
-      
-      const clientName = clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client';
-      const fileName = `Pricing_${clientName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
-      const fileUrl = Platform.OS === 'android' ? `file://${pdf.filePath}` : pdf.filePath;
-      
-      if (Platform.OS === 'ios') {
-        // For iOS, trigger the native "Save to Files" dialog
-        await Share.open({
-          url: fileUrl,
-          saveToFiles: true,
-          title: 'Save PDF',
-          filename: fileName,
-        });
-      } else {
-        // For Android, try to copy the file directly to the public Downloads folder
-        const downloadPath = `${RNFS.DownloadDirectoryPath}/${fileName}`;
-        
-        try {
-          // First attempt: copy directly
-          await RNFS.copyFile(pdf.filePath, downloadPath);
-          
-          showAlert('Export Successful', `PDF saved successfully!\n\nFile: ${fileName}\nLocation: Downloads folder\n\nYou can access it from your File Manager.`, 'success', [{ text: 'OK' }]);
-        } catch (copyError) {
-          console.warn('Direct copy failed, trying base64 write', copyError);
-          try {
-            // Second attempt: read as base64 and write
-            // Helps bypass some scoped storage restrictions on Android 10/11
-            const base64data = await RNFS.readFile(pdf.filePath, 'base64');
-            await RNFS.writeFile(downloadPath, base64data, 'base64');
-
-            showAlert('Export Successful', `PDF saved successfully!\n\nFile: ${fileName}\nLocation: Downloads folder\n\nYou can access it from your File Manager.`, 'success', [{ text: 'OK' }]);
-          } catch (writeError) {
-            console.warn('Base64 write failed, falling back to Share', writeError);
-            // Final fallback: use the Share module so user can save or send it
-            await Share.open({
-              url: fileUrl,
-              title: 'Save PDF',
-              filename: fileName,
-            });
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Export PDF Error:', e);
-      // Ignore user cancellation errors
-      if (e?.message && !e.message.includes('User did not share') && !e.message.includes('cancelled') && !e.message.includes('User cancelled')) {
-        showAlert('Export Failed', e?.message || 'Failed to export PDF. Please check storage permissions and try again.', 'error');
-      }
-    }
-  }, [pricingResult, generatePdfFile, clients, clientId]);
-
-
-
-  const clientOptions = clients.map((c) => ({
-    label: c.name || 'Unknown Client',
+  const clientOptions = clients.map(c => ({
+    label: c.name || 'Unknown',
     value: c.id || c._id,
   }));
-
-  const stoneOptions = stoneTypesData.map((st) => ({
-    label: st.label,
-    value: st.value,
-  }));
-
+  const clientApplicableStones = selectedClient?.ApplicableStoneTypes || [];
+  const stoneOptions = stoneTypesData
+    .filter(
+      st =>
+        clientApplicableStones.length === 0 ||
+        clientApplicableStones.includes(st.value),
+    )
+    .map(st => ({ label: st.label, value: st.value }));
   const metalQualityOptions = [
     { label: '10K', value: '10K' },
     { label: '14K', value: '14K' },
@@ -592,150 +603,20 @@ export default function PricingCalci() {
 
   const getTodayPrice = () => {
     const prices = metalPricesData?.prices || {};
-    if (metalKt.includes('Silver')) {
-      return prices.silver?.price ? `$${prices.silver.price.toFixed(2)} / g` : 'N/A';
-    }
-    if (metalKt.includes('Platinum')) {
-      return prices.platinum?.price ? `$${prices.platinum.price.toFixed(2)} / g` : 'N/A';
-    }
+    if (metalKt.includes('Silver'))
+      return prices.silver?.price
+        ? `$${prices.silver.price.toFixed(2)}/g`
+        : 'N/A';
+    if (metalKt.includes('Platinum'))
+      return prices.platinum?.price
+        ? `$${prices.platinum.price.toFixed(2)}/g`
+        : 'N/A';
     const baseGoldPrice = prices.gold?.price || 0;
     if (!baseGoldPrice) return 'N/A';
-
     const match = metalKt.match(/(\d+)K/i);
-    if (match) {
-      const kt = parseInt(match[1], 10);
-      const calculatedPrice = baseGoldPrice * (kt / 24);
-      return `$${calculatedPrice.toFixed(2)} / g`;
-    }
+    if (match)
+      return `$${(baseGoldPrice * (parseInt(match[1], 10) / 24)).toFixed(2)}/g`;
     return 'N/A';
-  };
-
-  const todayPriceDisplay = getTodayPrice();
-
-  const handleImagePick = async () => {
-    if (!clientId) {
-      showAlert('Validation Error', 'Please select a client first', 'warning');
-      return;
-    }
-    if (!stoneType) {
-      showAlert('Validation Error', 'Please select a stone type first', 'warning');
-      return;
-    }
-
-    try {
-      const pickerResult = await launchImageLibrary({ mediaType: 'photo', quality: 0.8 });
-      if (pickerResult.didCancel) return;
-      if (pickerResult.assets && pickerResult.assets.length > 0) {
-        const asset = pickerResult.assets[0];
-        if (asset.fileSize && asset.fileSize > 20 * 1024 * 1024) {
-          showAlert('File too large', 'Maximum allowed image size is 20MB.', 'warning');
-          return;
-        }
-        setImageFile({
-          uri: asset.uri,
-          name: asset.fileName || `image_${Date.now()}.jpg`,
-          type: asset.type || 'image/jpeg',
-        });
-
-        setIsExtracting(true);
-        try {
-          const apiResult = await GetimagepriceData({
-            image: {
-              uri: asset.uri,
-              name: asset.fileName || `image_${Date.now()}.jpg`,
-              type: asset.type || 'image/jpeg',
-            },
-            clientId: clientId,
-            stoneType: stoneType,
-            metalQuality: metalKt,
-          }).unwrap();
-
-              setImageData(apiResult);
-        } catch (apiError) {
-          console.error('❌ API Error:', apiError);
-          const errorMsg = apiError?.data?.message || apiError?.error || 'Failed to extract pricing data. Please ensure the client has pricing configuration set up.';
-           showAlert('Extraction Error', errorMsg, 'error');
-          setImageFile(null);
-        } finally {
-          setIsExtracting(false);
-        }
-      }
-    } catch (error) {
-      console.error('❌ Image Picker Error:', error);
-      showAlert('Error', 'Failed to pick image. Please try again.', 'error');
-      setIsExtracting(false);
-    }
-  };
-
-  const handleExcelPick = async () => {
-    if (!DocumentPicker) {
-      showAlert('Feature Not Available', 'Document picker is not available on this device.', 'warning');
-      return;
-    }
-    try {
-      const result = await DocumentPicker.pickSingle({
-        type: [DocumentPicker.types.xlsx, DocumentPicker.types.xls],
-      });
-      setExcelFile({
-        uri: result.uri,
-        name: result.name,
-        type: result.type,
-      });
-    } catch (err) {
-      if (!DocumentPicker.isCancel(err)) {
-        showAlert('Error', 'Failed to pick excel file', 'error');
-      }
-    }
-  };
-
-  const handleCalculate = async (extractedDetails = null) => {
-    const data = extractedDetails || imageData;
-    const detailsData = data?.pricing || data?.extractedData || data?.details || data;
-    
-    if (!detailsData) {
-      showAlert('Validation Error', 'No pricing data available. Please upload an image first.', 'warning');
-      return;
-    }
-    
-    try {
-      const rawStones = Array.isArray(detailsData.Stones) 
-        ? detailsData.Stones 
-        : Array.isArray(detailsData.stones) ? detailsData.stones : [];
-
-      const formattedStones = rawStones.map(stone => ({
-        Type: stone.Type || stone.type || stoneType || '',
-        Color: stone.Color || stone.color || '',
-        Shape: stone.Shape || stone.shape || '',
-        MmSize: (stone.MmSize || stone.mmSize || stone.MM || stone.mm || '0').toString(),
-        SieveSize: (stone.SieveSize || stone.sieveSize || stone.Sieve || stone.sieve || '0').toString(),
-        CtWeight: parseFloat(stone.CtWeight || stone.ctWeight || stone.CaratWeight || stone.caratWeight || 0) || 0,
-        Weight: parseFloat(stone.Weight || stone.weight || 0) || 0,
-        Pcs: parseInt(stone.Pcs || stone.pcs || stone.Pieces || stone.pieces || 0, 10) || 0,
-        Price: parseFloat(stone.Price || stone.price || 0) || 0,
-      })).filter(s => s.Type);
-
-      const payloadDetails = {
-        Metal: {
-          Weight: parseFloat(detailsData.Metal?.Weight || detailsData.metalWeight || 0) || 0,
-          Quality: detailsData.Metal?.Quality || detailsData.metalQuality || metalKt,
-        },
-        Stones: formattedStones,
-        Quantity: parseInt(detailsData.Quantity || detailsData.quantity || 1, 10) || 1,
-      };
-
-      const result = await calculatePricing({
-        details: payloadDetails,
-        clientId,
-      }).unwrap();
-
-      const finalPrice = result?.TotalPrice !== undefined ? result.TotalPrice : (result?.totalPrice || 'N/A');
-      showAlert('Calculation Complete', `Total Price: $${finalPrice}\n\nPlease check the console for detailed pricing breakdown.`, 'success', [{ text: 'OK' }]);
-      
-    } catch (error) {
-      console.error('❌ Pricing calculation error:', error);
-      const errorMsg = error?.data?.message || error?.message || 'Failed to calculate pricing. Please ensure the client has pricing configuration set up.';
-      showAlert('Calculation Failed', errorMsg, 'error');
-    }
   };
 
   const renderDropdown = (
@@ -746,10 +627,10 @@ export default function PricingCalci() {
     isVisible,
     setVisible,
     onSelect,
-    extraElement = null
+    extraElement = null,
   ) => {
-    const selectedLabel = options.find((o) => o.value === value)?.label || placeholder;
-
+    const selectedLabel =
+      options.find(o => o.value === value)?.label || placeholder;
     return (
       <View style={styles.inputContainer}>
         <View style={styles.labelRow}>
@@ -766,7 +647,6 @@ export default function PricingCalci() {
           </Text>
           <Icon name="arrow-drop-down" size={24} color={colors.textSecondary} />
         </TouchableOpacity>
-
         <Modal
           visible={isVisible}
           transparent
@@ -780,7 +660,7 @@ export default function PricingCalci() {
           >
             <View style={styles.modalContent}>
               <ScrollView showsVerticalScrollIndicator={true}>
-                {options.map((opt) => (
+                {options.map(opt => (
                   <TouchableOpacity
                     key={opt.value}
                     style={[
@@ -795,7 +675,8 @@ export default function PricingCalci() {
                     <Text
                       style={[
                         styles.dropdownOptionText,
-                        value === opt.value && styles.dropdownOptionTextSelected,
+                        value === opt.value &&
+                          styles.dropdownOptionTextSelected,
                       ]}
                     >
                       {opt.label}
@@ -813,11 +694,79 @@ export default function PricingCalci() {
     );
   };
 
+  const renderMultiSelectModal = () => (
+    <Modal
+      visible={showStoneModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowStoneModal(false)}
+    >
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={() => setShowStoneModal(false)}
+      >
+        <View style={styles.modalContent}>
+          <Text style={styles.multiSelectHeader}>Select Stone Types</Text>
+          <ScrollView showsVerticalScrollIndicator={true}>
+            {stoneOptions.map(opt => {
+              const isSelected = selectedStoneTypes.includes(opt.value);
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[
+                    styles.dropdownOption,
+                    isSelected && styles.dropdownOptionSelected,
+                  ]}
+                  onPress={() => {
+                    setSelectedStoneTypes(prev =>
+                      isSelected
+                        ? prev.filter(v => v !== opt.value)
+                        : [...prev, opt.value],
+                    );
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.dropdownOptionText,
+                      isSelected && styles.dropdownOptionTextSelected,
+                    ]}
+                  >
+                    {opt.label}
+                  </Text>
+                  {isSelected && (
+                    <Icon name="check-box" size={20} color={colors.primary} />
+                  )}
+                  {!isSelected && (
+                    <Icon
+                      name="check-box-outline-blank"
+                      size={20}
+                      color={colors.textSecondary}
+                    />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          <TouchableOpacity
+            style={styles.doneButton}
+            onPress={() => setShowStoneModal(false)}
+          >
+            <Text style={styles.doneButtonText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   return (
     <View style={styles.container}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+      >
         <Card style={styles.card}>
-          <Text style={styles.title}>Pricing Calculator</Text>
+          <Text style={styles.title}>Multi-Stone Pricing</Text>
 
           {renderDropdown(
             'Client*',
@@ -826,18 +775,34 @@ export default function PricingCalci() {
             clientOptions,
             showClientModal,
             setShowClientModal,
-            setClientId
+            setClientId,
           )}
 
-          {renderDropdown(
-            'Stone Type*',
-            'Select stone type...',
-            stoneType,
-            stoneOptions,
-            showStoneModal,
-            setShowStoneModal,
-            setStoneType
-          )}
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Stone Types*</Text>
+            <TouchableOpacity
+              style={styles.dropdown}
+              onPress={() => setShowStoneModal(true)}
+            >
+              <Text
+                style={[
+                  styles.dropdownText,
+                  selectedStoneTypes.length === 0 && styles.placeholderText,
+                ]}
+                numberOfLines={1}
+              >
+                {selectedStoneTypes.length > 0
+                  ? selectedStoneTypes.join(', ')
+                  : 'Select multiple stones...'}
+              </Text>
+              <Icon
+                name="arrow-drop-down"
+                size={24}
+                color={colors.textSecondary}
+              />
+            </TouchableOpacity>
+            {renderMultiSelectModal()}
+          </View>
 
           {renderDropdown(
             'Metal Kt*',
@@ -848,11 +813,14 @@ export default function PricingCalci() {
             setShowMetalModal,
             setMetalKt,
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={styles.extraText}>Today: {todayPriceDisplay}</Text>
-              <TouchableOpacity onPress={() => setShowAllPricesModal(true)} style={{ marginLeft: 8 }}>
+              <Text style={styles.extraText}>Today: {getTodayPrice()}</Text>
+              <TouchableOpacity
+                onPress={() => setShowAllPricesModal(true)}
+                style={{ marginLeft: 8 }}
+              >
                 <Icon name="monetization-on" size={20} color={colors.primary} />
               </TouchableOpacity>
-            </View>
+            </View>,
           )}
 
           <View style={styles.inputContainer}>
@@ -860,333 +828,692 @@ export default function PricingCalci() {
             <TouchableOpacity
               style={styles.uploadArea}
               onPress={handleImagePick}
-              activeOpacity={0.7}
               disabled={isExtracting || isImageLoading}
             >
               {isExtracting || isImageLoading ? (
                 <View style={styles.loadingContainer}>
-                  <Icon name="hourglass-empty" size={40} color={colors.primary} />
-                  <Text style={styles.uploadText}>Extracting pricing data...</Text>
-                  <Text style={styles.uploadSubText}>Please wait while we analyze the image</Text>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={styles.uploadText}>
+                    Extracting {selectedStoneTypes.length} profiles...
+                  </Text>
                 </View>
               ) : imageFile ? (
                 <View style={styles.filePreview}>
-                  <Image source={{ uri: imageFile.uri }} style={styles.previewImage} />
-                  <Text style={styles.fileName} numberOfLines={1}>{imageFile.name}</Text>
-                  <TouchableOpacity onPress={() => { setImageFile(null); setImageData(null); }}>
+                  <Image
+                    source={{ uri: imageFile.uri }}
+                    style={styles.previewImage}
+                  />
+                  <Text style={styles.fileName} numberOfLines={1}>
+                    {imageFile.name}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setImageFile(null);
+                      setMultiData({});
+                    }}
+                  >
                     <Icon name="close" size={20} color={colors.error} />
                   </TouchableOpacity>
                 </View>
               ) : (
                 <>
                   <Icon name="cloud-upload" size={40} color={colors.primary} />
-                  <Text style={styles.uploadText}>No file chosen</Text>
-                  <Text style={styles.uploadSubText}>Select client & stone type first, then upload (max 20 MB)</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Excel (optional)</Text>
-            <TouchableOpacity
-              style={styles.uploadArea}
-              onPress={handleExcelPick}
-              activeOpacity={0.7}
-            >
-              {excelFile ? (
-                <View style={styles.filePreview}>
-                  <Icon name="insert-drive-file" size={40} color={colors.primary} />
-                  <Text style={styles.fileName} numberOfLines={1}>{excelFile.name}</Text>
-                  <TouchableOpacity onPress={() => setExcelFile(null)}>
-                    <Icon name="close" size={20} color={colors.error} />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <>
-                  <Icon name="file-upload" size={40} color={colors.primary} />
-                  <Text style={styles.uploadText}>No file chosen</Text>
-                  <Text style={styles.uploadSubText}>Drag & drop .xlsx (overrides image data)</Text>
+                  <Text style={styles.uploadText}>Upload Image</Text>
+                  <Text style={styles.uploadSubText}>
+                    Select client & stones first
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
           </View>
         </Card>
 
-        {imageData && imageData.pricing && editableStones && editableStones.length > 0 && (
-          <Card style={styles.card}>
-            <Text style={styles.sectionTitle}>Extracted Details</Text>
+        {/* ACCORDION SECTIONS */}
+        {Object.keys(multiData).map(type => {
+          const data = multiData[type];
+          const isExpanded = expandedStones[type];
+          const canCalc = validatePricingData(type);
+          const pricingResult = data.pricingResult;
 
-            {/* Display extracted data summary */}
-            {imageData.extractedData && (
-              <View style={styles.summaryContainer}>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Total Pieces:</Text>
-                  <Text style={styles.summaryValue}>{imageData.extractedData.TotalPieces || 0}</Text>
+          // Identify stones with missing data exactly as your original code did
+          const missingStones = data.editableStones.filter(
+            stone =>
+              !stone.MmSize?.toString().trim() ||
+              !stone.Color?.toString().trim() ||
+              !stone.Shape?.toString().trim() ||
+              !stone.SieveSize?.toString().trim() ||
+              parseFloat(stone.Weight) <= 0 ||
+              parseInt(stone.Pcs) <= 0 ||
+              parseFloat(stone.CtWeight) <= 0 ||
+              parseFloat(stone.Price) <= 0,
+          );
+
+          return (
+            <Card
+              key={type}
+              style={[
+                styles.card,
+                { marginTop: 16, padding: 0, overflow: 'hidden' },
+              ]}
+            >
+              <TouchableOpacity
+                style={styles.accordionHeader}
+                onPress={() => toggleAccordion(type)}
+              >
+                <View
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                >
+                  <Icon name="diamond" size={20} color={colors.primary} />
+                  <Text style={styles.accordionTitle}>{type} Pricing</Text>
                 </View>
-                {imageData.pricing && (
-                  <>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Diamond Weight:</Text>
-                      <Text style={styles.summaryValue}>{imageData.pricing.DiamondWeight || 0} ct</Text>
+                <View
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                >
+                  <Text style={styles.accordionTotal}>
+                    ${(pricingResult?.TotalPrice || 0).toFixed(2)}
+                  </Text>
+                  <Icon
+                    name={isExpanded ? 'expand-less' : 'expand-more'}
+                    size={24}
+                    color={colors.textSecondary}
+                  />
+                </View>
+              </TouchableOpacity>
+
+              {isExpanded && (
+                <View style={styles.accordionBody}>
+                  {/* Compact Type & Quality Selectors */}
+                  <View style={styles.compactSelectorsRow}>
+                    <View style={styles.compactSelectorField}>
+                      <Text style={styles.compactSelectorLabel}>Type</Text>
+                      <TouchableOpacity
+                        style={styles.compactSelector}
+                        onPress={() => {
+                          setCompactContext({ type });
+                          setShowCompactTypeModal(true);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.compactSelectorText} numberOfLines={1}>
+                          {data.editableStones[0]?.Type || type}
+                        </Text>
+                        <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                      </TouchableOpacity>
                     </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Stone Type:</Text>
-                      <Text style={styles.summaryValue}>{imageData.pricing.Stones?.[0]?.Type || stoneType || 'N/A'}</Text>
+                    <View style={styles.compactSelectorField}>
+                      <Text style={styles.compactSelectorLabel}>Quality</Text>
+                      <TouchableOpacity
+                        style={styles.compactSelector}
+                        onPress={() => {
+                          setCompactContext({ type });
+                          setShowCompactQualityModal(true);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.compactSelectorText} numberOfLines={1}>
+                          {data.editableMetal.Quality || 'Select'}
+                        </Text>
+                        <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                      </TouchableOpacity>
                     </View>
-                  </>
-                )}
-              </View>
-            )}
+                  </View>
+                  {/* Restored EXACT Table widths and rendering missing stones ONLY */}
+                  <Text style={styles.subSectionTitle}>
+                    Missing Stones Data
+                  </Text>
+                  <View style={styles.compactTableWrapper}>
+                    <View style={styles.compactTableHeader}>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 44 }]}
+                      >
+                        Type
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 42 }]}
+                      >
+                        MM
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 30 }]}
+                      >
+                        Col
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 30 }]}
+                      >
+                        Shp
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 36 }]}
+                      >
+                        Sieve
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 36 }]}
+                      >
+                        Wt
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 30 }]}
+                      >
+                        Pcs
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 36 }]}
+                      >
+                        CtWt
+                      </Text>
+                      <Text
+                        style={[styles.compactTableHeaderText, { width: 42 }]}
+                      >
+                        $/Ct
+                      </Text>
+                    </View>
 
-            {/* ---- Stones Table (fixed width, no horizontal scroll) ---- */}
-            <Text style={styles.subSectionTitle}>Missing Stones Data</Text>
-            <View style={styles.compactTableWrapper}>
-              {/* Header */}
-              <View style={styles.compactTableHeader}>
-                <Text style={[styles.compactTableHeaderText, { width: 45 }]}>MM</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 40 }]}>Col</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 40 }]}>Shp</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 45 }]}>Sieve</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 45 }]}>Wt</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 40 }]}>Pcs</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 45 }]}>CtWt</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 50 }]}>$/Ct</Text>
-                <Text style={[styles.compactTableHeaderText, { width: 10 }]}></Text>
-              </View>
-              
-              {/* Body */}
-              <ScrollView style={styles.compactTableBody} nestedScrollEnabled>
-                {editableStones
-                  .filter(stone => !stone.MmSize || !stone.Color || !stone.Shape || !stone.SieveSize || !stone.Weight || !stone.Pcs || !stone.CtWeight || !stone.Price || parseFloat(stone.Price) <= 0)
-                  .map((stone, i) => {
-                    const originalIndex = editableStones.indexOf(stone);
-                    return (
-                      <View key={i} style={styles.compactTableRowWrapper}>
-                        <TouchableOpacity
-                          style={styles.compactTableRow}
-                          onPress={() => { setEditingStoneIndex(originalIndex); setEditModalVisible(true); }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.compactTableCell, { width: 45, color: !stone.MmSize ? colors.error : colors.textPrimary, fontFamily: !stone.MmSize ? fonts.bold : fonts.regular }]}>{stone.MmSize || '-'}</Text>
-                          <Text style={[styles.compactTableCell, { width: 40, color: !stone.Color ? colors.error : colors.textPrimary, fontFamily: !stone.Color ? fonts.bold : fonts.regular }]}>{stone.Color || '-'}</Text>
-                          <Text style={[styles.compactTableCell, { width: 40, color: !stone.Shape ? colors.error : colors.textPrimary, fontFamily: !stone.Shape ? fonts.bold : fonts.regular }]}>{stone.Shape || '-'}</Text>
-                          <Text style={[styles.compactTableCell, { width: 45, color: !stone.SieveSize ? colors.error : colors.textPrimary, fontFamily: !stone.SieveSize ? fonts.bold : fonts.regular }]}>{stone.SieveSize || '-'}</Text>
-                          <Text style={[styles.compactTableCell, { width: 45, color: !stone.Weight ? colors.error : colors.textPrimary, fontFamily: !stone.Weight ? fonts.bold : fonts.regular }]}>{stone.Weight ?? 0}</Text>
-                          <Text style={[styles.compactTableCell, { width: 40, color: !stone.Pcs ? colors.error : colors.textPrimary, fontFamily: !stone.Pcs ? fonts.bold : fonts.regular }]}>{stone.Pcs ?? 0}</Text>
-                          <Text style={[styles.compactTableCell, { width: 45, color: !stone.CtWeight ? colors.error : colors.textPrimary, fontFamily: !stone.CtWeight ? fonts.bold : fonts.regular }]}>{stone.CtWeight ?? 0}</Text>
-                          <Text style={[styles.compactTableCell, { width: 50, color: (!stone.Price || parseFloat(stone.Price) <= 0) ? colors.error : colors.textPrimary, fontFamily: (!stone.Price || parseFloat(stone.Price) <= 0) ? fonts.bold : fonts.regular }]}>{stone.Price ?? 0}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={styles.deleteIconButton} 
-                          onPress={() => deleteStone(originalIndex)}
-                        >
-                          <Icon name="delete" size={14} color={colors.error} />
-                        </TouchableOpacity>
-                      </View>
-                    );
-                  })}
-                {editableStones.filter(stone => !stone.MmSize || !stone.Color || !stone.Shape || !stone.SieveSize || !stone.Weight || !stone.Pcs || !stone.CtWeight || !stone.Price || parseFloat(stone.Price) <= 0).length === 0 && (
-                  <View style={{ padding: 16, alignItems: 'center' }}>
-                    <Text style={{ color: colors.textSecondary, fontSize: fonts.sm }}>All stones data is complete</Text>
-                  </View>
-                )}
-              </ScrollView>
-            </View>
-            <TouchableOpacity style={styles.addStoneButton} onPress={addStone}>
-              <Icon name="add" size={18} color={colors.textWhite} />
-              <Text style={styles.addStoneButtonText}>Add Stone</Text>
-            </TouchableOpacity>
-    
-            <TouchableOpacity style={[styles.addStoneButton, { backgroundColor: colors.primary, marginTop: 8 }]} onPress={() => {
-              const html = buildPricingHtml();
-              if (editableStones.some(s => !s.MmSize || !s.Color || !s.Shape || !s.SieveSize || !s.Weight || !s.Pcs || !s.CtWeight || !s.Price || parseFloat(s.Price) <= 0)) {
-                showAlert('Incomplete Data', 'Please complete all stone details before previewing pricing.', 'warning');
-              }
-             else if (html) {
-                setPdfHtml(html);
-                setShowPdfModal(true);
-              } else {
-                showAlert('Error', 'No pricing data to preview', 'warning');
-              }
-            }}>
-              <Icon name="picture-as-pdf" size={18} color={colors.textWhite} />
-              <Text style={styles.addStoneButtonText}>Show Pricing</Text>
-            </TouchableOpacity>
-
-            {/* ---- Metal ---- */}
-            {editableMetal && (
-              <>
-                <Text style={styles.subSectionTitle}>Metal</Text>
-                <View style={styles.chargesRow}>
-                  <View style={styles.chargeField}>
-                    <Text style={styles.fieldLabel}>Weight (g)</Text>
-                    <TextInput style={styles.fieldInput} keyboardType="decimal-pad" value={String(editableMetal.Weight || ``)} onChangeText={v => setEditableMetal(p => ({ ...p, Weight: v }))} />
-                  </View>
-                  <View style={styles.chargeField}>
-                    <Text style={styles.fieldLabel}>Quality</Text>
-                    <TextInput style={styles.fieldInput} value={editableMetal.Quality || ''} onChangeText={v => setEditableMetal(p => ({ ...p, Quality: v }))} />
-                  </View>
-                  <View style={styles.chargeField}>
-                    <Text style={[styles.fieldLabel, (!editableMetal.Rate || parseFloat(editableMetal.Rate) <= 0) && styles.fieldLabelError]}>Rate ($/g) *</Text>
-                    <TextInput 
-                      style={[styles.fieldInput, (!editableMetal.Rate || parseFloat(editableMetal.Rate) <= 0) && styles.fieldInputError]} 
-                      keyboardType="decimal-pad" 
-                      value={String(editableMetal.Rate || ``)} 
-                      onChangeText={v => setEditableMetal(p => ({ ...p, Rate: v }))} 
-                    />
-                    {(!editableMetal.Rate || parseFloat(editableMetal.Rate) <= 0) && (
-                      <Text style={styles.errorText}>Required</Text>
-                    )}
-                  </View>
-                </View>
-              </>
-            )}
-
-            {/* ---- Charges ---- */}
-            {editableCharges && (
-              <>
-                <Text style={styles.subSectionTitle}>Charges & Duties</Text>
-                <View style={styles.chargesRow}>
-                  <View style={styles.chargeField}>
-                    <Text style={styles.fieldLabel}>Loss (%)</Text>
-                    <TextInput style={styles.fieldInput} keyboardType="decimal-pad" value={String(editableCharges.Loss || 0)} onChangeText={v => setEditableCharges(p => ({ ...p, Loss: v }))} />
-                  </View>
-                  <View style={styles.chargeField}>
-                    <Text style={styles.fieldLabel}>Labour ($/g)</Text>
-                    <TextInput style={styles.fieldInput} keyboardType="decimal-pad" value={String(editableCharges.Labour || 0)} onChangeText={v => setEditableCharges(p => ({ ...p, Labour: v }))} />
-                  </View>
-                  <View style={styles.chargeField}>
-                    <Text style={styles.fieldLabel}>Extra (%)</Text>
-                    <TextInput style={styles.fieldInput} keyboardType="decimal-pad" value={String(editableCharges.ExtraCharges || 0)} onChangeText={v => setEditableCharges(p => ({ ...p, ExtraCharges: v }))} />
-                  </View>
-                  <View style={styles.chargeField}>
-                    <Text style={styles.fieldLabel}>Undercut ($/ct)</Text>
-                    <TextInput style={styles.fieldInput} keyboardType="decimal-pad" value={String(editableCharges.UndercutPrice || 0)} onChangeText={v => setEditableCharges(p => ({ ...p, UndercutPrice: v }))} />
-                  </View>
-                </View>
-              </>
-            )}
-
-            {/* ---- Pricing Summary ---- */}
-            {pricingResult && (
-              <>
-                <Text style={styles.subSectionTitle}>Pricing Summary</Text>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Metal Price</Text>
-                  <Text style={styles.summaryValue}>${(pricingResult.MetalPrice || 0).toFixed(2)}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Diamonds Price</Text>
-                  <Text style={styles.summaryValue}>${(pricingResult.DiamondsPrice || 0).toFixed(2)}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Duties Amount</Text>
-                  <Text style={styles.summaryValue}>${(pricingResult.DutiesAmount || 0).toFixed(2)}</Text>
-                </View>
-                
-                {/* Show applicable duties */}
-                {pricingResult.Applicable && (
-                  <View style={styles.dutiesContainer}>
-                    <Text style={styles.dutiesTitle}>Applicable Duties:</Text>
-                    {Object.entries(pricingResult.Applicable).map(([key, value]) => (
-                      value && (
-                        <View key={key} style={styles.dutyRow}>
-                          <Icon name="check-circle" size={14} color={colors.success} />
-                          <Text style={styles.dutyText}>{key.replace(/([A-Z])/g, ' $1').trim()}</Text>
+                    <ScrollView
+                      style={styles.compactTableBody}
+                      nestedScrollEnabled
+                    >
+                      {missingStones.map((stone, i) => {
+                        const originalIndex =
+                          data.editableStones.indexOf(stone);
+                        return (
+                          <TouchableOpacity
+                            key={originalIndex}
+                            style={styles.compactTableRow}
+                            onPress={() => {
+                              setEditingContext({ type, index: originalIndex });
+                              setEditModalVisible(true);
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 44,
+                                  fontFamily: !stone.Type
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.Type || type}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 42,
+                                  color: !stone.MmSize
+                                    ? colors.error
+                                    : colors.textPrimary,
+                                  fontFamily: !stone.MmSize
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.MmSize || '-'}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 30,
+                                  color: !stone.Color
+                                    ? colors.error
+                                    : colors.textPrimary,
+                                  fontFamily: !stone.Color
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.Color || '-'}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 30,
+                                  color: !stone.Shape
+                                    ? colors.error
+                                    : colors.textPrimary,
+                                  fontFamily: !stone.Shape
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.Shape || '-'}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 36,
+                                  color: !stone.SieveSize
+                                    ? colors.error
+                                    : colors.textPrimary,
+                                  fontFamily: !stone.SieveSize
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.SieveSize || '-'}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 36,
+                                  color: !stone.Weight
+                                    ? colors.error
+                                    : colors.textPrimary,
+                                  fontFamily: !stone.Weight
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.Weight ?? 0}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 30,
+                                  color: !stone.Pcs
+                                    ? colors.error
+                                    : colors.textPrimary,
+                                  fontFamily: !stone.Pcs
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.Pcs ?? 0}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 36,
+                                  color: !stone.CtWeight
+                                    ? colors.error
+                                    : colors.textPrimary,
+                                  fontFamily: !stone.CtWeight
+                                    ? fonts.bold
+                                    : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.CtWeight ?? 0}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.compactTableCell,
+                                {
+                                  width: 42,
+                                  color:
+                                    !stone.Price || parseFloat(stone.Price) <= 0
+                                      ? colors.error
+                                      : colors.textPrimary,
+                                  fontFamily:
+                                    !stone.Price || parseFloat(stone.Price) <= 0
+                                      ? fonts.bold
+                                      : fonts.regular,
+                                },
+                              ]}
+                            >
+                              {stone.Price ?? 0}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      {missingStones.length === 0 && (
+                        <View style={{ padding: 12, alignItems: 'center' }}>
+                          <Text
+                            style={{
+                              color: colors.textSecondary,
+                              fontSize: fonts.xs,
+                            }}
+                          >
+                            All stones data is complete
+                          </Text>
                         </View>
-                      )
-                    ))}
+                      )}
+                    </ScrollView>
                   </View>
-                )}
-                
-                <View style={[styles.summaryRow, styles.totalRow]}>
-                  <Text style={styles.totalLabel}>Total Price</Text>
-                  <Text style={styles.totalValue}>${(pricingResult.TotalPrice || 0).toFixed(2)}</Text>
-                </View>
-                
-                {/* Show client charges */}
-                {pricingResult.Client && (
-                  <View style={styles.clientChargesContainer}>
-                    <Text style={styles.clientChargesTitle}>Client Charges Applied:</Text>
-                    <View style={styles.chargeDetailRow}>
-                      <Text style={styles.chargeDetailLabel}>Loss:</Text>
-                      <Text style={styles.chargeDetailValue}>{pricingResult.Client.Loss || 0}%</Text>
+                  <TouchableOpacity
+                    style={styles.addStoneButton}
+                    onPress={() => addStone(type)}
+                  >
+                    <Icon name="add" size={16} color={colors.textWhite} />
+                    <Text style={styles.addStoneButtonText}>Add Stone</Text>
+                  </TouchableOpacity>
+
+                  {/* Metal Inputs */}
+                  <Text style={styles.subSectionTitle}>Metal</Text>
+                  <View style={styles.chargesRow}>
+                    <View style={styles.chargeField}>
+                      <Text style={styles.fieldLabel}>Weight (g)</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        keyboardType="decimal-pad"
+                        value={String(data.editableMetal.Weight || '')}
+                        onChangeText={v =>
+                          updateMultiData(type, 'editableMetal', {
+                            ...data.editableMetal,
+                            Weight: v,
+                          })
+                        }
+                      />
                     </View>
-                    <View style={styles.chargeDetailRow}>
-                      <Text style={styles.chargeDetailLabel}>Labour:</Text>
-                      <Text style={styles.chargeDetailValue}>${pricingResult.Client.Labour || 0}/g</Text>
+                    <View style={styles.chargeField}>
+                      <Text style={styles.fieldLabel}>Quality</Text>
+                      <TouchableOpacity
+                        style={[styles.fieldInput, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                        onPress={() => {
+                          setCompactContext({ type });
+                          setShowCompactQualityModal(true);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: fonts.sm, fontFamily: fonts.regular, color: data.editableMetal.Quality ? colors.textPrimary : colors.textLight, flex: 1 }}>
+                          {data.editableMetal.Quality || 'Select Quality'}
+                        </Text>
+                        <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                      </TouchableOpacity>
                     </View>
-                    <View style={styles.chargeDetailRow}>
-                      <Text style={styles.chargeDetailLabel}>Extra Charges:</Text>
-                      <Text style={styles.chargeDetailValue}>{pricingResult.Client.ExtraCharges || 0}%</Text>
+                    <View style={styles.chargeField}>
+                      <Text
+                        style={[
+                          styles.fieldLabel,
+                          (!data.editableMetal.Rate ||
+                            parseFloat(data.editableMetal.Rate) <= 0) &&
+                            styles.fieldLabelError,
+                        ]}
+                      >
+                        Rate ($/g) *
+                      </Text>
+                      <TextInput
+                        style={[
+                          styles.fieldInput,
+                          (!data.editableMetal.Rate ||
+                            parseFloat(data.editableMetal.Rate) <= 0) &&
+                            styles.fieldInputError,
+                        ]}
+                        keyboardType="decimal-pad"
+                        value={String(data.editableMetal.Rate || '')}
+                        onChangeText={v =>
+                          updateMultiData(type, 'editableMetal', {
+                            ...data.editableMetal,
+                            Rate: v,
+                          })
+                        }
+                      />
                     </View>
-                    {pricingResult.Client.UndercutPrice > 0 && (
-                      <View style={styles.chargeDetailRow}>
-                        <Text style={styles.chargeDetailLabel}>Undercut Price:</Text>
-                        <Text style={styles.chargeDetailValue}>${pricingResult.Client.UndercutPrice || 0}/ct</Text>
+                  </View>
+
+                  {/* Charges Inputs */}
+                  <Text style={styles.subSectionTitle}>Charges & Duties</Text>
+                  <View style={styles.chargesRow}>
+                    <View style={styles.chargeField}>
+                      <Text style={styles.fieldLabel}>Loss (%)</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        keyboardType="decimal-pad"
+                        value={String(data.editableCharges.Loss || '')}
+                        onChangeText={v =>
+                          updateMultiData(type, 'editableCharges', {
+                            ...data.editableCharges,
+                            Loss: v,
+                          })
+                        }
+                      />
+                    </View>
+                    <View style={styles.chargeField}>
+                      <Text style={styles.fieldLabel}>Labour ($/g)</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        keyboardType="decimal-pad"
+                        value={String(data.editableCharges.Labour || '')}
+                        onChangeText={v =>
+                          updateMultiData(type, 'editableCharges', {
+                            ...data.editableCharges,
+                            Labour: v,
+                          })
+                        }
+                      />
+                    </View>
+                    <View style={styles.chargeField}>
+                      <Text style={styles.fieldLabel}>Extra (%)</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        keyboardType="decimal-pad"
+                        value={String(data.editableCharges.ExtraCharges || '')}
+                        onChangeText={v =>
+                          updateMultiData(type, 'editableCharges', {
+                            ...data.editableCharges,
+                            ExtraCharges: v,
+                          })
+                        }
+                      />
+                    </View>
+                    <View style={styles.chargeField}>
+                      <Text style={styles.fieldLabel}>Undercut ($/ct)</Text>
+                      <TextInput
+                        style={styles.fieldInput}
+                        keyboardType="decimal-pad"
+                        value={String(data.editableCharges.UndercutPrice || '')}
+                        onChangeText={v =>
+                          updateMultiData(type, 'editableCharges', {
+                            ...data.editableCharges,
+                            UndercutPrice: v,
+                          })
+                        }
+                      />
+                    </View>
+                  </View>
+
+                  {/* Pricing Summary Block */}
+                  {pricingResult && (
+                    <>
+                      <Text style={styles.subSectionTitle}>
+                        Pricing Summary
+                      </Text>
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Metal Price</Text>
+                        <Text style={styles.summaryValue}>
+                          ${(pricingResult.MetalPrice || 0).toFixed(2)}
+                        </Text>
                       </View>
-                    )}
-                  </View>
-                )}
-                
-                <View style={styles.actionButtonRow}>
-      
-                </View>
-                {!canRecalculate && (
-                  <View style={styles.validationWarning}>
-                    <Icon name="warning" size={16} color={colors.warning} />
-                    <Text style={styles.validationWarningText}>
-                      Please fill metal rate and all stone prices before recalculating
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Diamonds Price</Text>
+                        <Text style={styles.summaryValue}>
+                          ${(pricingResult.DiamondsPrice || 0).toFixed(2)}
+                        </Text>
+                      </View>
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Duties Amount</Text>
+                        <Text style={styles.summaryValue}>
+                          ${(pricingResult.DutiesAmount || 0).toFixed(2)}
+                        </Text>
+                      </View>
+
+                      {pricingResult.Applicable && (
+                        <View style={styles.dutiesContainer}>
+                          <Text style={styles.dutiesTitle}>
+                            Applicable Duties:
+                          </Text>
+                          {Object.entries(pricingResult.Applicable).map(
+                            ([key, value]) =>
+                              value && (
+                                <View key={key} style={styles.dutyRow}>
+                                  <Icon
+                                    name="check-circle"
+                                    size={14}
+                                    color={colors.success}
+                                  />
+                                  <Text style={styles.dutyText}>
+                                    {key.replace(/([A-Z])/g, ' $1').trim()}
+                                  </Text>
+                                </View>
+                              ),
+                          )}
+                        </View>
+                      )}
+
+                      <View style={[styles.summaryRow, styles.totalRow]}>
+                        <Text style={styles.totalLabel}>Total Price</Text>
+                        <Text style={styles.totalValue}>
+                          ${(pricingResult.TotalPrice || 0).toFixed(2)}
+                        </Text>
+                      </View>
+
+                      {pricingResult.Client && (
+                        <View style={styles.clientChargesContainer}>
+                          <Text style={styles.clientChargesTitle}>
+                            Client Charges Applied:
+                          </Text>
+                          <View style={styles.chargeDetailRow}>
+                            <Text style={styles.chargeDetailLabel}>Loss:</Text>
+                            <Text style={styles.chargeDetailValue}>
+                              {pricingResult.Client.Loss || 0}%
+                            </Text>
+                          </View>
+                          <View style={styles.chargeDetailRow}>
+                            <Text style={styles.chargeDetailLabel}>
+                              Labour:
+                            </Text>
+                            <Text style={styles.chargeDetailValue}>
+                              ${pricingResult.Client.Labour || 0}/g
+                            </Text>
+                          </View>
+                          <View style={styles.chargeDetailRow}>
+                            <Text style={styles.chargeDetailLabel}>
+                              Extra Charges:
+                            </Text>
+                            <Text style={styles.chargeDetailValue}>
+                              {pricingResult.Client.ExtraCharges || 0}%
+                            </Text>
+                          </View>
+                          {pricingResult.Client.UndercutPrice > 0 && (
+                            <View style={styles.chargeDetailRow}>
+                              <Text style={styles.chargeDetailLabel}>
+                                Undercut Price:
+                              </Text>
+                              <Text style={styles.chargeDetailValue}>
+                                ${pricingResult.Client.UndercutPrice || 0}/ct
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      )}
+
+                      {!canCalc && (
+                        <View style={styles.validationWarning}>
+                          <Icon
+                            name="warning"
+                            size={16}
+                            color={colors.warning}
+                          />
+                          <Text style={styles.validationWarningText}>
+                            Fill metal rate & all stone prices before
+                            recalculating
+                          </Text>
+                        </View>
+                      )}
+                    </>
+                  )}
+
+                  {pricingResult?.ClientPricingMessage &&
+                  data.editableStones.length > 0 ? (
+                    <View style={styles.clientMsgCard}>
+                      <View style={styles.clientMsgHeader}>
+                        <Text style={styles.clientMsgLabel}>
+                          Copy pricing format for your client
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.copyBtn}
+                          onPress={() => handleCopyMsg(pricingResult.ClientPricingMessage)}
+                          activeOpacity={0.8}
+                        >
+                          <Icon
+                            name={copied ? 'check' : 'content-copy'}
+                            size={15}
+                            color={copied ? '#059669' : colors.primary}
+                          />
+                          <Text
+                            style={[
+                              styles.copyBtnText,
+                              copied && { color: '#059669' },
+                            ]}
+                          >
+                            {copied ? 'Copied!' : 'Copy'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      {data.editableStones.length > 0 && (
+                        <TextInput
+                          style={styles.clientMsgInput}
+                          value={pricingResult.ClientPricingMessage}
+                          onChangeText={() => {}}
+                          multiline
+                          placeholder="No pricing message saved yet..."
+                          placeholderTextColor={colors.textSecondary}
+                          textAlignVertical="top"
+                          editable={false}
+                        />
+                      )}
+                    </View>
+                  ) : null}
+
+                  <TouchableOpacity
+                    style={[
+                      styles.recalcButton,
+                      !canCalc && styles.recalcButtonDisabled,
+                      { marginTop: 10 },
+                    ]}
+                    onPress={() => handleRecalculate(type)}
+                    disabled={isRecalculating || !canCalc}
+                  >
+                    <Icon name="refresh" size={20} color={colors.textWhite} />
+                    <Text style={styles.calculateButtonText}>
+                      Recalculate {type}
                     </Text>
-                  </View>
-                )}
-              </>
-            )}
-          </Card>
-        )}
+                  </TouchableOpacity>
+                </View>
+              )}
+            </Card>
+          );
+        })}
       </ScrollView>
 
+      {/* Footer Actions */}
       <View style={styles.footer}>
-        {imageData && pricingResult ? (
-          <View style={styles.footerActions}>
-            <TouchableOpacity style={[styles.footerRecalcBtn, !canRecalculate && styles.recalcButtonDisabled]} onPress={handleRecalculate} disabled={isRecalculating || !canRecalculate}>
-              {isRecalculating ? (
-                <ActivityIndicator size="small" color={colors.textWhite} />
-              ) : (
-                <>
-                  <Icon name="refresh" size={20} color={colors.textWhite} />
-                  <Text style={styles.calculateButtonText}>Recalculate</Text>
-                </>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.footerShareBtn} onPress={handleSharePDF}>
-              <Icon name="share" size={20} color={colors.textWhite} />
-              <Text style={styles.calculateButtonText}>Share</Text>
-            </TouchableOpacity>
-            {/* <TouchableOpacity style={styles.footerExportBtn} onPress={handleExportDownload}>
-              <Icon name="file-download" size={20} color={colors.textWhite} />
-              <Text style={styles.calculateButtonText}>Export</Text>
-            </TouchableOpacity> */}
-          </View>
-        ) : (
-          <TouchableOpacity
-            onPress={() => handleCalculate()}
-            disabled={isCalculating || isExtracting || isImageLoading || !imageData}
-            style={[
-              styles.calculateButton,
-              (isCalculating || isExtracting || isImageLoading || !imageData) && styles.calculateButtonDisabled,
-            ]}
-            activeOpacity={0.8}
-          >
-            <Icon name="calculate" size={20} color={colors.textWhite} />
-            <Text style={styles.calculateButtonText}>
-              {isCalculating ? 'Calculating...' : isExtracting || isImageLoading ? 'Extracting...' : 'Calculate'}
-            </Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={[
+            styles.calculateButton,
+            (Object.keys(multiData).length === 0 || hasAnyMissingStoneData()) &&
+              styles.calculateButtonDisabled,
+          ]}
+          onPress={() => {
+            setPdfHtml(buildPricingHtml());
+            setShowPdfModal(true);
+          }}
+          disabled={
+            Object.keys(multiData).length === 0 || hasAnyMissingStoneData()
+          }
+        >
+          <Icon name="picture-as-pdf" size={20} color={colors.textWhite} />
+          <Text style={styles.calculateButtonText}>Preview Full PDF</Text>
+        </TouchableOpacity>
       </View>
 
+      {/* PRICES INFO MODAL */}
       <Modal
         visible={showAllPricesModal}
         transparent
@@ -1204,8 +1531,12 @@ export default function PricingCalci() {
               {metalPricesData?.prices ? (
                 Object.entries(metalPricesData.prices).map(([metal, data]) => (
                   <View key={metal} style={styles.priceRow}>
-                    <Text style={styles.priceMetal}>{metal.charAt(0).toUpperCase() + metal.slice(1)}</Text>
-                    <Text style={styles.priceValue}>${data?.price?.toFixed(2)} / {data?.unit || 'g'}</Text>
+                    <Text style={styles.priceMetal}>
+                      {metal.charAt(0).toUpperCase() + metal.slice(1)}
+                    </Text>
+                    <Text style={styles.priceValue}>
+                      ${data?.price?.toFixed(2)} / {data?.unit || 'g'}
+                    </Text>
                   </View>
                 ))
               ) : (
@@ -1222,7 +1553,7 @@ export default function PricingCalci() {
         </TouchableOpacity>
       </Modal>
 
-      {/* ---- Edit Stone Modal ---- */}
+      {/* UNIFIED EDIT STONE MODAL */}
       <Modal
         visible={editModalVisible}
         transparent
@@ -1232,103 +1563,246 @@ export default function PricingCalci() {
         <View style={styles.editModalOverlay}>
           <View style={styles.editModalContent}>
             <View style={styles.editModalHeader}>
-              <Text style={styles.editModalTitle}>
-                Edit Stone {editingStoneIndex !== null ? editingStoneIndex + 1 : ''}
-              </Text>
-              <TouchableOpacity onPress={() => setEditModalVisible(false)}>
-                <Icon name="close" size={22} color={colors.textPrimary} />
-              </TouchableOpacity>
+              <Text style={styles.editModalTitle}>Edit Stone</Text>
+              <View style={styles.editModalHeaderActions}>
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => {
+                    if (editingContext.type && editingContext.index !== null) {
+                      deleteStone(editingContext.type, editingContext.index);
+                      setEditModalVisible(false);
+                      setEditingContext({ type: null, index: null });
+                    }
+                  }}
+                >
+                  <Icon name="delete" size={20} color={colors.error} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setEditModalVisible(false)}>
+                  <Icon name="close" size={22} color={colors.textPrimary} />
+                </TouchableOpacity>
+              </View>
             </View>
             <ScrollView>
-              {editingStoneIndex !== null && (() => {
-                const stone = editableStones[editingStoneIndex];
-                if (!stone) return null;
-                return (
-                  <View style={styles.editModalFields}>
-                    <View style={styles.editFieldRow}>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>MM</Text>
-                        <TextInput style={styles.editFieldInput} value={stone.MmSize} onChangeText={v => updateStone(editingStoneIndex, 'MmSize', v)} />
+              {editingContext.type !== null &&
+                editingContext.index !== null &&
+                (() => {
+                  const stone =
+                    multiData[editingContext.type].editableStones[
+                      editingContext.index
+                    ];
+                  if (!stone) return null;
+                  return (
+                    <View style={styles.editModalFields}>
+                      <View style={styles.editFieldRow}>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Type</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            value={stone.Type || editingContext.type}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'Type',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>MM</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            value={stone.MmSize}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'MmSize',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
                       </View>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>Color</Text>
-                        <TextInput style={styles.editFieldInput} value={stone.Color} onChangeText={v => updateStone(editingStoneIndex, 'Color', v)} />
+                      <View style={styles.editFieldRow}>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Color</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            value={stone.Color}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'Color',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Shape</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            value={stone.Shape}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'Shape',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                      </View>
+                      <View style={styles.editFieldRow}>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Sieve</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            value={stone.SieveSize}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'SieveSize',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Pcs</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            keyboardType="number-pad"
+                            value={String(stone.Pcs ?? 0)}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'Pcs',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                      </View>
+                      <View style={styles.editFieldRow}>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Avg Wt</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            keyboardType="decimal-pad"
+                            value={String(stone.Weight ?? 0)}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'Weight',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Ct Wt</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            keyboardType="decimal-pad"
+                            value={String(stone.CtWeight ?? 0)}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'CtWeight',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                      </View>
+                      <View style={styles.editFieldRow}>
+                        <View style={styles.editFieldHalf}>
+                          <Text style={styles.editFieldLabel}>Markup</Text>
+                          <TextInput
+                            style={styles.editFieldInput}
+                            keyboardType="decimal-pad"
+                            value={String(stone.Markup ?? 0)}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'Markup',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
+                        <View style={styles.editFieldHalf}>
+                          <Text
+                            style={[
+                              styles.editFieldLabel,
+                              (!stone.Price || parseFloat(stone.Price) <= 0) &&
+                                styles.fieldLabelError,
+                            ]}
+                          >
+                            $/Ct *
+                          </Text>
+                          <TextInput
+                            style={[
+                              styles.editFieldInput,
+                              (!stone.Price || parseFloat(stone.Price) <= 0) &&
+                                styles.fieldInputError,
+                            ]}
+                            keyboardType="decimal-pad"
+                            value={String(stone.Price ?? 0)}
+                            onChangeText={v =>
+                              updateStone(
+                                editingContext.type,
+                                editingContext.index,
+                                'Price',
+                                v,
+                              )
+                            }
+                          />
+                        </View>
                       </View>
                     </View>
-                    <View style={styles.editFieldRow}>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>Shape</Text>
-                        <TextInput style={styles.editFieldInput} value={stone.Shape} onChangeText={v => updateStone(editingStoneIndex, 'Shape', v)} />
-                      </View>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>Sieve</Text>
-                        <TextInput style={styles.editFieldInput} value={stone.SieveSize} onChangeText={v => updateStone(editingStoneIndex, 'SieveSize', v)} />
-                      </View>
-                    </View>
-                    <View style={styles.editFieldRow}>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>Avg Wt</Text>
-                        <TextInput style={styles.editFieldInput} keyboardType="decimal-pad" value={String(stone.Weight ?? 0)} onChangeText={v => updateStone(editingStoneIndex, 'Weight', v)} />
-                      </View>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>Pcs</Text>
-                        <TextInput style={styles.editFieldInput} keyboardType="number-pad" value={String(stone.Pcs ?? 0)} onChangeText={v => updateStone(editingStoneIndex, 'Pcs', v)} />
-                      </View>
-                    </View>
-                    <View style={styles.editFieldRow}>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>Ct Wt</Text>
-                        <TextInput style={styles.editFieldInput} keyboardType="decimal-pad" value={String(stone.CtWeight ?? 0)} onChangeText={v => updateStone(editingStoneIndex, 'CtWeight', v)} />
-                      </View>
-                      <View style={styles.editFieldHalf}>
-                        <Text style={styles.editFieldLabel}>Markup</Text>
-                        <TextInput style={styles.editFieldInput} keyboardType="decimal-pad" value={String(stone.Markup ?? 0)} onChangeText={v => updateStone(editingStoneIndex, 'Markup', v)} />
-                      </View>
-                    </View>
-                    <View style={styles.editFieldRow}>
-                      <View style={styles.editFieldFull}>
-                        <Text style={[styles.editFieldLabel, (!stone.Price || parseFloat(stone.Price) <= 0) && styles.fieldLabelError]}>$/Ct *</Text>
-                        <TextInput 
-                          style={[styles.editFieldInput, (!stone.Price || parseFloat(stone.Price) <= 0) && styles.fieldInputError]} 
-                          keyboardType="decimal-pad" 
-                          value={String(stone.Price ?? 0)} 
-                          onChangeText={v => updateStone(editingStoneIndex, 'Price', v)} 
-                        />
-                        {(!stone.Price || parseFloat(stone.Price) <= 0) && (
-                          <Text style={styles.errorText}>Required</Text>
-                        )}
-                      </View>
-                    </View>
-                  </View>
-                );
-              })()}
+                  );
+                })()}
             </ScrollView>
-            <TouchableOpacity style={styles.editModalSaveButton} onPress={() => setEditModalVisible(false)}>
+            <TouchableOpacity
+              style={styles.editModalSaveButton}
+              onPress={() => setEditModalVisible(false)}
+            >
               <Text style={styles.editModalSaveText}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      <Modal
-        visible={showPdfModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => { setShowPdfModal(false); setPdfHtml(null); }}
-      >
+      {/* PDF VIEWER MODAL */}
+      <Modal visible={showPdfModal} animationType="slide" transparent>
         <View style={styles.pdfModalOverlay}>
           <View style={styles.pdfModalContent}>
-            {/* Pass html= so PdfViewer renders locally — no file:// or Google Docs needed */}
             <PdfViewer html={pdfHtml} style={styles.pdfViewer} />
             <View style={styles.pdfModalToolbar}>
-              <TouchableOpacity style={styles.pdfToolbarBtn} onPress={handleSharePDF} activeOpacity={0.8}>
+              <TouchableOpacity
+                style={styles.pdfToolbarBtn}
+                onPress={handleSharePDF}
+              >
                 <Icon name="share" size={20} color="#fff" />
                 <Text style={styles.pdfToolbarBtnText}>Share PDF</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.pdfToolbarBtn, { backgroundColor: 'rgba(0,0,0,0.5)' }]}
-                onPress={() => { setShowPdfModal(false); setPdfHtml(null); }}
-                activeOpacity={0.8}
+                style={[
+                  styles.pdfToolbarBtn,
+                  { backgroundColor: 'rgba(0,0,0,0.5)' },
+                ]}
+                onPress={() => setShowPdfModal(false)}
               >
                 <Icon name="close" size={20} color="#fff" />
                 <Text style={styles.pdfToolbarBtnText}>Close</Text>
@@ -1338,48 +1812,169 @@ export default function PricingCalci() {
         </View>
       </Modal>
 
-      <BrandedAlert
-        visible={alertConfig.visible}
-        title={alertConfig.title}
-        message={alertConfig.message}
-        type={alertConfig.type}
-        buttons={alertConfig.buttons}
-        onClose={hideAlert}
-      />
+      {/* COMPACT TYPE SELECTOR MODAL */}
+      <Modal
+        visible={showCompactTypeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCompactTypeModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCompactTypeModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.multiSelectHeader}>Select Stone Type</Text>
+            <ScrollView showsVerticalScrollIndicator={true}>
+              {stoneTypesData.map(st => {
+                const opt = { label: st.label, value: st.value };
+                const isSelected = compactContext.type && multiData[compactContext.type]?.editableStones?.every(s => s.Type === opt.value);
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.dropdownOption,
+                      isSelected && styles.dropdownOptionSelected,
+                    ]}
+                    onPress={() => {
+                      if (compactContext.type && compactContext.type !== opt.value) {
+                        const oldKey = compactContext.type;
+                        const newKey = opt.value;
+                        setMultiData(prev => {
+                          const { [oldKey]: data, ...rest } = prev;
+                          if (!data) return prev;
+                          return {
+                            ...rest,
+                            [newKey]: {
+                              ...data,
+                              editableStones: data.editableStones.map(s => ({
+                                ...s,
+                                Type: newKey,
+                              })),
+                            },
+                          };
+                        });
+                        setExpandedStones(prev => {
+                          const { [oldKey]: val, ...rest } = prev;
+                          return { ...rest, [newKey]: val ?? false };
+                        });
+                      }
+                      setShowCompactTypeModal(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownOptionText,
+                        isSelected && styles.dropdownOptionTextSelected,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                    {isSelected && (
+                      <Icon name="check" size={20} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.doneButton}
+              onPress={() => setShowCompactTypeModal(false)}
+            >
+              <Text style={styles.doneButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* COMPACT QUALITY SELECTOR MODAL */}
+      <Modal
+        visible={showCompactQualityModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCompactQualityModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCompactQualityModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.multiSelectHeader}>Select Metal Quality</Text>
+            <ScrollView showsVerticalScrollIndicator={true}>
+              {metalQualityOptions.map(opt => {
+                const isSelected = compactContext.type && multiData[compactContext.type]?.editableMetal?.Quality === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.dropdownOption,
+                      isSelected && styles.dropdownOptionSelected,
+                    ]}
+                    onPress={() => {
+                      if (compactContext.type) {
+                        setMultiData(prev => ({
+                          ...prev,
+                          [compactContext.type]: {
+                            ...prev[compactContext.type],
+                            editableMetal: {
+                              ...prev[compactContext.type].editableMetal,
+                              Quality: opt.value,
+                            },
+                          },
+                        }));
+                      }
+                      setShowCompactQualityModal(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownOptionText,
+                        isSelected && styles.dropdownOptionTextSelected,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                    {isSelected && (
+                      <Icon name="check" size={20} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.doneButton}
+              onPress={() => setShowCompactQualityModal(false)}
+            >
+              <Text style={styles.doneButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <BrandedAlert {...alertConfig} onClose={hideAlert} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.backgroundSecondary,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 100,
-  },
-  card: {
-    padding: 20,
-    borderRadius: 12,
-  },
+  container: { flex: 1, backgroundColor: colors.backgroundSecondary },
+  scrollView: { flex: 1 },
+  scrollContent: { padding: 16, paddingBottom: 100 },
+  card: { padding: 20, borderRadius: 12, backgroundColor: '#fff' },
   title: {
     fontSize: fonts.xl,
     fontFamily: fonts.bold,
     color: colors.textPrimary,
     marginBottom: 24,
   },
-  inputContainer: {
-    marginBottom: 20,
-  },
+  inputContainer: { marginBottom: 20 },
   labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-end',
     marginBottom: 8,
+    alignItems: 'flex-end',
   },
   label: {
     fontSize: fonts.md,
@@ -1405,52 +2000,57 @@ const styles = StyleSheet.create({
     fontSize: fonts.md,
     fontFamily: fonts.regular,
     color: colors.textPrimary,
+    flex: 1,
   },
-  placeholderText: {
-    color: colors.textLight,
-  },
+  placeholderText: { color: colors.textLight },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: colors.background,
+    backgroundColor: '#fff',
     borderRadius: 12,
-    minWidth: 250,
-    maxWidth: '80%',
+    minWidth: 280,
     maxHeight: '60%',
+    overflow: 'hidden',
     elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
   },
   dropdownOption: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || colors.border,
+    borderColor: '#eee',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  dropdownOptionSelected: {
-    backgroundColor: colors.backgroundSecondary,
-  },
+  dropdownOptionSelected: { backgroundColor: colors.backgroundSecondary },
   dropdownOptionText: {
     fontSize: fonts.base,
     fontFamily: fonts.regular,
     color: colors.textPrimary,
   },
-  dropdownOptionTextSelected: {
+  dropdownOptionTextSelected: { fontFamily: fonts.bold, color: colors.primary },
+  multiSelectHeader: {
+    padding: 16,
+    fontSize: fonts.lg,
     fontFamily: fonts.bold,
-    color: colors.primary,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+    textAlign: 'center',
+    color: colors.textPrimary,
   },
+  doneButton: {
+    padding: 16,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  doneButtonText: { color: '#fff', fontFamily: fonts.bold, fontSize: fonts.md },
   uploadArea: {
     borderWidth: 2,
-    borderColor: colors.border,
     borderStyle: 'dashed',
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 30,
     alignItems: 'center',
@@ -1471,17 +2071,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
+  loadingContainer: { alignItems: 'center', justifyContent: 'center' },
   filePreview: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%',
   },
-  previewImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 6,
-  },
+  previewImage: { width: 50, height: 50, borderRadius: 6 },
   fileName: {
     flex: 1,
     marginHorizontal: 10,
@@ -1489,138 +2086,27 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     color: colors.textPrimary,
   },
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 16,
-    backgroundColor: colors.background,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  calculateButton: {
-    backgroundColor: colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    gap: 8,
-    height: 50,
-  },
-  calculateButtonDisabled: {
-    opacity: 0.6,
-  },
-  calculateButtonText: {
-    color: colors.textWhite,
-    fontFamily: fonts.bold,
-    fontSize: fonts.md,
-  },
-  pricesModalContent: {
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    width: '80%',
-    maxHeight: '60%',
-    padding: 20,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-  },
-  pricesModalTitle: {
-    fontSize: fonts.lg,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  pricesList: {
-    marginBottom: 16,
-  },
-  priceRow: {
+
+  accordionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fafafa',
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || colors.border,
+    borderColor: '#eee',
   },
-  priceMetal: {
+  accordionTitle: {
     fontSize: fonts.md,
-    fontFamily: fonts.medium,
+    fontFamily: fonts.bold,
     color: colors.textPrimary,
   },
-  priceValue: {
+  accordionTotal: {
     fontSize: fonts.md,
     fontFamily: fonts.bold,
     color: colors.primary,
   },
-  noPricesText: {
-    fontSize: fonts.md,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    padding: 20,
-  },
-  closePricesButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  closePricesButtonText: {
-    color: colors.textWhite,
-    fontFamily: fonts.bold,
-    fontSize: fonts.md,
-  },
-  footerActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  footerRecalcBtn: {
-    flex: 1,
-    backgroundColor: colors.accent,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    gap: 6,
-    paddingVertical:10,
-    paddingHorizontal:20
-  },
-  footerShareBtn: {
-    
-    backgroundColor: colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    gap: 6,
-     paddingVertical:10,
-    paddingHorizontal:20
-  },
-  footerExportBtn: {
-    
-    backgroundColor: colors.secondary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    gap: 6,
-     paddingVertical:10,
-    paddingHorizontal:20
-  },
-
-  sectionTitle: {
-    fontSize: fonts.lg,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    marginBottom: 16,
-  },
+  accordionBody: { padding: 16 },
   subSectionTitle: {
     fontSize: fonts.md,
     fontFamily: fonts.bold,
@@ -1628,32 +2114,60 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 10,
   },
-  stoneRow: {
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
+
+  compactTableWrapper: {
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    backgroundColor: colors.background,
+    marginVertical: 8,
   },
-  stoneRowHeader: {
+  compactTableHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    backgroundColor: colors.primary,
+    paddingVertical: 6,
   },
-  stoneRowLabel: {
-    fontSize: fonts.sm,
+  compactTableHeaderText: {
+    fontSize: 9,
     fontFamily: fonts.bold,
-    color: colors.primary,
+    color: colors.textWhite,
+    textAlign: 'center',
   },
-  stoneFieldsGrid: {
+  compactTableBody: { maxHeight: 180 },
+  compactTableRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight || colors.border,
+    backgroundColor: colors.background,
+  },
+  compactTableCell: {
+    fontSize: 9,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    textAlign: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addStoneButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    paddingVertical: 8,
+    borderRadius: 8,
     gap: 6,
+    marginTop: 4,
   },
-  stoneField: {
-    width: '30%',
-    marginBottom: 6,
+  addStoneButtonText: {
+    color: colors.textWhite,
+    fontFamily: fonts.medium,
+    fontSize: fonts.sm,
   },
+
+  chargesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chargeField: { width: '46%', marginBottom: 10 },
   fieldLabel: {
     fontSize: fonts.xs,
     fontFamily: fonts.medium,
@@ -1671,36 +2185,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     backgroundColor: colors.background,
   },
-  addStoneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
-    borderRadius: 8,
-    gap: 6,
-    marginTop: 4,
-  },
-  addStoneButtonText: {
-    color: colors.textWhite,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm,
-  },
-  chargesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  chargeField: {
-    width: '46%',
-    marginBottom: 10,
-  },
-  summaryContainer: {
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
+
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1736,99 +2221,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.primary,
   },
-  actionButtonRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 16,
-  },
-  recalcButton: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 6,
-  },
-  recalcButtonDisabled: {
-    backgroundColor: colors.textSecondary,
-    opacity: 0.5,
-  },
-  whatsappButton: {
-    flex: 1,
-    backgroundColor: '#25D366',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 6,
-  },
-  pdfButton: {
-    flex: 1,
-    backgroundColor: '#E74C3C',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 6,
-  },
-  actionButtonText: {
-    color: colors.textWhite,
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm,
-  },
 
-  compactTableWrapper: {
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-    backgroundColor: colors.background,
-    marginHorizontal: -20,
-    marginVertical: 10,
-  },
-  compactTableHeader: {
-    flexDirection: 'row',
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
-  },
-  compactTableHeaderText: {
-    fontSize: 10,
-    fontFamily: fonts.bold,
-    color: colors.textWhite,
-    textAlign: 'center',
-  },
-  compactTableBody: {
-    maxHeight: 300,
-  },
-  compactTableRowWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || colors.border,
-    backgroundColor: colors.background,
-  },
-  compactTableRow: {
-    flex: 1,
-    flexDirection: 'row',
-    paddingVertical: 8,
-  },
-  deleteIconButton: {
-    width: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  compactTableCell: {
-    fontSize: 10,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    textAlign: 'center',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   dutiesContainer: {
     backgroundColor: colors.backgroundSecondary,
     borderRadius: 8,
@@ -1852,6 +2245,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     color: colors.textSecondary,
   },
+
   clientChargesContainer: {
     backgroundColor: colors.backgroundSecondary,
     borderRadius: 8,
@@ -1880,6 +2274,110 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
 
+  recalcButton: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 8,
+    gap: 6,
+  },
+  recalcButtonDisabled: { backgroundColor: colors.textSecondary, opacity: 0.5 },
+  validationWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3E0',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 8,
+  },
+  validationWarningText: {
+    flex: 1,
+    fontSize: fonts.xs,
+    fontFamily: fonts.regular,
+    color: '#E65100',
+  },
+
+  footer: {
+    padding: 16,
+    backgroundColor: colors.background,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  calculateButton: {
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    gap: 8,
+    height: 50,
+  },
+  calculateButtonDisabled: {
+    backgroundColor: colors.textSecondary,
+    opacity: 0.5,
+  },
+  calculateButtonText: {
+    color: colors.textWhite,
+    fontFamily: fonts.bold,
+    fontSize: fonts.md,
+  },
+
+  pricesModalContent: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    width: '80%',
+    maxHeight: '60%',
+    padding: 20,
+    elevation: 5,
+  },
+  pricesModalTitle: {
+    fontSize: fonts.lg,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  pricesList: { marginBottom: 16 },
+  priceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight || colors.border,
+  },
+  priceMetal: {
+    fontSize: fonts.md,
+    fontFamily: fonts.medium,
+    color: colors.textPrimary,
+  },
+  priceValue: {
+    fontSize: fonts.md,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+  },
+  noPricesText: {
+    fontSize: fonts.md,
+    fontFamily: fonts.regular,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    padding: 20,
+  },
+  closePricesButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  closePricesButtonText: {
+    color: colors.textWhite,
+    fontFamily: fonts.bold,
+    fontSize: fonts.md,
+  },
+
   editModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1892,10 +2390,6 @@ const styles = StyleSheet.create({
     maxHeight: '80%',
     paddingBottom: 24,
     elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
   },
   editModalHeader: {
     flexDirection: 'row',
@@ -1910,20 +2404,16 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.textPrimary,
   },
-  editModalFields: {
-    padding: 16,
-  },
-  editFieldRow: {
+  editModalHeaderActions: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+    alignItems: 'center',
+    gap: 16,
   },
-  editFieldHalf: {
-    flex: 1,
-  },
-  editFieldFull: {
-    flex: 1,
-  },
+  deleteButton: { padding: 4 },
+  editModalFields: { padding: 16 },
+  editFieldRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  editFieldHalf: { flex: 1 },
+  editFieldFull: { flex: 1 },
   editFieldLabel: {
     fontSize: fonts.xs,
     fontFamily: fonts.medium,
@@ -1954,34 +2444,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: fonts.md,
   },
-  fieldLabelError: {
-    color: colors.error,
-  },
-  fieldInputError: {
-    borderColor: colors.error,
-    borderWidth: 2,
-  },
-  errorText: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.regular,
-    color: colors.error,
-    marginTop: 2,
-  },
-  validationWarning: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF3E0',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 12,
-    gap: 8,
-  },
-  validationWarningText: {
-    flex: 1,
-    fontSize: fonts.xs,
-    fontFamily: fonts.regular,
-    color: '#E65100',
-  },
+  fieldLabelError: { color: colors.error },
+  fieldInputError: { borderColor: colors.error, borderWidth: 2 },
+
   pdfModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -1997,9 +2462,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  pdfViewer: {
-    flex: 1,
-  },
+  pdfViewer: { flex: 1 },
   pdfModalToolbar: {
     flexDirection: 'row',
     gap: 10,
@@ -2020,5 +2483,83 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontFamily: fonts.medium,
     fontSize: fonts.sm,
+  },
+  clientMsgCard: {
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: colors.borderLight || '#E0E0E0',
+    borderRadius: 12,
+    padding: 14,
+    backgroundColor: colors.backgroundSecondary || '#F8F9FA',
+  },
+  clientMsgHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  clientMsgLabel: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.sm || 13,
+    color: colors.textPrimary,
+    flex: 1,
+  },
+  copyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.background,
+  },
+  copyBtnText: {
+    fontFamily: fonts.medium,
+    fontSize: fonts.xs || 12,
+    color: colors.primary,
+  },
+  clientMsgInput: {
+    minHeight: 100,
+    borderWidth: 1,
+    borderColor: colors.borderLight || '#E0E0E0',
+    borderRadius: 8,
+    padding: 10,
+    fontFamily: fonts.regular,
+    fontSize: fonts.sm || 13,
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+  },
+  compactSelectorsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  compactSelectorField: {
+    flex: 1,
+  },
+  compactSelectorLabel: {
+    fontSize: fonts.xs,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  compactSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: colors.background,
+  },
+  compactSelectorText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    flex: 1,
   },
 });
