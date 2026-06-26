@@ -15,9 +15,10 @@ import {
   FlatList,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
-
+import Clipboard from '@react-native-clipboard/clipboard';
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
+import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import {
   useJwelleryPriceDataMutation,
@@ -44,6 +45,7 @@ export default function JwelleryEstimate() {
 
   const [compactView, setCompactView] = useState(false);
   const [estimateResult, setEstimateResult] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   const [jwelleryPriceData, { isLoading }] = useJwelleryPriceDataMutation();
 
@@ -102,6 +104,20 @@ export default function JwelleryEstimate() {
     m => m.metalQuality === metalKt && m.stoneType === stoneType,
   );
 
+  // Format the client pricing message from the PricingMessageFormat template
+  const formatClientMessage = () => {
+    if (!selectedMatrixMatch?.pricing?.Client?.PricingMessageFormat) return '';
+    const p = selectedMatrixMatch.pricing;
+    const totalPrice = (p.MetalPrice + p.DiamondsPrice + p.DutiesAmount).toFixed(2);
+    return p.Client.PricingMessageFormat
+      .replace('{TotalPrice}', totalPrice)
+      .replace('{GoldWeight}', p.Metal?.Weight || selectedMatrixMatch.metalWeightGrams || 0)
+      .replace('{metalQuality}', metalKt)
+      .replace('{DiamondWeight}', p.DiamondWeight || 0)
+      .replace('{MetalPrice}', (p.MetalPrice || 0).toFixed(2))
+      .replace('{DiamondsPrice}', (p.DiamondsPrice || 0).toFixed(2));
+  };
+
   const estimatedPrice = selectedMatrixMatch
     ? (
         selectedMatrixMatch.pricing.MetalPrice +
@@ -118,16 +134,36 @@ export default function JwelleryEstimate() {
     const stonesHtml = (p.Stones || [])
       .map(
         (s, idx) => `
-      <tr style="${idx % 2 === 0 ? `background:${colors.backgroundSecondary}` : ''}">
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:center">${s.MmSize || '-'}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:center">${s.Color || '-'}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:center">${s.Shape || '-'}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:center">${s.SieveSize || '-'}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:right">${s.Weight || 0}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:center">${s.Pcs || 0}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:right">${s.CtWeight || 0}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:right">${s.Markup || 0}</td>
-        <td style="padding:8px;border:1px solid ${colors.border};text-align:right">$${s.Price || 0}</td>
+      <tr style="${
+        idx % 2 === 0 ? `background:${colors.backgroundSecondary}` : ''
+      }">
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:center">${s.MmSize || '-'}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:center">${s.Color || '-'}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:center">${s.Shape || '-'}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:center">${s.SieveSize || '-'}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:right">${s.Weight || 0}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:center">${s.Pcs || 0}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:right">${s.CtWeight || 0}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:right">${s.Markup || 0}</td>
+        <td style="padding:8px;border:1px solid ${
+          colors.border
+        };text-align:right">$${s.Price || 0}</td>
       </tr>
     `,
       )
@@ -152,25 +188,55 @@ export default function JwelleryEstimate() {
       <head>
         <meta charset="UTF-8">
         <style>
-          body { font-family: Arial, sans-serif; padding: 30px; color: ${colors.textPrimary}; background-color: ${colors.background}; }
-          .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid ${colors.accent}; padding-bottom: 20px; }
+          body { font-family: Arial, sans-serif; padding: 30px; color: ${
+            colors.textPrimary
+          }; background-color: ${colors.background}; }
+          .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid ${
+            colors.accent
+          }; padding-bottom: 20px; }
           .header h1 { color: ${colors.primary}; margin: 0; font-size: 28px; }
-          .header p { color: ${colors.textSecondary}; margin: 5px 0; font-size: 14px; }
+          .header p { color: ${
+            colors.textSecondary
+          }; margin: 5px 0; font-size: 14px; }
           .section { margin: 25px 0; }
-          .section-title { background: ${colors.primary}; color: ${colors.textWhite}; padding: 10px 15px; font-size: 16px; font-weight: bold; margin-bottom: 15px; border-radius: 4px; }
+          .section-title { background: ${colors.primary}; color: ${
+      colors.textWhite
+    }; padding: 10px 15px; font-size: 16px; font-weight: bold; margin-bottom: 15px; border-radius: 4px; }
           .info-grid { display: table; width: 100%; margin-bottom: 15px; }
           .info-row { display: table-row; }
-          .info-label { display: table-cell; padding: 8px; font-weight: bold; color: ${colors.textSecondary}; width: 40%; border-bottom: 1px solid ${colors.borderLight}; }
-          .info-value { display: table-cell; padding: 8px; color: ${colors.textPrimary}; border-bottom: 1px solid ${colors.borderLight}; }
+          .info-label { display: table-cell; padding: 8px; font-weight: bold; color: ${
+            colors.textSecondary
+          }; width: 40%; border-bottom: 1px solid ${colors.borderLight}; }
+          .info-value { display: table-cell; padding: 8px; color: ${
+            colors.textPrimary
+          }; border-bottom: 1px solid ${colors.borderLight}; }
           table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-          th { background: ${colors.primaryLight}; color: ${colors.textWhite}; padding: 10px; text-align: center; font-size: 13px; border: 1px solid ${colors.border}; }
-          td { padding: 8px; border: 1px solid ${colors.border}; font-size: 12px; }
-          .total-section { background: ${colors.backgroundSecondary}; padding: 20px; border-radius: 8px; margin-top: 20px; border: 1px solid ${colors.border}; }
-          .total-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid ${colors.borderLight}; }
+          th { background: ${colors.primaryLight}; color: ${
+      colors.textWhite
+    }; padding: 10px; text-align: center; font-size: 13px; border: 1px solid ${
+      colors.border
+    }; }
+          td { padding: 8px; border: 1px solid ${
+            colors.border
+          }; font-size: 12px; }
+          .total-section { background: ${
+            colors.backgroundSecondary
+          }; padding: 20px; border-radius: 8px; margin-top: 20px; border: 1px solid ${
+      colors.border
+    }; }
+          .total-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid ${
+            colors.borderLight
+          }; }
           .total-label { font-weight: bold; color: ${colors.textSecondary}; }
           .total-value { color: ${colors.textPrimary}; font-weight: bold; }
-          .grand-total { font-size: 20px; color: ${colors.primary}; margin-top: 15px; padding-top: 15px; border-top: 2px solid ${colors.accent}; }
-          .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 2px solid ${colors.borderLight}; color: ${colors.textLight}; font-size: 11px; }
+          .grand-total { font-size: 20px; color: ${
+            colors.primary
+          }; margin-top: 15px; padding-top: 15px; border-top: 2px solid ${
+      colors.accent
+    }; }
+          .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 2px solid ${
+            colors.borderLight
+          }; color: ${colors.textLight}; font-size: 11px; }
         </style>
       </head>
       <body>
@@ -211,7 +277,9 @@ export default function JwelleryEstimate() {
             </div>
             <div class="info-row">
               <div class="info-label">Weight:</div>
-              <div class="info-value">${p.Metal?.Weight || selectedMatrixMatch.metalWeightGrams || 0} g</div>
+              <div class="info-value">${
+                p.Metal?.Weight || selectedMatrixMatch.metalWeightGrams || 0
+              } g</div>
             </div>
             <div class="info-row">
               <div class="info-label">Rate:</div>
@@ -276,11 +344,15 @@ export default function JwelleryEstimate() {
           </div>
           <div class="total-row">
             <span class="total-label">Diamonds Price:</span>
-            <span class="total-value">$${(p.DiamondsPrice || 0).toFixed(2)}</span>
+            <span class="total-value">$${(p.DiamondsPrice || 0).toFixed(
+              2,
+            )}</span>
           </div>
           <div class="total-row">
             <span class="total-label">Duties Amount:</span>
-            <span class="total-value">$${(p.DutiesAmount || 0).toFixed(2)}</span>
+            <span class="total-value">$${(p.DutiesAmount || 0).toFixed(
+              2,
+            )}</span>
           </div>
           <div class="total-row grand-total">
             <span class="total-label">TOTAL ESTIMATE:</span>
@@ -294,7 +366,13 @@ export default function JwelleryEstimate() {
         </div>
       </body>
       </html>`;
-  }, [selectedMatrixMatch, selectedClientName, stoneType, metalKt, estimatedPrice]);
+  }, [
+    selectedMatrixMatch,
+    selectedClientName,
+    stoneType,
+    metalKt,
+    estimatedPrice,
+  ]);
 
   const handleImagePick = setImageFn => {
     launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, response => {
@@ -304,6 +382,14 @@ export default function JwelleryEstimate() {
       }
     });
   };
+
+    const handleCopyMsg = (text) => {
+      if (text) {
+        Clipboard.setString(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    };
 
   const handleAdditionalImagePick = () => {
     if (additionalImages.length >= 5) {
@@ -355,7 +441,9 @@ export default function JwelleryEstimate() {
     };
 
     try {
+      console.log('Payload being sent:', JSON.stringify(payload, null, 2));
       const response = await jwelleryPriceData(payload).unwrap();
+      console.log('Estimate Response:', response);
       setEstimateResult(response);
       setCompactView(true);
     } catch (error) {
@@ -405,7 +493,8 @@ export default function JwelleryEstimate() {
         <TouchableOpacity
           style={styles.dropdown}
           onPress={() => setVisible(true)}
-          activeOpacity={0.8}>
+          activeOpacity={0.8}
+        >
           <Text style={[styles.dropdownText, !value && styles.placeholderText]}>
             {selectedLabel}
           </Text>
@@ -420,16 +509,21 @@ export default function JwelleryEstimate() {
           visible={isVisible}
           transparent
           animationType="fade"
-          onRequestClose={() => setVisible(false)}>
+          onRequestClose={() => setVisible(false)}
+        >
           <TouchableOpacity
             style={styles.modalOverlay}
             activeOpacity={1}
-            onPress={() => setVisible(false)}>
+            onPress={() => setVisible(false)}
+          >
             {/* TouchableWithoutFeedback prevents the overlay from stealing the click */}
             <TouchableWithoutFeedback>
               <View style={styles.modalContent}>
                 {/* keyboardShouldPersistTaps added to allow clicks even if keyboard was open */}
-                <ScrollView showsVerticalScrollIndicator={true} keyboardShouldPersistTaps="handled">
+                <ScrollView
+                  showsVerticalScrollIndicator={true}
+                  keyboardShouldPersistTaps="handled"
+                >
                   {options.map(opt => (
                     <TouchableOpacity
                       key={opt.value}
@@ -440,13 +534,15 @@ export default function JwelleryEstimate() {
                       onPress={() => {
                         onSelect(opt.value);
                         setVisible(false);
-                      }}>
+                      }}
+                    >
                       <Text
                         style={[
                           styles.dropdownOptionText,
                           value === opt.value &&
                             styles.dropdownOptionTextSelected,
-                        ]}>
+                        ]}
+                      >
                         {opt.label}
                       </Text>
                       {value === opt.value && (
@@ -472,7 +568,8 @@ export default function JwelleryEstimate() {
       horizontal
       showsHorizontalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={styles.chipContainer}>
+      contentContainerStyle={styles.chipContainer}
+    >
       {options.map(opt => (
         <TouchableOpacity
           key={opt.value}
@@ -480,12 +577,14 @@ export default function JwelleryEstimate() {
             styles.chip,
             selectedValue === opt.value && styles.chipSelected,
           ]}
-          onPress={() => onSelect(opt.value)}>
+          onPress={() => onSelect(opt.value)}
+        >
           <Text
             style={[
               styles.chipText,
               selectedValue === opt.value && styles.chipTextSelected,
-            ]}>
+            ]}
+          >
             {opt.label}
           </Text>
         </TouchableOpacity>
@@ -496,7 +595,10 @@ export default function JwelleryEstimate() {
   return (
     <View style={styles.background}>
       {compactView ? (
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.DetailBox}>
             <View style={styles.clientHeaderRow}>
               <View style={styles.clientAvatar}>
@@ -509,13 +611,15 @@ export default function JwelleryEstimate() {
               horizontal
               showsHorizontalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={styles.compactImagesScroll}>
+              contentContainerStyle={styles.compactImagesScroll}
+            >
               {allUploadedImages.map((uri, idx) => (
                 <TouchableOpacity
                   key={idx}
                   style={styles.compactImageWrapper}
                   activeOpacity={0.8}
-                  onPress={() => openImageModal(idx)}>
+                  onPress={() => openImageModal(idx)}
+                >
                   <Image source={{ uri }} style={styles.compactImage} />
                 </TouchableOpacity>
               ))}
@@ -542,9 +646,13 @@ export default function JwelleryEstimate() {
                         setPdfHtml(html);
                         setShowPdfModal(true);
                       } else {
-                        Alert.alert('Error', 'Unable to generate breakdown PDF');
+                        Alert.alert(
+                          'Error',
+                          'Unable to generate breakdown PDF',
+                        );
                       }
-                    }}>
+                    }}
+                  >
                     <Icon name="picture-as-pdf" size={20} color="#ffffff" />
                     <Text style={styles.breakdownPdfButtonText}>
                       View Breakdown
@@ -558,6 +666,38 @@ export default function JwelleryEstimate() {
               )}
             </View>
 
+            {selectedMatrixMatch && (
+              <View style={styles.clientMsgCard}>
+                <View style={styles.clientMsgHeader}>
+                  <Text style={styles.clientMsgLabel}>
+                    Copy pricing format for your client
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.copyBtn}
+                    onPress={() => handleCopyMsg(formatClientMessage())}
+                    activeOpacity={0.8}
+                  >
+                    <Icon
+                      name={copied ? 'check' : 'content-copy'}
+                      size={15}
+                      color={copied ? '#059669' : colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.copyBtnText,
+                        copied && { color: '#059669' },
+                      ]}
+                    >
+                      {copied ? 'Copied!' : 'Copy'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.clientMsgInput}>
+                  {formatClientMessage() || 'No pricing message available'}
+                </Text>
+              </View>
+            )}
+
             <TouchableOpacity
               style={styles.resetButton}
               onPress={() => {
@@ -568,13 +708,17 @@ export default function JwelleryEstimate() {
                 setAdditionalImages([]);
                 setEstimateResult(null);
                 setDescription('');
-              }}>
+              }}
+            >
               <Text style={styles.resetButtonText}>New Estimate</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.DetailBox}>
             <Text style={styles.DetailHeader}>Estimate Details</Text>
             <Text style={styles.DetailSubs}>
@@ -611,7 +755,8 @@ export default function JwelleryEstimate() {
                 <Text style={styles.uploadLabelBold}>Top View*</Text>
                 <TouchableOpacity
                   style={styles.uploadBoxDashed}
-                  onPress={() => handleImagePick(setTopView)}>
+                  onPress={() => handleImagePick(setTopView)}
+                >
                   {topView ? (
                     <Image
                       source={{ uri: topView }}
@@ -631,14 +776,19 @@ export default function JwelleryEstimate() {
                 <Text style={styles.uploadLabelBold}>Side View</Text>
                 <TouchableOpacity
                   style={[styles.uploadBoxDashed, styles.uploadBoxSecondary]}
-                  onPress={() => handleImagePick(setSideView)}>
+                  onPress={() => handleImagePick(setSideView)}
+                >
                   {sideView ? (
                     <Image
                       source={{ uri: sideView }}
                       style={styles.uploadedImage}
                     />
                   ) : (
-                    <Icon name="add-a-photo" size={26} color={colors.textSecondary || '#516162'} />
+                    <Icon
+                      name="add-a-photo"
+                      size={26}
+                      color={colors.textSecondary || '#516162'}
+                    />
                   )}
                 </TouchableOpacity>
               </View>
@@ -647,14 +797,19 @@ export default function JwelleryEstimate() {
                 <Text style={styles.uploadLabelBold}>45° Angle</Text>
                 <TouchableOpacity
                   style={[styles.uploadBoxDashed, styles.uploadBoxSecondary]}
-                  onPress={() => handleImagePick(setAngleView)}>
+                  onPress={() => handleImagePick(setAngleView)}
+                >
                   {angleView ? (
                     <Image
                       source={{ uri: angleView }}
                       style={styles.uploadedImage}
                     />
                   ) : (
-                    <Icon name="view-in-ar" size={26} color={colors.textSecondary || '#516162'} />
+                    <Icon
+                      name="view-in-ar"
+                      size={26}
+                      color={colors.textSecondary || '#516162'}
+                    />
                   )}
                 </TouchableOpacity>
               </View>
@@ -668,7 +823,8 @@ export default function JwelleryEstimate() {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.additionalImagesScroll}>
+                contentContainerStyle={styles.additionalImagesScroll}
+              >
                 {additionalImages.map((uri, index) => (
                   <View key={index} style={styles.additionalUploadBox}>
                     <Image source={{ uri }} style={styles.uploadedImage} />
@@ -678,8 +834,13 @@ export default function JwelleryEstimate() {
                 {additionalImages.length < 5 && (
                   <TouchableOpacity
                     style={styles.additionalUploadBox}
-                    onPress={handleAdditionalImagePick}>
-                    <Icon name="add" size={24} color={colors.textSecondary || '#707978'} />
+                    onPress={handleAdditionalImagePick}
+                  >
+                    <Icon
+                      name="add"
+                      size={24}
+                      color={colors.textSecondary || '#707978'}
+                    />
                   </TouchableOpacity>
                 )}
               </ScrollView>
@@ -694,7 +855,8 @@ export default function JwelleryEstimate() {
                 isLoading && styles.estimateButtonDisabled,
               ]}
               onPress={handleEstimate}
-              disabled={isLoading}>
+              disabled={isLoading}
+            >
               {isLoading ? (
                 <ActivityIndicator color={colors.textWhite || '#ffffff'} />
               ) : (
@@ -710,12 +872,17 @@ export default function JwelleryEstimate() {
         visible={isImageModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={closeImageModal}>
+        onRequestClose={closeImageModal}
+      >
         <View style={styles.fullscreenImageBackdrop}>
           <TouchableOpacity
-            style={[styles.fullscreenImageCloseButton, { zIndex: 999, elevation: 10 }]}
+            style={[
+              styles.fullscreenImageCloseButton,
+              { zIndex: 999, elevation: 10 },
+            ]}
             onPress={closeImageModal}
-            activeOpacity={0.7}>
+            activeOpacity={0.7}
+          >
             <Icon
               name="close"
               size={24}
@@ -760,7 +927,8 @@ export default function JwelleryEstimate() {
                     flex: 1,
                     justifyContent: 'center',
                     alignItems: 'center',
-                  }}>
+                  }}
+                >
                   <Image
                     source={{ uri: media.uri }}
                     style={[
@@ -793,7 +961,8 @@ export default function JwelleryEstimate() {
         onRequestClose={() => {
           setShowPdfModal(false);
           setPdfHtml(null);
-        }}>
+        }}
+      >
         <View style={styles.pdfModalOverlay}>
           <View style={styles.pdfModalContent}>
             <PdfViewer html={pdfHtml} style={styles.pdfViewer} />
@@ -807,8 +976,13 @@ export default function JwelleryEstimate() {
                   setShowPdfModal(false);
                   setPdfHtml(null);
                 }}
-                activeOpacity={0.8}>
-                <Icon name="close" size={20} color={colors.textWhite || '#ffffff'} />
+                activeOpacity={0.8}
+              >
+                <Icon
+                  name="close"
+                  size={20}
+                  color={colors.textWhite || '#ffffff'}
+                />
                 <Text style={styles.pdfToolbarBtnText}>Close Preview</Text>
               </TouchableOpacity>
             </View>
@@ -1015,6 +1189,53 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+   clientMsgCard: {
+      marginTop: 20,
+      borderWidth: 1,
+      borderColor: colors.borderLight || '#E0E0E0',
+      borderRadius: 12,
+      padding: 14,
+      backgroundColor: colors.backgroundSecondary || '#F8F9FA',
+    },
+    clientMsgHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+    },
+    clientMsgLabel: {
+      fontFamily: fonts.bold,
+      fontSize: fonts.sm || 13,
+      color: colors.textPrimary,
+      flex: 1,
+    },
+    copyBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.primary,
+      backgroundColor: colors.background,
+    },
+    copyBtnText: {
+      fontFamily: fonts.medium,
+      fontSize: fonts.xs || 12,
+      color: colors.primary,
+    },
+    clientMsgInput: {
+      minHeight: 100,
+      borderWidth: 1,
+      borderColor: colors.borderLight || '#E0E0E0',
+      borderRadius: 8,
+      padding: 10,
+      fontFamily: fonts.regular,
+      fontSize: fonts.sm || 13,
+      color: colors.textPrimary,
+      backgroundColor: colors.background,
+    },
   clientAvatar: {
     width: 48,
     height: 48,

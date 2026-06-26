@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Text,
+  FlatList
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BrandedAlert from '../../components/common/BrandedAlert';
@@ -23,6 +24,8 @@ const ROLE_MAP = {
   2: 'Coral Designer',
   3: 'CAD Designer',
   4: 'Client',
+  5: 'Client Handler',
+  6: 'Order Placement'
 };
 
 const UsersListScreen = ({ navigation }) => {
@@ -135,14 +138,19 @@ const UsersListScreen = ({ navigation }) => {
             </View>
           </View>
         </Card>
-        <View style={styles.roleStatsRow}>
-          {Object.entries(roleStats).map(([role, count]) => (
-            <View key={role} style={styles.roleStatItem}>
-              <Text style={styles.roleStatValue}>{count}</Text>
-              <Text style={styles.roleStatLabel}>{ROLE_MAP[role] || 'Unknown'}</Text>
+        <FlatList
+          data={Object.entries(roleStats).map(([role, count]) => ({ role, count }))}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(item) => item.role}
+          contentContainerStyle={styles.roleStatsRow}
+          renderItem={({ item }) => (
+            <View style={styles.roleStatItem}>
+              <Text style={styles.roleStatValue}>{item.count}</Text>
+              <Text style={styles.roleStatLabel}>{ROLE_MAP[item.role] || 'Unknown'}</Text>
             </View>
-          ))}
-        </View>
+          )}
+        />
       </View>
     );
   };
@@ -257,12 +265,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   roleStatsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginTop: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+    gap: 12,
   },
   roleStatItem: {
     alignItems: 'center',
+    backgroundColor: colors.cardBackground || '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.borderLight || 'rgba(192, 200, 199, 0.3)',
   },
   roleStatValue: {
     fontSize: 18,

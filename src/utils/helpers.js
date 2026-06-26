@@ -235,6 +235,7 @@ const FALLBACK_ROLE_MAP = {
     3: 'cad',
     4: 'client',
     5: 'client_handler',
+    6: 'order_placement',
 };
 
 /**

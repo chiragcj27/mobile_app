@@ -52,6 +52,7 @@ const ROLE_KIND = {
   CAD: 'cad',
   CLIENT: 'client',
   OTHER: 'other',
+  Order : 'Order_placement'
 };
 
 const classifyRole = (role) => {
@@ -60,18 +61,24 @@ const classifyRole = (role) => {
   if (r === 'coral' || r === 'co') return ROLE_KIND.CORAL;
   if (r === 'cad' || r === 'cd') return ROLE_KIND.CAD;
   if (r === 'client' || r === 'cl') return ROLE_KIND.CLIENT;
+  if (r === 'order_placement' || r === 'op') return ROLE_KIND.Order;
   return ROLE_KIND.OTHER;
 };
 
 const ADMIN_TABS = [
   { key: TAB.WIP, label: 'Work in Progress', bucketKey: 'wip' },
   { key: TAB.APPROVAL, label: 'Approval Pending', bucketKey: 'approvalPending' },
+
 ];
 
 const DESIGNER_TAB = {
   MINE: 'designer_mine',
   WIP: 'designer_wip',
 };
+
+const ORDER_PLACEMENT_TABS=[
+  { key: TAB.Order_Placement, label: 'Order Placement', bucketKey: 'orderPlacement' },
+]
 
 const buildArg = ({ role, userId, page, search, filters, sortBy, sortOrder, tabFilter }) => ({
   role,
@@ -191,15 +198,20 @@ export default function EnquiryListScreen({ navigation }) {
   const isAdminCh = roleKind === ROLE_KIND.ADMIN_CH;
   const isDesigner = roleKind === ROLE_KIND.CORAL || roleKind === ROLE_KIND.CAD;
   const isClient = roleKind === ROLE_KIND.CLIENT;
+  const isOrderPlacement = roleKind === ROLE_KIND.Order;
 
   const { clients = [] } = useClients({ skip: !user || isDesigner || isClient });
   const clientNameMap = useMemo(() => buildClientNameMap(clients), [clients]);
 
   useEffect(() => {
+    if (isOrderPlacement) {
+      dispatch(setActiveTab(TAB.Order_Placement));
+      return;
+    }
     if (!isAdminCh) return;
     const tab = routeFilterToTab(route.params?.filter);
     if (tab) dispatch(setActiveTab(tab));
-  }, [route.params?.filter, dispatch, isAdminCh]);
+  }, [route.params?.filter, dispatch, isAdminCh, isOrderPlacement]);
 
   const activeTab = useSelector(s => s.enquiries.activeTab);
   const filters = useSelector(s => s.enquiries.filters);
@@ -246,7 +258,8 @@ export default function EnquiryListScreen({ navigation }) {
   const unassignedArg2 = buildArg({ ...baseArgs, tabFilter: { subStatus: SUBSTATUS.AP } });
   const unassignedArg3 = buildArg({ ...baseArgs, tabFilter: { status: STATUS.ENQUIRY_CREATED } });
   const wipArg = buildArg({ ...baseArgs, tabFilter: { status: [STATUS.CORAL, STATUS.CAD, STATUS.ENQUIRY_CREATED] } });
-  const approvalArg = buildArg({ ...baseArgs, tabFilter: { status: [STATUS.DESIGN_APPROVAL_PENDING, STATUS.ORDER_PLACEMENT] } });
+  const approvalArg = buildArg({ ...baseArgs, tabFilter: { status: STATUS.DESIGN_APPROVAL_PENDING } });
+  const orderPlacementArg = buildArg({ ...baseArgs, tabFilter: { status: STATUS.ORDER_PLACEMENT } });
 
   // All admin/CH tab queries always fire so each tab badge has a live count.
   const unassignedQ1 = useGetEnquiriesQuery(unassignedArg1, { skip: !isAdminCh || isClient });
@@ -254,6 +267,7 @@ export default function EnquiryListScreen({ navigation }) {
   const unassignedQ3 = useGetEnquiriesQuery(unassignedArg3, { skip: !isAdminCh || isClient });
   const wipQ = useGetEnquiriesQuery(wipArg, { skip: !isAdminCh || isClient });
   const approvalQ = useGetEnquiriesQuery(approvalArg, { skip: !isAdminCh || isClient });
+  const orderPlacementQ = useGetEnquiriesQuery(orderPlacementArg, { skip: (!isAdminCh && !isOrderPlacement) || isClient });
 
   const bucketClientId = isAdminCh ? (selectedClientId || undefined) : undefined;
   const { data: buckets, refetch: refetchBuckets } = useGetEnquiryBucketsQuery(bucketClientId, { skip: !isAdminCh });
@@ -276,6 +290,11 @@ export default function EnquiryListScreen({ navigation }) {
   const approvalCount = approvalHasData
     ? (approvalQ.data?.pagination?.total ?? approvalQ.data?.data?.length ?? 0)
     : (buckets?.approvalPending ?? 0);
+
+  const orderPlacementHasData = !!orderPlacementQ.data;
+  const orderPlacementCount = orderPlacementHasData
+    ? (orderPlacementQ.data?.pagination?.total ?? orderPlacementQ.data?.data?.length ?? 0)
+    : (buckets?.orderPlacement ?? 0);
 
   // Designers: see enquiries in their department with relevant substatuses
   const designerStatus = roleKind === ROLE_KIND.CORAL ? STATUS.CORAL : STATUS.CAD;
@@ -303,6 +322,16 @@ export default function EnquiryListScreen({ navigation }) {
         isLoading: clientQ.isLoading,
         isFetching: clientQ.isFetching,
         refetch: clientQ.refetch,
+      };
+    }
+    if (isOrderPlacement) {
+      const opRows = enrich(orderPlacementQ.data?.data || [], clientNameMap);
+      return {
+        rows: opRows,
+        total: orderPlacementCount,
+        isLoading: orderPlacementQ.isLoading,
+        isFetching: orderPlacementQ.isFetching,
+        refetch: orderPlacementQ.refetch,
       };
     }
     if (!isAdminCh) {
@@ -337,6 +366,16 @@ export default function EnquiryListScreen({ navigation }) {
         refetch: wipQ.refetch,
       };
     }
+    if (activeTab === TAB.Order_Placement) {
+      const opRows = enrich(orderPlacementQ.data?.data || [], clientNameMap);
+      return {
+        rows: opRows,
+        total: orderPlacementCount,
+        isLoading: orderPlacementQ.isLoading,
+        isFetching: orderPlacementQ.isFetching,
+        refetch: orderPlacementQ.refetch,
+      };
+    }
     return {
       rows: enrich(approvalQ.data?.data || [], clientNameMap),
       total: approvalCount,
@@ -344,7 +383,7 @@ export default function EnquiryListScreen({ navigation }) {
       isFetching: approvalQ.isFetching,
       refetch: approvalQ.refetch,
     };
-  }, [isAdminCh, isClient, activeTab, isUnassignedOnly, unassignedQ1, unassignedQ2, wipQ, approvalQ, designerMineQ, designerWipQ, designerTab, clientQ, clientNameMap]);
+  }, [isAdminCh, isClient, isOrderPlacement, activeTab, isUnassignedOnly, unassignedQ1, unassignedQ2, wipQ, approvalQ, orderPlacementQ, designerMineQ, designerWipQ, designerTab, clientQ, clientNameMap]);
 
   useEffect(() => {
     if (__DEV__ && activeQuery.rows.length > 0) {
@@ -449,6 +488,7 @@ export default function EnquiryListScreen({ navigation }) {
   const adminTabCount = (key) => {
     if (key === TAB.WIP) return wipFilteredCount;
     if (key === TAB.APPROVAL) return approvalCount;
+    if (key === TAB.Order_Placement) return orderPlacementCount;
     return 0;
   };
 
@@ -591,6 +631,15 @@ export default function EnquiryListScreen({ navigation }) {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.tabsContent}
             />
+          ) : isOrderPlacement ? (
+            <View style={[styles.tabsContent, { flexDirection: 'row' }]}>
+              <View style={[styles.tab, styles.tabActive]}>
+                <Text style={[styles.tabText, styles.tabTextActive]}>Order Placement</Text>
+                <View style={[styles.countWrap, styles.countWrapActive]}>
+                  <Text style={[styles.countText, styles.countTextActive]}>{orderPlacementCount}</Text>
+                </View>
+              </View>
+            </View>
           ) : (
             <View style={[styles.tabsContent, { flexDirection: 'row' }]}>
               {designerTabs.map(t => {

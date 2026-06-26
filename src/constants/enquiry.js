@@ -4,6 +4,7 @@ export const ROLE = {
   CD: 'CD',
   CL: 'CL',
   CH: 'CH',
+  OP : 'OP'
 };
 
 export const ROLE_ID_TO_CODE = {
@@ -12,6 +13,7 @@ export const ROLE_ID_TO_CODE = {
   3: ROLE.CD,
   4: ROLE.CL,
   5: ROLE.CH,
+  6: ROLE.OP
 };
 
 export const resolveRoleCode = (user) => {
@@ -46,6 +48,7 @@ export const TAB = {
   WIP: 'wip',
   APPROVAL: 'approval',
   PRODUCTION: 'production',
+  Order_Placement :'Order Placement'
 };
 
 // paramsForTab: Returns query parameters for each tab's enquiry search.
@@ -62,6 +65,8 @@ export const paramsForTab = (tab) => {
       return [{ status: STATUS.DESIGN_APPROVAL_PENDING }];
     case TAB.PRODUCTION:
       return [{ status: STATUS.PRODUCTION }];
+    case TAB.Order_Placement:
+      return [{status: STATUS.ORDER_PLACEMENT}];
     default:
       return [{}];
   }

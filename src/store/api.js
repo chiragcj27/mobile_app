@@ -240,7 +240,7 @@ export const api = createApi({
           const roleString = mapRoleNumberToString(roleNumber);
 
           if (!roleString) {
-            throw new Error(`Unknown role: ${roleNumber}. Expected 1-5.`);
+            throw new Error(`Unknown role: ${roleNumber}. Expected 1-6.`);
           }
 
           // Try different case variations for ID

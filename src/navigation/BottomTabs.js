@@ -147,6 +147,31 @@ const BottomTabs = () => {
     );
   }
 
+    else if (user?.role === 'order_placement' || user?.role === 'Order_Placement') {
+    return (
+      <Tab.Navigator
+        tabBar={(props) => <CustomTabBar {...props} currentApp="custom" />}
+        screenOptions={{ headerShown: false }}>
+        <Tab.Screen
+          name="Enquiries"
+          component={EnquiryListScreen}
+          options={{
+            title: 'Enquiries',
+            tabBarIcon: ({ color, size }) => <Icon name="assignment" size={size || 24} color={color} />,
+          }}
+        />
+        <Tab.Screen
+          name="Chats"
+          component={ChatsScreen}
+          options={{
+            title: 'Chats',
+            tabBarIcon: ({ color, size }) => <Icon name="chat" size={size || 24} color={color} />,
+          }}
+        />
+      </Tab.Navigator>
+    );
+  }
+
   else{
     return(
          <Tab.Navigator
