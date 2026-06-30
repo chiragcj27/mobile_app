@@ -208,10 +208,14 @@ export default function EnquiryListScreen({ navigation }) {
       dispatch(setActiveTab(TAB.Order_Placement));
       return;
     }
+    if (isAssignedToOrderPlacement) {
+      dispatch(setActiveTab(TAB.Order_Placement));
+      return;
+    }
     if (!isAdminCh) return;
     const tab = routeFilterToTab(route.params?.filter);
     if (tab) dispatch(setActiveTab(tab));
-  }, [route.params?.filter, dispatch, isAdminCh, isOrderPlacement]);
+  }, [route.params?.filter, dispatch, isAdminCh, isOrderPlacement, isAssignedToOrderPlacement]);
 
   const activeTab = useSelector(s => s.enquiries.activeTab);
   const filters = useSelector(s => s.enquiries.filters);
@@ -237,6 +241,13 @@ export default function EnquiryListScreen({ navigation }) {
   const selectedAssignedTo = route.params?.assignedTo;
   const selectedAssignedToId = selectedAssignedTo?.id || selectedAssignedTo?._id || null;
   const selectedAssignedToName = selectedAssignedTo?.name || selectedAssignedTo?.displayName || null;
+  const selectedAssignedToRole = String(selectedAssignedTo?.role || '').toLowerCase();
+  const isAssignedToOrderPlacement = selectedAssignedToRole === 'order_placement' || selectedAssignedToRole === 'op';
+
+  console.log('[EnquiryListScreen] assignedTo:', JSON.stringify(selectedAssignedTo));
+  console.log('[EnquiryListScreen] selectedAssignedToRole:', selectedAssignedToRole, 'isAssignedToOrderPlacement:', isAssignedToOrderPlacement);
+  console.log('[EnquiryListScreen] isAdminCh:', isAdminCh, 'isOrderPlacement:', isOrderPlacement, 'roleKind:', roleKind);
+  console.log('[EnquiryListScreen] activeTab:', activeTab);
 
   const scopedFilters = selectedClientId
     ? { ...filters, clientId: selectedClientId }
@@ -259,7 +270,8 @@ export default function EnquiryListScreen({ navigation }) {
   const unassignedArg3 = buildArg({ ...baseArgs, tabFilter: { status: STATUS.ENQUIRY_CREATED } });
   const wipArg = buildArg({ ...baseArgs, tabFilter: { status: [STATUS.CORAL, STATUS.CAD, STATUS.ENQUIRY_CREATED] } });
   const approvalArg = buildArg({ ...baseArgs, tabFilter: { status: STATUS.DESIGN_APPROVAL_PENDING } });
-  const orderPlacementArg = buildArg({ ...baseArgs, tabFilter: { status: STATUS.ORDER_PLACEMENT } });
+  const orderPlacementBaseArgs = { role, userId, page, search: searchQuery, filters: selectedClientId ? { ...filters, clientId: selectedClientId } : filters, sortBy, sortOrder };
+  const orderPlacementArg = buildArg({ ...orderPlacementBaseArgs, tabFilter: { status: STATUS.ORDER_PLACEMENT } });
 
   // All admin/CH tab queries always fire so each tab badge has a live count.
   const unassignedQ1 = useGetEnquiriesQuery(unassignedArg1, { skip: !isAdminCh || isClient });
@@ -619,6 +631,15 @@ export default function EnquiryListScreen({ navigation }) {
                 <Text style={[styles.tabText, styles.tabTextActive]}>My Enquiries</Text>
                 <View style={[styles.countWrap, styles.countWrapActive]}>
                   <Text style={[styles.countText, styles.countTextActive]}>{activeQuery.total}</Text>
+                </View>
+              </View>
+            </View>
+          ) : isAdminCh && isAssignedToOrderPlacement ? (
+            <View style={[styles.tabsContent, { flexDirection: 'row' }]}>
+              <View style={[styles.tab, styles.tabActive]}>
+                <Text style={[styles.tabText, styles.tabTextActive]}>Order Placement</Text>
+                <View style={[styles.countWrap, styles.countWrapActive]}>
+                  <Text style={[styles.countText, styles.countTextActive]}>{orderPlacementCount}</Text>
                 </View>
               </View>
             </View>

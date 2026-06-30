@@ -979,6 +979,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   );
 
   const showAllDetails = user?.role === 'admin';
+  const isDesigner = user?.role === 'coral' || user?.role === 'co' || user?.role === 'cad' || user?.role === 'cd' || user?.roleId === 2 || user?.roleId === 3;
 
   const handleOpenChat = useCallback(() => {
     const currentEnquiry = enquiry || initialEnquiry || {};
@@ -2181,10 +2182,12 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
 
         {/* Data Grid */}
         <View style={styles.dataGrid}>
-          <View style={styles.dataCell}>
-            <Text style={styles.dataCellLabel}>BUDGET RANGE</Text>
-            <Text style={styles.dataCellValue}>{budget ? `₹${budget}` : '-'}</Text>
-          </View>
+          {!isDesigner && (
+            <View style={styles.dataCell}>
+              <Text style={styles.dataCellLabel}>BUDGET RANGE</Text>
+              <Text style={styles.dataCellValue}>{budget ? `₹${budget}` : '-'}</Text>
+            </View>
+          )}
           <View style={styles.dataCell}>
             <Text style={styles.dataCellLabel}>METAL QUALITY</Text>
             <Text style={styles.dataCellValue}>{metalQuality || '-'}</Text>
