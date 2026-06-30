@@ -168,12 +168,14 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
       <TouchableOpacity
         style={styles.row}
         activeOpacity={0.7}
-        onPress={() =>
+        onPress={() => {
+          const assignedToPayload = { id: String(u.id || u._id || ''), name: item.displayName, role: item.roleKey || '' };
+          console.log('[CHDashboard] navigating with assignedTo:', JSON.stringify(assignedToPayload));
           navigation.navigate('ClientHandlerEnquiries', {
-            assignedTo: { id: String(u.id || u._id || ''), name: item.displayName },
-          })
-        }>
-        <View style={[styles.avatar, { backgroundColor: item.cfg.color }]}>
+            assignedTo: assignedToPayload,
+          });
+        }}>
+                 <View style={[styles.avatar, { backgroundColor: item.cfg.color }]}>
           <Text style={styles.avatarText}>{name.substring(0, 2).toUpperCase()}</Text>
         </View>
         <View style={styles.info}>

@@ -200,6 +200,22 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       );
     }
   };
+const generateStyleNumber = (qty, category) => {
+  const categoryInitial = category && category.trim() 
+    ? category.trim().charAt(0).toUpperCase() 
+    : ''; 
+
+  const seed = `${qty}-${Date.now()}-${Math.random()}`;
+  let hash = 0;
+  
+  for (let i = 0; i < seed.length; i++) {
+    const char = seed.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = Math.abs(hash); 
+  }
+  const numericPart = String(hash).slice(0, 6).padEnd(6, '0');
+  return `${numericPart}${categoryInitial}`;
+};
 
   const handleSubmit = async () => {
     if (!user?.id) {
@@ -251,7 +267,7 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
           Category: missingFieldsData.Category || parsedData?.Category || 'Ring',
           Budget: missingFieldsData.Budget || parsedData?.Budget || null,
           SpecialRemarks: missingFieldsData.SpecialRemarks || parsedData?.SpecialRemarks || null,
-          StyleNumber: missingFieldsData.StyleNumber || parsedData?.StyleNumber || null,
+          StyleNumber: missingFieldsData.StyleNumber || parsedData?.StyleNumber || generateStyleNumber(missingFieldsData.Quantity || parsedData?.Quantity || 1, missingFieldsData.Category || parsedData?.Category || 'Ring') || null,
           GatiOrderNumber: missingFieldsData.GatiOrderNumber || parsedData?.GatiOrderNumber || null,
           ShippingDate: missingFieldsData.ShippingDate || parsedData?.ShippingDate || null,
           CoralCode: missingFieldsData.CoralCode || parsedData?.CoralCode || null,

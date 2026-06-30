@@ -10,6 +10,12 @@ export const isEnquiryClientUser = (user) =>
   user?.roleId === 4 ||
   user?.roleNumber === 4;
 
+export const isDesignerRole = (user) => {
+  const role = (user?.role || user?.Role || '').toLowerCase();
+  const roleId = user?.roleId || user?.RoleId || user?.roleNumber;
+  return role === 'coral' || role === 'co' || role === 'cad' || role === 'cd' || roleId === 2 || roleId === 3;
+};
+
 const enquiryChatCtaStyles = StyleSheet.create({
   wrapEmbedded: {
     marginTop: 20,
@@ -161,6 +167,7 @@ const FormattedSummary = ({ text }) => {
 
 const EnquirySummaryCard = ({ formData = {}, user, getUserName, onChatPress, showChat, existingImagesCount }) => {
   const isClient = isEnquiryClientUser(user);
+  const isDesigner = isDesignerRole(user);
 
   const data = {
     // Prioritize Remarks if it has better formatting (like the \n splits), otherwise fallback to Summary
@@ -264,13 +271,15 @@ const EnquirySummaryCard = ({ formData = {}, user, getUserName, onChatPress, sho
       </View>
 
       {/* Commercial */}
-      <View style={styles.sectionGroup}>
-        <SectionHeader title="Commercial" icon="attach-money" />
-        <FieldPair 
-          left={<FieldBlock label="Budget" value={dash(data.budget)} />}
-          right={!isClient && data.approvedDate ? <FieldBlock label="Approved Date" value={formatDateSafe(data.approvedDate)} /> : null}
-        />
-      </View>
+      {!isDesigner && (
+        <View style={styles.sectionGroup}>
+          <SectionHeader title="Commercial" icon="attach-money" />
+          <FieldPair 
+            left={<FieldBlock label="Budget" value={dash(data.budget)} />}
+            right={!isClient && data.approvedDate ? <FieldBlock label="Approved Date" value={formatDateSafe(data.approvedDate)} /> : null}
+          />
+        </View>
+      )}
 
       {/* Media Attachments */}
       {typeof existingImagesCount === 'number' && (

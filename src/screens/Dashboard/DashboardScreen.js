@@ -174,6 +174,25 @@ const DashboardScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.allEnquiriesSection}>
+        <TouchableOpacity
+          style={styles.allEnquiriesButton}
+          onPress={() => navigation.navigate('ClientHandlerEnquiries', { assignedTo: { role: 'order_placement' } })}
+          activeOpacity={0.8}
+        >
+          <View style={styles.allEnquiriesIconContainer}>
+            <Icon name="receipt" size={28} color={colors.textWhite} />
+          </View>
+          <View style={styles.allEnquiriesTextContainer}>
+            <Text style={styles.allEnquiriesTitle}>View Order Placements</Text>
+            <Text style={styles.allEnquiriesSubtitle}>
+              All Order Placements
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={28} color={colors.textWhite} />
+        </TouchableOpacity>
+      </View>
+
       
 
        {!isTablet && (

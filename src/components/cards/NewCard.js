@@ -28,6 +28,7 @@ import { fonts } from '../../constants/fonts';
 import { FILE_BASE_URL, API_BASE_URL } from '../../config/apiConfig';
 import Icon from '../common/Icon';
 import BrandedAlert from '../common/BrandedAlert';
+import PdfViewer from '../common/PdfViewer';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -112,6 +113,8 @@ export default function NewEnquiryCard({
   const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   
   const [activeDesignType, setActiveDesignType] = useState(null);
+  const [excelPdfHtml, setExcelPdfHtml] = useState(null);
+  const [showExcelPdf, setShowExcelPdf] = useState(false);
   
   const showAlert = useCallback((title, message, type = 'info', buttons = []) =>
     setAlertCfg({ visible: true, title, message, type, buttons }), []);
@@ -129,7 +132,7 @@ export default function NewEnquiryCard({
   const [approveDesignVersion] = useApproveDesignVersionMutation();
   const [rejectDesignVersion] = useRejectDesignVersionMutation();
   const [updateEnquiryDirect] = useUpdateEnquiryMutation();
-  const { handleAcceptApproval, handleUploadFinalCad, handleMoveToOrderPlacement, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
+  const { handleAcceptApproval, handleUploadFinalCad, handleMoveToOrderPlacement, generateAndShareExcel, generateExcelPdf, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
 
   const getVersionFromLast = useCallback((designType) => {
     const src = fullEnquiryData?._originalData || fullEnquiryData || item;
@@ -514,7 +517,7 @@ export default function NewEnquiryCard({
   };
 
   return (
-    <View style={[styles.mainContainer, { borderLeftWidth: isPendingStatus ? 4 : 0, borderLeftColor: pendingShadeColor }]}>
+    <View style={[styles.mainContainer, { borderWidth: isPendingStatus ? 4 : 0, borderColor: pendingShadeColor }]}>
 
       {isExpandedAll && (
         <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
@@ -902,6 +905,54 @@ export default function NewEnquiryCard({
               <Icon name="shopping-cart" size={16} color={colors.textWhite} />
               <View style={{ width: 4 }} />
               <Text style={styles.QuickActionButtonText}>Move to Order</Text>
+            </TouchableOpacity>
+          </View>
+        ) : isPlacementStage ? (
+          <View style={styles.QuickButtonContainer}>
+            <TouchableOpacity
+              style={styles.ChatButton}
+              disabled={isActionLoading}
+              onPress={async () => {
+                setIsActionLoading(true);
+                try {
+                  const result = await generateExcelPdf(fullEnquiryData || item);
+                  if (result.success && result.html) {
+                    setExcelPdfHtml(result.html);
+                    setShowExcelPdf(true);
+                  } else {
+                    showAlert('Info', 'No data to display.', 'warning', [{ text: 'OK' }]);
+                  }
+                } catch (e) {
+                  showAlert('Failed', e?.message || 'Could not generate PDF.', 'error', [{ text: 'OK' }]);
+                } finally {
+                  setIsActionLoading(false);
+                }
+              }}
+            >
+              {isActionLoading
+                ? <ActivityIndicator size="small" color={colors.primaryDark} />
+                : <><Icon name="picture-as-pdf" size={16} color={colors.primaryDark} /><Text style={styles.ChatButtonText}>View PDF</Text></>}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
+              disabled={isActionLoading}
+              onPress={async () => {
+                setIsActionLoading(true);
+                try {
+                  const result = await generateAndShareExcel(fullEnquiryData || item);
+                  if (!result.success) {
+                    showAlert('Info', result.message || 'No data to share.', 'warning', [{ text: 'OK' }]);
+                  }
+                } catch (e) {
+                  showAlert('Failed', e?.message || 'Could not generate Excel.', 'error', [{ text: 'OK' }]);
+                } finally {
+                  setIsActionLoading(false);
+                }
+              }}
+            >
+              {isActionLoading
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <><Icon name="share" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Share Excel</Text></>}
             </TouchableOpacity>
           </View>
         ) : shouldShowAdminApprovedCad ? (
@@ -1323,6 +1374,23 @@ export default function NewEnquiryCard({
         </TouchableOpacity>
       </Modal>
 
+      <Modal
+        visible={showExcelPdf}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setShowExcelPdf(false); setExcelPdfHtml(null); }}
+      >
+        <View style={{ flex: 1, backgroundColor: '#fff' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+            <Text style={{ fontFamily: fonts.semiBold, fontSize: 15, color: colors.textPrimary }}>Order Data</Text>
+            <TouchableOpacity onPress={() => { setShowExcelPdf(false); setExcelPdfHtml(null); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Icon name="close" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          {excelPdfHtml && <PdfViewer html={excelPdfHtml} style={{ flex: 1 }} />}
+        </View>
+      </Modal>
+
       <BrandedAlert
         visible={alertCfg.visible}
         title={alertCfg.title}
@@ -1394,6 +1462,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
     marginBottom: 8,
     padding: 10,
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
