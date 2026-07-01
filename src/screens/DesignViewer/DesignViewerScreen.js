@@ -1797,6 +1797,7 @@ const DesignViewerScreen = ({ route, navigation }) => {
                 enquiryId,
                 designType,
                 version,
+                intent: 'forApproval' ,
               }).unwrap();
 
               showAlert('Success', `${designType.toUpperCase()} ${version} approved successfully`, 'success');

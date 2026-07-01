@@ -733,10 +733,45 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   const cadVersions   = Array.isArray(src?.Cad)   ? src.Cad   : [];
 
   const latestCoral = coralVersions.length > 0 ? coralVersions[coralVersions.length - 1] : null;
-  const latestCad   = cadVersions.length > 0   ? cadVersions[cadVersions.length - 1]     : null;
 
-  // Approved CAD = the CAD version that was approved (we use the last CAD version)
-  const approvedCadVersion = latestCad;
+  // ── Accepted vs Final CAD detection ─────────────────────────────────────
+  // Check StatusHistory for an "Approved Cad" entry indicating a previous acceptance
+  const statusHistory = Array.isArray(src?.StatusHistory) ? src.StatusHistory : [];
+  const hasApprovedCad = statusHistory.some(
+    e => (e.Status || e.status) === 'Approved Cad'
+  );
+
+  // Final CAD = version explicitly marked as final
+  const finalCadVersion = cadVersions.reduce((found, v) => {
+    if (v.IsFinalVersion === true || v.IsFinalVersion === 'true') return v;
+    return found;
+  }, null);
+
+  // Accepted CAD = latest non-rejected version that is NOT the final version
+  const acceptedCadVersion = (() => {
+    // If a final CAD exists, the accepted one is the last non-rejected before it
+    if (finalCadVersion) {
+      const idx = cadVersions.indexOf(finalCadVersion);
+      const beforeFinal = cadVersions.slice(0, idx).filter(v => !v.ReasonForRejection);
+      if (beforeFinal.length > 0) return beforeFinal[beforeFinal.length - 1];
+    }
+    // Otherwise look for any approved/approved-like version
+    const approved = cadVersions.filter(v =>
+      !v.ReasonForRejection && !(v.IsFinalVersion === true || v.IsFinalVersion === 'true')
+    );
+    if (approved.length > 0) return approved[approved.length - 1];
+    // Fallback: if StatusHistory shows approval was granted, show the latest non-rejected
+    if (hasApprovedCad) {
+      const nonRejected = cadVersions.filter(v => !v.ReasonForRejection);
+      return nonRejected.length > 0 ? nonRejected[nonRejected.length - 1] : null;
+    }
+    return null;
+  })();
+
+  // Determine if accepted and final CAD are the same version (used by both images & pricing sections)
+  const sameCadVersion = acceptedCadVersion && finalCadVersion &&
+    acceptedCadVersion.Version === finalCadVersion.Version &&
+    acceptedCadVersion === finalCadVersion;
 
   // ── Image helpers ───────────────────────────────────────────────────────
   const getImageUrl = async (imgObj) => {
@@ -787,9 +822,9 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
     return p || null;
   };
 
-  const coralPricing    = latestCoral    ? getPricing(latestCoral)    : null;
-  const cadPricing      = latestCad      ? getPricing(latestCad)      : null;
-  const approvedPricing = approvedCadVersion ? getPricing(approvedCadVersion) : null;
+  const coralPricing    = latestCoral        ? getPricing(latestCoral)        : null;
+  const acceptedPricing = acceptedCadVersion ? getPricing(acceptedCadVersion) : null;
+  const finalPricing    = finalCadVersion    ? getPricing(finalCadVersion)    : null;
 
   const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
   const fmtCurrency = v => `$${num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -803,46 +838,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
     const r = p.Metal.Rate != null ? `$${num(p.Metal.Rate)}/g` : null;
     return [w, q, r].filter(Boolean).join(' · ') || '—';
   };
-
-  // Comparison rows
-  const comparisonRows = [
-    { label: 'Metal (Wt · Quality · Rate)', coral: fmtMetal(coralPricing), cad: fmtMetal(cadPricing), approved: fmtMetal(approvedPricing), isString: true },
-    { label: 'Metal Price',      coral: coralPricing?.MetalPrice,      cad: cadPricing?.MetalPrice,      approved: approvedPricing?.MetalPrice },
-    { label: 'Diamond Weight',   coral: coralPricing?.DiamondWeight,   cad: cadPricing?.DiamondWeight,   approved: approvedPricing?.DiamondWeight, unit: 'ct' },
-    { label: 'Total Pieces',     coral: coralPricing?.TotalPieces,     cad: cadPricing?.TotalPieces,     approved: approvedPricing?.TotalPieces, unit: 'pcs' },
-    { label: 'Diamonds Price',   coral: coralPricing?.DiamondsPrice,   cad: cadPricing?.DiamondsPrice,   approved: approvedPricing?.DiamondsPrice },
-    { label: 'Duties Amount',    coral: coralPricing?.DutiesAmount,    cad: cadPricing?.DutiesAmount,    approved: approvedPricing?.DutiesAmount },
-    { label: 'Undercut Price',   coral: coralPricing?.UndercutPrice,   cad: cadPricing?.UndercutPrice,   approved: approvedPricing?.UndercutPrice },
-    { label: 'Total Price',      coral: coralPricing?.TotalPrice,      cad: cadPricing?.TotalPrice,      approved: approvedPricing?.TotalPrice, isTotal: true },
-  ];
-
-  const comparisonHtml = comparisonRows.map(row => {
-    const fmt = (v) => {
-      if (row.isString) return v || '—';
-      return v != null ? (row.unit ? `${num(v)} ${row.unit}` : fmtCurrency(v)) : '—';
-    };
-    return `<tr${row.isTotal ? ' style="background:#f0f0f0;font-weight:bold;"' : ''}>
-      <td style="padding:8px;border:1px solid #ddd;font-weight:${row.isTotal ? 'bold' : 'medium'};color:#333;">${row.label}</td>
-      <td style="padding:8px;border:1px solid #ddd;text-align:center;">${fmt(row.coral)}</td>
-      <td style="padding:8px;border:1px solid #ddd;text-align:center;">${fmt(row.cad)}</td>
-      <td style="padding:8px;border:1px solid #ddd;text-align:center;">${fmt(row.approved)}</td>
-    </tr>`;
-  }).join('');
-
-  // ── Budget comparison ──────────────────────────────────────────────────
-  const budgetRow = (() => {
-    const prices = [coralPricing?.TotalPrice, cadPricing?.TotalPrice, approvedPricing?.TotalPrice]
-      .filter(v => v != null).map(v => num(v));
-    const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
-    const budgetNum = parseFloat(String(budget).replace(/[^0-9.]/g, ''));
-    const underBudget = budgetNum > 0 ? maxPrice <= budgetNum : null;
-    const underLabel = underBudget === true ? '✅ Under Budget' : underBudget === false ? '⚠️ Over Budget' : 'N/A';
-    return `<tr>
-      <td style="padding:8px;border:1px solid #ddd;font-weight:bold;color:#333;">Customer Budget</td>
-      <td style="padding:8px;border:1px solid #ddd;text-align:center;font-weight:bold;">${budget}</td>
-      <td style="padding:8px;border:1px solid #ddd;text-align:center;color:${underBudget ? '#059669' : '#DC2626'}" colspan="3">${underLabel}</td>
-    </tr>`;
-  })();
 
   // ── Checklist ──────────────────────────────────────────────────────────
   const checklist = src?.Checklist || {};
@@ -893,29 +888,123 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
       }))).filter(Boolean).join('')
     : '';
 
-  // ── Design images ──────────────────────────────────────────────────────
-  const coralImagesHtml    = await getDesignImages(latestCoral, 'Coral');
-  const cadImagesHtml      = await getDesignImages(latestCad, 'CAD');
-  const approvedImagesHtml = await getDesignImages(approvedCadVersion, 'Approved CAD');
+  // ── Status History ────────────────────────────────────────────────────
+  const sortedHistory = [...statusHistory].sort(
+    (a, b) => new Date(a.Timestamp || a.timestamp || a.CreatedDate || a.createdDate || 0) -
+             new Date(b.Timestamp || b.timestamp || b.CreatedDate || b.createdDate || 0)
+  );
+  const statusHistoryHtml = sortedHistory.length > 0
+    ? sortedHistory.map(entry => {
+        const ts = entry.Timestamp || entry.timestamp || entry.CreatedDate || entry.createdDate || null;
+        const dateStr = ts ? new Date(ts).toLocaleString() : '—';
+        const status = entry.Status || entry.status || '—';
+        const subStatus = entry.SubStatus || entry.subStatus || '';
+        return `<tr>
+          <td style="padding:7px;border:1px solid #e0e0e0;white-space:nowrap;">${dateStr}</td>
+          <td style="padding:7px;border:1px solid #e0e0e0;">${status}</td>
+          <td style="padding:7px;border:1px solid #e0e0e0;">${subStatus || '—'}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="3" style="padding:7px;text-align:center;color:#999;">No status history available</td></tr>';
 
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  // ── Collect ALL design versions with pricing ──────────────────────────
+  const allVersionColumns = [];
+  coralVersions.forEach(v => {
+    const p = getPricing(v);
+    if (p) allVersionColumns.push({ label: `Coral${v.Version ? ` (V${v.Version})` : ''}`, pricing: p, version: v });
+  });
+  cadVersions.forEach(v => {
+    const p = getPricing(v);
+    if (p) {
+      const prefix = v.IsFinalVersion === true || v.IsFinalVersion === 'true' ? 'CAD Final' : 'CAD';
+      allVersionColumns.push({ label: `${prefix}${v.Version ? ` (V${v.Version})` : ''}`, pricing: p, version: v });
+    }
+  });
+
+  const versionColHeaders = allVersionColumns.map(v => `<th>${v.label}</th>`).join('');
+
+  const comparisonRows = [
+    { label: 'Metal (Wt · Quality · Rate)', getVal: (p) => fmtMetal(p), isString: true },
+    { label: 'Metal Price',      getVal: (p) => p?.MetalPrice },
+    { label: 'Diamond Weight',   getVal: (p) => p?.DiamondWeight, unit: 'ct' },
+    { label: 'Total Pieces',     getVal: (p) => p?.TotalPieces,   unit: 'pcs' },
+    { label: 'Diamonds Price',   getVal: (p) => p?.DiamondsPrice },
+    { label: 'Duties Amount',    getVal: (p) => p?.DutiesAmount },
+    { label: 'Undercut Price',   getVal: (p) => p?.UndercutPrice },
+    { label: 'Total Price',      getVal: (p) => p?.TotalPrice, isTotal: true },
+  ];
+
+  const comparisonHtml = comparisonRows.map(row => {
+    const cells = allVersionColumns.map(v => {
+      const val = row.getVal(v.pricing);
+      if (row.isString) return `<td style="padding:8px;border:1px solid #ddd;text-align:center;">${val || '—'}</td>`;
+      return val != null
+        ? `<td style="padding:8px;border:1px solid #ddd;text-align:center;">${row.unit ? `${num(val)} ${row.unit}` : fmtCurrency(val)}</td>`
+        : '<td style="padding:8px;border:1px solid #ddd;text-align:center;color:#ccc;">—</td>';
+    }).join('');
+    return `<tr${row.isTotal ? ' style="background:#f0f0f0;font-weight:bold;"' : ''}>
+      <td style="padding:8px;border:1px solid #ddd;font-weight:${row.isTotal ? 'bold' : 'medium'};color:#2B3735;">${row.label}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  // ── Budget comparison (dynamic columns) ───────────────────────────────
+  const budgetRow = (() => {
+    const prices = allVersionColumns.map(v => num(v.pricing?.TotalPrice)).filter(n => n > 0);
+    const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
+    const budgetNum = parseFloat(String(budget).replace(/[^0-9.]/g, ''));
+    const underBudget = budgetNum > 0 ? maxPrice <= budgetNum : null;
+    const underLabel = underBudget === true ? '✅ Under Budget' : underBudget === false ? '⚠️ Over Budget' : 'N/A';
+    const dataCols = allVersionColumns.length || 1;
+    return `<tr>
+      <td style="padding:8px;border:1px solid #ddd;font-weight:bold;color:#2B3735;">Customer Budget</td>
+      <td style="padding:8px;border:1px solid #ddd;text-align:center;font-weight:bold;">${budget}</td>
+      <td style="padding:8px;border:1px solid #ddd;text-align:center;color:${underBudget ? '#059669' : '#DC2626'}" colspan="${dataCols}">${underLabel}</td>
+    </tr>`;
+  })();
+
+  // ── Design images (one row per version with pricing) ────────────────────
+  const allVersionImagesHtml = (await Promise.all(allVersionColumns.map(async col => {
+    const design = col.version;
+    if (!design?.Images || !Array.isArray(design.Images) || design.Images.length === 0) {
+      return `<tr><td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${col.label}</td>
+        <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;color:#999;">No image available</td></tr>`;
+    }
+    const rows = await Promise.all(design.Images.map(async (img, idx) => {
+      const imgUrl = await getImageUrl(img);
+      const desc = img.Description || img.description || `${col.label} ${idx + 1}`;
+      if (!imgUrl) return '';
+      return `<tr>
+        <td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${idx === 0 ? col.label : ''}</td>
+        <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;">
+          <img src="${imgUrl}" alt="${desc}" style="max-width:200px;max-height:200px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);" />
+          ${design.Version ? `<br><span style="font-size:11px;color:#999;">Version ${design.Version}</span>` : ''}
+          ${design.CoralCode ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CoralCode}</span>` : ''}
+          ${design.CadCode   ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CadCode}</span>`   : ''}
+        </td>
+      </tr>`;
+    }));
+    return rows.filter(Boolean).join('');
+  }))).filter(Boolean).join('');
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; padding: 24px; color: #333; font-size: 13px; }
-    .hdr { text-align: center; border-bottom: 3px solid #D4AF37; padding-bottom: 16px; margin-bottom: 20px; }
-    .hdr h1 { color: #D4AF37; margin: 0; font-size: 24px; }
-    .hdr p { color: #666; margin: 4px 0; font-size: 12px; }
-    .sec-title { background: #D4AF37; color: #fff; padding: 8px 12px; font-weight: bold; margin: 18px 0 10px; font-size: 14px; }
+    body { font-family: Arial, sans-serif; padding: 24px; color: #2B3735; font-size: 13px; }
+    .hdr { text-align: center; border-bottom: 3px solid #143F46; padding-bottom: 16px; margin-bottom: 20px; }
+    .hdr h1 { color: #143F46; margin: 0; font-size: 24px; }
+    .hdr p { color: #BFA26C; margin: 4px 0; font-size: 12px; }
+    .sec-title { background: #143F46; color: #fff; padding: 8px 12px; font-weight: 900; margin: 18px 0 10px; font-size: 14px; border-left: 4px solid #BFA26C; }
     table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
-    th { background: #8B4513; color: #fff; padding: 8px; text-align: center; border: 1px solid #ddd; font-size: 12px; }
-    td { padding: 7px; border: 1px solid #ddd; }
+    th { background: #143F46; color: #fff; padding: 8px; text-align: center; border: 1px solid #BFA26C; font-size: 12px; font-weight: 900; }
+    td { padding: 7px; border: 1px solid #BFA26C; }
     .grid { width: 100%; margin-bottom: 8px; }
-    .grid-row { display: flex; padding: 6px 0; border-bottom: 1px solid #eee; }
-    .grid-lbl { font-weight: bold; color: #555; width: 180px; flex-shrink: 0; }
-    .grid-val { color: #333; flex: 1; }
-    .footer { text-align: center; margin-top: 32px; padding-top: 16px; border-top: 2px solid #eee; color: #999; font-size: 11px; }
+    .grid-row { display: flex; padding: 6px 0; border-bottom: 1px solid #BFA26C; }
+    .grid-lbl { font-weight: 800; color: #2B3735; width: 180px; flex-shrink: 0; }
+    .grid-val { color: #2B3735; flex: 1; }
+    .footer { text-align: center; margin-top: 32px; padding-top: 16px; border-top: 2px solid #BFA26C; color: #BFA26C; font-size: 11px; }
     .remark-box { padding: 12px; background: #f9f9f9; border-radius: 6px; line-height: 1.6; color: #555; margin: 10px 0; }
     .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; color: #fff; font-size: 11px; font-weight: bold; }
     @media print { body { padding: 10px; } }
@@ -927,8 +1016,8 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   </div>
 
   <div style="text-align:center;margin-bottom:16px;">
-    <h2 style="color:#333;font-size:20px;margin-bottom:6px;">${name}</h2>
-    <span class="badge" style="background:#D4AF37;">${priority.toUpperCase()} Priority</span>
+    <h2 style="color:#333;font-size:20px;font-weight:900;margin-bottom:6px;">${name}</h2>
+    <span class="badge" style="background:#BFA26C;">${priority.toUpperCase()} Priority</span>
   </div>
 
   <div class="sec-title">Enquiry Details</div>
@@ -951,29 +1040,27 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
     <tbody>${refImagesHtml}</tbody>
   </table>` : ''}
 
+  ${allVersionColumns.length > 0 ? `
   <div class="sec-title">Design Versions</div>
   <table>
     <thead><tr><th style="width:120px;">Stage</th><th>Image</th></tr></thead>
     <tbody>
-      ${coralImagesHtml}
-      ${cadImagesHtml}
-      ${approvedImagesHtml}
+      ${allVersionImagesHtml}
     </tbody>
-  </table>
+  </table>` : ''}
 
   <div class="sec-title">Pricing Comparison</div>
+  ${allVersionColumns.length > 0 ? `
   <table>
     <thead><tr>
       <th style="text-align:left;">Item</th>
-      <th>Coral${latestCoral ? ` (V${latestCoral.Version})` : ''}</th>
-      <th>CAD${latestCad ? ` (V${latestCad.Version})` : ''}</th>
-      <th>Approved CAD${approvedCadVersion ? ` (V${approvedCadVersion.Version})` : ''}</th>
+      ${versionColHeaders}
     </tr></thead>
     <tbody>
       ${comparisonHtml}
       ${budgetRow}
     </tbody>
-  </table>
+  </table>` : '<p style="color:#999;padding:12px;">No pricing data available for comparison.</p>'}
 
   <div class="sec-title">Checklist</div>
   <p style="font-size:11px;color:#999;margin-bottom:6px;">Generated: ${generatedAt}</p>
@@ -2273,13 +2360,14 @@ export const generateCompareImagesHTML = async (enquiry) => {
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <style>
-    body { font-family: Arial, sans-serif; padding: 24px; color: #333; font-size: 13px; }
-    .hdr { text-align: center; border-bottom: 3px solid #D4AF37; padding-bottom: 16px; margin-bottom: 20px; }
-    .hdr h1 { color: #D4AF37; margin: 0; font-size: 22px; }
-    .hdr p { color: #666; margin: 4px 0; font-size: 12px; }
+    body { font-family: Arial, sans-serif; padding: 24px; color: #2B3735; font-size: 13px; }
+    .hdr { text-align: center; border-bottom: 3px solid #143F46; padding-bottom: 16px; margin-bottom: 20px; }
+    .hdr h1 { color: #143F46; margin: 0; font-size: 22px; }
+    .hdr p { color: #BFA26C; margin: 4px 0; font-size: 12px; }
     table { width: 100%; border-collapse: collapse; }
-    th { background: #8B4513; color: #fff; padding: 10px; text-align: center; font-size: 13px; }
-    .footer { text-align: center; margin-top: 24px; color: #999; font-size: 11px; }
+    th { background: #143F46; color: #fff; padding: 10px; text-align: center; font-size: 13px; border: 1px solid #BFA26C; font-weight: 900; }
+    td { border: 1px solid #BFA26C; padding: 8px; text-align: center; }
+    .footer { text-align: center; margin-top: 24px; border-top: 2px solid #BFA26C; padding-top: 12px; color: #BFA26C; font-size: 11px; }
   </style>
   </head><body>
   <div class="hdr">

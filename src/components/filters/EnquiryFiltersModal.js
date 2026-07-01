@@ -16,7 +16,6 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { useGetUsersQuery, useGetStoneTypesQuery } from '../../store/api';
-import { useStatusOptions } from '../../features/statuses/statusesHooks';
 
 const EnquiryFiltersModal = ({
   visible,
@@ -30,7 +29,6 @@ const EnquiryFiltersModal = ({
   const [showDropdown, setShowDropdown] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(null);
   const [tempDate, setTempDate] = useState(new Date());
-  const [selectedStatuses, setSelectedStatuses] = useState([]);
 
   // Check if user is a designer (coral or cad)
   const isDesigner = user?.role === 'coral' || user?.role === 'cad';
@@ -50,18 +48,6 @@ const EnquiryFiltersModal = ({
 
   useEffect(() => {
     setLocalFilters(filters);
-    // Initialize selectedStatuses from filters.status
-    if (filters.status) {
-      if (Array.isArray(filters.status)) {
-        setSelectedStatuses(filters.status);
-      } else if (filters.status !== 'all') {
-        setSelectedStatuses([filters.status]);
-      } else {
-        setSelectedStatuses([]);
-      }
-    } else {
-      setSelectedStatuses([]);
-    }
   }, [filters]);
 
   // Close dropdown when modal closes
@@ -76,32 +62,6 @@ const EnquiryFiltersModal = ({
     setShowDropdown(null);
   };
 
-  const handleStatusToggle = (statusValue) => {
-    if (statusValue === 'all') {
-      setSelectedStatuses([]);
-      setLocalFilters(prev => ({ ...prev, status: 'all' }));
-    } else {
-      setSelectedStatuses(prev => {
-        const index = prev.indexOf(statusValue);
-        let newStatuses;
-        if (index > -1) {
-          // Remove status if already selected
-          newStatuses = prev.filter(s => s !== statusValue);
-        } else {
-          // Add status if not selected
-          newStatuses = [...prev, statusValue];
-        }
-        // Update filters.status
-        setLocalFilters(prev => ({ 
-          ...prev, 
-          status: newStatuses.length > 0 ? newStatuses : 'all' 
-        }));
-        return newStatuses;
-      });
-    }
-    setShowDropdown(null);
-  };
-
   const handleApply = () => {
     onApplyFilters(localFilters);
     onClose();
@@ -109,7 +69,7 @@ const EnquiryFiltersModal = ({
 
   const handleClear = () => {
     const clearedFilters = {
-      status: 'all',
+      unassigned: false,
       priority: 'all',
       category: 'all',
       clientId: 'all',
@@ -129,9 +89,6 @@ const EnquiryFiltersModal = ({
     onClose();
   };
 
-  // Get status options from API (cached) - already includes "All Status" and role-based filtering
-  const statusOptions = useStatusOptions();
-  
   // Fetch stone types from API
   const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
 
@@ -253,100 +210,6 @@ const EnquiryFiltersModal = ({
                       isOptionSelected && styles.dropdownOptionActive,
                     ]}
                     onPress={() => handleFilterChange(key, option.value)}
-                    activeOpacity={0.7}>
-                    {isOptionSelected && (
-                      <View style={styles.checkmarkContainer}>
-                        <Icon name="check" size={16} color={colors.primary} />
-                      </View>
-                    )}
-                    <Text
-                      style={[
-                        styles.dropdownOptionText,
-                        isOptionSelected && styles.dropdownOptionTextActive,
-                      ]}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  const renderStatusMultiSelect = () => {
-    const isOpen = showDropdown === 'status';
-    const hasSelectedStatuses = selectedStatuses.length > 0;
-    const statusOptionsWithoutAll = statusOptions.filter(opt => opt.value !== 'all');
-
-    return (
-      <View style={styles.filterField}>
-        <Text style={styles.filterLabel}>Status</Text>
-        <TouchableOpacity
-          style={[
-            styles.dropdownButton,
-            isOpen && styles.dropdownButtonOpen,
-            hasSelectedStatuses && styles.dropdownButtonSelected,
-          ]}
-          onPress={() => {
-            setShowDropdown(isOpen ? null : 'status');
-          }}
-          activeOpacity={0.7}>
-          <View style={styles.dropdownButtonContent}>
-            {hasSelectedStatuses && (
-              <View style={styles.selectedIndicator} />
-            )}
-            <Text style={[
-              styles.dropdownText,
-              hasSelectedStatuses && styles.dropdownTextSelected,
-            ]}>
-              {hasSelectedStatuses 
-                ? `${selectedStatuses.length} selected` 
-                : 'Select statuses...'}
-            </Text>
-          </View>
-          <Icon
-            name={isOpen ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-            size={20}
-            color={hasSelectedStatuses ? colors.primary : colors.textSecondary}
-          />
-        </TouchableOpacity>
-        {isOpen && (
-          <View style={styles.dropdownList}>
-            <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-              {/* Clear all option */}
-              <TouchableOpacity
-                style={[
-                  styles.dropdownOption,
-                  selectedStatuses.length === 0 && styles.dropdownOptionActive,
-                ]}
-                onPress={() => handleStatusToggle('all')}
-                activeOpacity={0.7}>
-                {selectedStatuses.length === 0 && (
-                  <View style={styles.checkmarkContainer}>
-                    <Icon name="check" size={16} color={colors.primary} />
-                  </View>
-                )}
-                <Text
-                  style={[
-                    styles.dropdownOptionText,
-                    selectedStatuses.length === 0 && styles.dropdownOptionTextActive,
-                  ]}>
-                  All Status
-                </Text>
-              </TouchableOpacity>
-              {statusOptionsWithoutAll.map(option => {
-                const isOptionSelected = selectedStatuses.includes(option.value);
-                return (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.dropdownOption,
-                      isOptionSelected && styles.dropdownOptionActive,
-                    ]}
-                    onPress={() => handleStatusToggle(option.value)}
                     activeOpacity={0.7}>
                     {isOptionSelected && (
                       <View style={styles.checkmarkContainer}>
@@ -517,13 +380,7 @@ const EnquiryFiltersModal = ({
   // Count active filters for badge (exclude designer-hidden filters)
   const getActiveFiltersCount = () => {
     let count = 0;
-    if (localFilters.status && localFilters.status !== 'all') {
-      if (Array.isArray(localFilters.status)) {
-        if (localFilters.status.length > 0) count++;
-      } else {
-        count++;
-      }
-    }
+    if (localFilters.unassigned) count++;
     if (localFilters.priority && localFilters.priority !== 'all') count++;
     if (!isDesigner) {
       if (localFilters.category && localFilters.category !== 'all') count++;
@@ -584,9 +441,33 @@ const EnquiryFiltersModal = ({
               <Text style={styles.sectionTitle}>Basic Filters</Text>
             </View>
             
-            {renderStatusMultiSelect()}
             {!isDesigner && renderDropdown('category', categoryOptions, 'Category')}
             {renderDropdown('priority', priorityOptions, 'Priority')}
+            {!isDesigner && <View style={styles.filterField}>
+              <Text style={styles.filterLabel}>Assignment</Text>
+              <TouchableOpacity
+                style={[
+                  styles.dropdownButton,
+                  localFilters.unassigned && styles.dropdownButtonSelected,
+                ]}
+                onPress={() => handleFilterChange('unassigned', !localFilters.unassigned)}
+                activeOpacity={0.7}>
+                <View style={styles.dropdownButtonContent}>
+                  {localFilters.unassigned && <View style={styles.selectedIndicator} />}
+                  <Text style={[
+                    styles.dropdownText,
+                    localFilters.unassigned && styles.dropdownTextSelected,
+                  ]}>
+                    {localFilters.unassigned ? 'Unassigned Only' : 'All Assignments'}
+                  </Text>
+                </View>
+                <Icon
+                  name={localFilters.unassigned ? 'check-box' : 'check-box-outline-blank'}
+                  size={20}
+                  color={localFilters.unassigned ? colors.primary : colors.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>}
             {!isDesigner && renderDropdown('clientId', clientOptions, 'Client')}
             {!isDesigner && renderDropdown('assignedTo', assignedToOptions, 'Assigned To')}
             {!isDesigner && renderDropdown('stoneType', stoneTypeOptions, 'Stone Type')}

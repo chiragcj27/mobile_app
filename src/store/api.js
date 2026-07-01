@@ -1,4 +1,4 @@
-﻿import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { Platform } from 'react-native';
 import secureStorage from '../utils/secureStorage';
 import {
@@ -57,7 +57,6 @@ export const api = createApi({
   // Prevent memory buildup by removing unused data after 60 seconds
   keepUnusedDataFor: 60,
   endpoints: builder => ({
-
     getRoles: builder.query({
       query: () => '/api/codelists/Roles',
       providesTags: ['Roles'],
@@ -185,7 +184,6 @@ export const api = createApi({
       },
     }),
 
-
     login: builder.mutation({
       query: ({ email, password }) => {
         return {
@@ -242,7 +240,7 @@ export const api = createApi({
           const roleString = mapRoleNumberToString(roleNumber);
 
           if (!roleString) {
-            throw new Error(`Unknown role: ${roleNumber}. Expected 1-5.`);
+            throw new Error(`Unknown role: ${roleNumber}. Expected 1-6.`);
           }
 
           // Try different case variations for ID
@@ -312,13 +310,16 @@ export const api = createApi({
 
     // Create user/register endpoint
     createUser: builder.mutation({
-      query: (data) => ({
+      query: data => ({
         url: '/api/users',
         method: 'POST',
         body: data,
       }),
       transformResponse: response => {
-        console.log('ðŸ†• [createUser] Raw API Response:', JSON.stringify(response, null, 2));
+        console.log(
+          'ðŸ†• [createUser] Raw API Response:',
+          JSON.stringify(response, null, 2),
+        );
         return {
           success: true,
           user: response.user || response,
@@ -340,7 +341,10 @@ export const api = createApi({
     getUserById: builder.query({
       query: userId => `/api/users/${userId}`,
       transformResponse: response => {
-        console.log('ðŸ‘¤ [getUserById] Raw API Response:', JSON.stringify(response, null, 2));
+        console.log(
+          'ðŸ‘¤ [getUserById] Raw API Response:',
+          JSON.stringify(response, null, 2),
+        );
         // Handle different response formats
         const user = response.user || response;
         return {
@@ -367,7 +371,12 @@ export const api = createApi({
     // Update user endpoint
     updateUser: builder.mutation({
       query: ({ userId, ...data }) => {
-        console.log('ðŸ“¤ [updateUser] userId:', userId, 'payload:', JSON.stringify(data, null, 2));
+        console.log(
+          'ðŸ"¤ [updateUser] userId:',
+          userId,
+          'payload:',
+          JSON.stringify(data, null, 2),
+        );
         return {
           url: `/api/users/${userId}`,
           method: 'PUT',
@@ -376,7 +385,10 @@ export const api = createApi({
       },
       invalidatesTags: ['Users'],
       transformResponse: response => {
-        console.log('âœ… [updateUser] Response:', JSON.stringify(response, null, 2));
+        console.log(
+          'âœ… [updateUser] Response:',
+          JSON.stringify(response, null, 2),
+        );
         return {
           success: true,
           user: response.user || response,
@@ -384,7 +396,10 @@ export const api = createApi({
         };
       },
       transformErrorResponse: response => {
-        console.log('âŒ [updateUser] Error:', JSON.stringify(response, null, 2));
+        console.log(
+          'âŒ [updateUser] Error:',
+          JSON.stringify(response, null, 2),
+        );
         return {
           success: false,
           error:
@@ -586,9 +601,13 @@ export const api = createApi({
         const assignedTo =
           typeof arg === 'object' ? arg?.assignedTo : undefined;
         const filters = typeof arg === 'object' ? arg?.filters : undefined;
+        const idParam = typeof arg === 'object' ? arg?.id : undefined;
 
         // Build query string
         let queryString = `page=${page}`;
+        if (idParam) {
+          queryString += `&id=${encodeURIComponent(idParam)}`;
+        }
         if (limit) {
           queryString += `&limit=${limit}`;
         }
@@ -625,16 +644,27 @@ export const api = createApi({
         // Add filter parameters
         if (filters) {
           if (filters.status && filters.status !== 'all') {
-            // Handle array of statuses for multi-select
             if (Array.isArray(filters.status) && filters.status.length > 0) {
-              // Send multiple statuses as array in query
               filters.status.forEach(status => {
                 queryString += `&status=${encodeURIComponent(status)}`;
               });
             } else if (typeof filters.status === 'string') {
-              // Legacy single status support
               queryString += `&status=${encodeURIComponent(filters.status)}`;
             }
+          }
+          if (filters.subStatus) {
+            if (Array.isArray(filters.subStatus)) {
+              filters.subStatus.forEach(s => {
+                queryString += `&subStatus=${encodeURIComponent(s)}`;
+              });
+            } else {
+              queryString += `&subStatus=${encodeURIComponent(
+                filters.subStatus,
+              )}`;
+            }
+          }
+          if (filters.unassigned === true || filters.unassigned === 'true') {
+            queryString += `&unassigned=true`;
           }
           if (filters.category && filters.category !== 'all') {
             queryString += `&category=${encodeURIComponent(filters.category)}`;
@@ -721,7 +751,6 @@ export const api = createApi({
         const finalUrl = `/api/enquiries/search?${queryString}`;
         return finalUrl;
       },
-      providesTags: ['Enquiry'],
       transformResponse: (data, meta, arg) => {
         const role = typeof arg === 'object' ? arg?.role : arg;
         const argUserId = typeof arg === 'object' ? arg?.userId : undefined;
@@ -802,23 +831,16 @@ export const api = createApi({
 
         // Normalize enquiry data from aggregated endpoint
         const normalizedEnquiries = enquiriesArray.map((enquiry, index) => {
-          // Debug: Log first enquiry before normalization
-          if (__DEV__ && index === 0) {
-            console.log('ðŸ” ========== API NORMALIZATION DEBUG ==========');
-            console.log('ðŸ” Raw first enquiry _id:', enquiry._id);
-            console.log('ðŸ” Raw first enquiry Name:', enquiry.Name);
-            console.log('ðŸ” Raw first enquiry AssignedTo:', enquiry.AssignedTo);
-            console.log('ðŸ” Raw first enquiry ClientId:', enquiry.ClientId);
-            console.log(
-              'ðŸ” Raw first enquiry CurrentStatus:',
-              enquiry.CurrentStatus,
-            );
-            console.log('ðŸ” ==============================================');
-          }
-
-          // Use CurrentStatus directly from aggregated response
+          // Derive from StatusHistory or use flat fields directly
+          const history = enquiry?.StatusHistory;
+          const latestEntry =
+            Array.isArray(history) && history.length > 0
+              ? history[history.length - 1]
+              : null;
           const currentStatus =
-            enquiry.CurrentStatus || enquiry.Status || 'pending';
+            latestEntry?.Status || enquiry?.CurrentStatus || 'pending';
+          const currentSubStatus =
+            latestEntry?.SubStatus || enquiry?.CurrentSubStatus || null;
           const createdAt =
             enquiry.CreatedDate ||
             enquiry.CreatedAt ||
@@ -850,7 +872,10 @@ export const api = createApi({
           const status = currentStatus.toLowerCase();
           if (status === 'enquiry created' || status === 'pending') {
             normalizedStatus = 'pending';
-          } else if (status.includes('design approval') || (status.includes('approval') && status.includes('pending'))) {
+          } else if (
+            status.includes('design approval') ||
+            (status.includes('approval') && status.includes('pending'))
+          ) {
             normalizedStatus = 'approval_pending';
           } else if (status.includes('approved') && status.includes('cad')) {
             normalizedStatus = 'approved_cad';
@@ -866,7 +891,10 @@ export const api = createApi({
             normalizedStatus = 'production';
           } else if (status.includes('shipped')) {
             normalizedStatus = 'shipped';
-          } else if (status.includes('completed') || status.includes('approved')) {
+          } else if (
+            status.includes('completed') ||
+            status.includes('approved')
+          ) {
             normalizedStatus = 'completed';
           } else if (status.includes('rejected')) {
             normalizedStatus = 'rejected';
@@ -940,9 +968,13 @@ export const api = createApi({
             StoneType: enquiry.StoneType,
             ShippingDate: enquiry.ShippingDate,
             ClientId: enquiry.ClientId,
-            AssignedTo: enquiry.AssignedTo !== undefined ? enquiry.AssignedTo : enquiry.assignedTo,
+            AssignedTo:
+              enquiry.AssignedTo !== undefined
+                ? enquiry.AssignedTo
+                : enquiry.assignedTo,
             AssignedDate: enquiry.AssignedDate,
-            CurrentStatus: enquiry.CurrentStatus,
+            CurrentStatus: currentStatus,
+            CurrentSubStatus: currentSubStatus,
             CreatedDate: enquiry.CreatedDate,
             Summary: enquiry.Summary,
             ReferenceImages: enquiry.ReferenceImages || [],
@@ -950,6 +982,13 @@ export const api = createApi({
             Videos: enquiry.Videos || [],
             CoralCode: enquiry.CoralCode,
             CadCode: enquiry.CadCode,
+            Coral: enquiry?.Coral || [],
+            Cad: enquiry?.Cad || [],
+            lastCoral: enquiry?.lastCoral || null,
+            lastCad: enquiry?.lastCad || null,
+            finalCad: enquiry?.finalCad || null,
+            approvedCoral: enquiry?.approvedCoral || null,
+            approvedCad: enquiry?.approvedCad || null,
             _originalData: enquiry,
           };
 
@@ -957,7 +996,10 @@ export const api = createApi({
           if (__DEV__ && index === 0) {
             console.log('ðŸ” ========== AFTER NORMALIZATION ==========');
             console.log('ðŸ” Normalized first enquiry id:', normalized.id);
-            console.log('ðŸ” Normalized first enquiry title:', normalized.title);
+            console.log(
+              'ðŸ” Normalized first enquiry title:',
+              normalized.title,
+            );
             console.log(
               'ðŸ” Normalized first enquiry AssignedTo:',
               normalized.AssignedTo,
@@ -992,10 +1034,26 @@ export const api = createApi({
         return [];
       },
       transformResponse: async (rawResponse, meta, arg) => {
-        // Unwrap common backend wrapper shapes: { enquiry: {...} } / { data: {...} }
+        // Unwrap common backend wrapper shapes, including nested envelopes.
         let enquiry = rawResponse;
-        if (rawResponse && typeof rawResponse === 'object' && !rawResponse._id && !rawResponse.id) {
-          enquiry = rawResponse.enquiry || rawResponse.data || rawResponse;
+        if (
+          rawResponse &&
+          typeof rawResponse === 'object' &&
+          !rawResponse._id &&
+          !rawResponse.id
+        ) {
+          const candidate =
+            rawResponse.enquiry ||
+            rawResponse.data?.enquiry ||
+            rawResponse.data?.data ||
+            rawResponse.data ||
+            rawResponse.result?.enquiry ||
+            rawResponse.result?.data ||
+            rawResponse.result ||
+            rawResponse.response?.enquiry ||
+            rawResponse.response?.data ||
+            rawResponse;
+          enquiry = candidate;
         }
 
         if (!enquiry || enquiry === null || typeof enquiry !== 'object') {
@@ -1015,34 +1073,16 @@ export const api = createApi({
         // Additional safety check - ensure enquiry has expected structure
         try {
           // Same normalization logic as getEnquiries for single enquiry
-          let currentStatus = 'pending';
+          // Derive from StatusHistory — last entry is the current state
+          const singleHistory = enquiry?.StatusHistory;
+          const singleLatest =
+            Array.isArray(singleHistory) && singleHistory.length > 0
+              ? singleHistory[singleHistory.length - 1]
+              : null;
+          let currentStatus =
+            singleLatest?.Status || enquiry?.CurrentStatus || 'pending';
           let createdAt = new Date().toISOString();
           let updatedAt = new Date().toISOString();
-
-          // Prefer CurrentStatus directly (same field the list endpoint returns)
-          if (enquiry?.CurrentStatus || enquiry?.Status) {
-            currentStatus = enquiry.CurrentStatus || enquiry.Status;
-          } else if (
-            enquiry?.StatusHistory &&
-            Array.isArray(enquiry.StatusHistory) &&
-            enquiry.StatusHistory.length > 0
-          ) {
-            // Fallback: derive from StatusHistory sorted newest-first
-            const sortedHistory = [...enquiry.StatusHistory].sort(
-              (a, b) =>
-                new Date(b.Timestamp || b.timestamp || 0) -
-                new Date(a.Timestamp || a.timestamp || 0),
-            );
-            const latestStatus = sortedHistory[0];
-            currentStatus =
-              latestStatus.Status || latestStatus.status || 'pending';
-            updatedAt =
-              latestStatus.Timestamp || latestStatus.timestamp || updatedAt;
-
-            const firstStatus = sortedHistory[sortedHistory.length - 1];
-            createdAt =
-              firstStatus.Timestamp || firstStatus.timestamp || createdAt;
-          }
 
           let normalizedPriority = 'medium';
           const priority = (
@@ -1062,7 +1102,10 @@ export const api = createApi({
           const status = currentStatus.toLowerCase();
           if (status === 'enquiry created' || status === 'pending') {
             normalizedStatus = 'pending';
-          } else if (status.includes('design approval') || (status.includes('approval') && status.includes('pending'))) {
+          } else if (
+            status.includes('design approval') ||
+            (status.includes('approval') && status.includes('pending'))
+          ) {
             normalizedStatus = 'approval_pending';
           } else if (status.includes('approved') && status.includes('cad')) {
             normalizedStatus = 'approved_cad';
@@ -1078,7 +1121,10 @@ export const api = createApi({
             normalizedStatus = 'production';
           } else if (status.includes('shipped')) {
             normalizedStatus = 'shipped';
-          } else if (status.includes('completed') || status.includes('approved')) {
+          } else if (
+            status.includes('completed') ||
+            status.includes('approved')
+          ) {
             normalizedStatus = 'completed';
           } else if (status.includes('rejected')) {
             normalizedStatus = 'rejected';
@@ -1280,11 +1326,15 @@ export const api = createApi({
             ShippingDate: enquiry?.ShippingDate,
             ClientId: enquiry?.ClientId,
             AssignedTo: enquiry?.AssignedTo,
+            CurrentStatus: singleLatest?.Status,
+            CurrentSubStatus: singleLatest?.SubStatus,
             CoralCode: enquiry?.CoralCode,
             CadCode: enquiry?.CadCode,
             // CRITICAL: Preserve Coral and Cad arrays with Pricing data
             Coral: enquiry?.Coral || [],
             Cad: enquiry?.Cad || [],
+            lastCoral: enquiry?.lastCoral || null,
+            lastCad: enquiry?.lastCad || null,
             // Preserve ReferenceVideos if they exist
             ReferenceVideos: enquiry?.ReferenceVideos || [],
             Videos: enquiry?.Videos || [],
@@ -1457,7 +1507,12 @@ export const api = createApi({
       invalidatesTags: (result, error, id) => {
         // Only invalidate if mutation failed (optimistic update will handle success)
         if (error) {
-          return [{ type: 'Enquiry', id }, 'Enquiry', 'Dashboard', 'StatusStatistics'];
+          return [
+            { type: 'Enquiry', id },
+            'Enquiry',
+            'Dashboard',
+            'StatusStatistics',
+          ];
         }
         return ['Dashboard', 'StatusStatistics']; // Only refresh dashboard stats
       },
@@ -1528,6 +1583,25 @@ export const api = createApi({
       },
     }),
 
+    getDepartments: builder.query({
+      query: () => '/api/departments',
+      providesTags: ['Client'],
+      transformResponse: data => {
+        let arr = [];
+        if (Array.isArray(data)) arr = data;
+        else if (data?.departments && Array.isArray(data.departments))
+          arr = data.departments;
+        else if (data?.data && Array.isArray(data.data)) arr = data.data;
+        else return [];
+        return arr.map(dept => ({
+          id: dept._id || dept.Id || dept.id,
+          _id: dept._id || dept.Id || dept.id,
+          name: dept.Name || dept.name || 'Unknown Department',
+          email: dept.Email || dept.email || 'N/A',
+        }));
+      },
+    }),
+
     getClientById: builder.query({
       query: clientId => `/api/clients/${clientId}`,
       providesTags: (result, error, clientId) => [
@@ -1560,6 +1634,19 @@ export const api = createApi({
         // Invalidate Dashboard cache as it may show pricing-related data
         'Dashboard',
       ],
+    }),
+
+    getEnquiryBuckets: builder.query({
+      query: clientId => {
+        const base = '/api/enquiries/aggregate?groupBy=buckets';
+        return clientId ? `${base}&clientId=${clientId}` : base;
+      },
+      providesTags: ['Enquiry', 'StatusStatistics'],
+      transformResponse: data => ({
+        unassigned: data?.unassigned ?? 0,
+        wip: data?.wip ?? 0,
+        approvalPending: data?.approvalPending ?? 0,
+      }),
     }),
 
     getStatusStatistics: builder.query({
@@ -1614,11 +1701,11 @@ export const api = createApi({
     // Uses /api/enquiries/aggregate?groupBy=status and groupBy=client
     getDashboardData: builder.query({
       queryFn: async (arg, { dispatch, getState }, extraOptions, baseQuery) => {
-        try {
           // Extract role, userId, and clientId from argument
           const role = typeof arg === 'object' ? arg?.role : arg;
           const userId = typeof arg === 'object' ? arg?.userId : undefined;
           const clientId = typeof arg === 'object' ? arg?.clientId : undefined;
+        try {
 
           const isAdmin = role === 'admin' || role === 'AD';
           const isClient = role === 'client' || role === 'CL' || role === 4;
@@ -1876,9 +1963,13 @@ export const api = createApi({
 
           // Normalize enquiries (updated for aggregated endpoint response)
           const normalizedEnquiries = enquiries.map(enquiry => {
-            // Use CurrentStatus directly from aggregated response
-            const currentStatus =
-              enquiry.CurrentStatus || enquiry.Status || 'pending';
+            // Derive from StatusHistory — last entry is the current state
+            const dashHistory = enquiry?.StatusHistory;
+            const dashLatest =
+              Array.isArray(dashHistory) && dashHistory.length > 0
+                ? dashHistory[dashHistory.length - 1]
+                : null;
+            const currentStatus = dashLatest?.Status || 'pending';
             const createdAt =
               enquiry.CreatedDate ||
               enquiry.CreatedAt ||
@@ -1906,7 +1997,10 @@ export const api = createApi({
             const status = currentStatus.toLowerCase();
             if (status === 'enquiry created' || status === 'pending') {
               normalizedStatus = 'pending';
-            } else if (status.includes('design approval') || (status.includes('approval') && status.includes('pending'))) {
+            } else if (
+              status.includes('design approval') ||
+              (status.includes('approval') && status.includes('pending'))
+            ) {
               normalizedStatus = 'approval_pending';
             } else if (status.includes('approved') && status.includes('cad')) {
               normalizedStatus = 'approved_cad';
@@ -1922,7 +2016,10 @@ export const api = createApi({
               normalizedStatus = 'production';
             } else if (status.includes('shipped')) {
               normalizedStatus = 'shipped';
-            } else if (status.includes('completed') || status.includes('approved')) {
+            } else if (
+              status.includes('completed') ||
+              status.includes('approved')
+            ) {
               normalizedStatus = 'completed';
             } else if (status.includes('rejected')) {
               normalizedStatus = 'rejected';
@@ -2307,7 +2404,16 @@ export const api = createApi({
 
     uploadDesign: builder.mutation({
       queryFn: async (
-        { enquiryId, designType, version, images, excel, designCode, cost },
+        {
+          enquiryId,
+          designType,
+          version,
+          images,
+          excel,
+          designCode,
+          cost,
+          isFinalVersion,
+        },
         { dispatch },
         extraOptions,
         baseQuery,
@@ -2378,7 +2484,7 @@ export const api = createApi({
                   }
                 : null,
               designCode,
-              cost
+              cost,
             });
           }
 
@@ -2423,6 +2529,10 @@ export const api = createApi({
             formData.append('cost', String(cost));
           }
 
+          // Add isFinalVersion flag for Final CAD uploads
+          if (isFinalVersion) {
+            formData.append('isFinalVersion', 'true');
+          }
 
           // Separate images and videos - backend expects them in separate fields
           const imageFiles = [];
@@ -2633,7 +2743,9 @@ export const api = createApi({
               formDataFields: {
                 version: versionValue.toString(),
                 ...(designCode ? { code: designCode.trim() } : {}),
-                ...(cost !== undefined && cost !== null && cost !== '' ? { cost: String(cost) } : {}),
+                ...(cost !== undefined && cost !== null && cost !== ''
+                  ? { cost: String(cost) }
+                  : {}),
                 images: `${imageFiles.length + videoFiles.length} file(s) (${
                   imageFiles.length
                 } images + ${videoFiles.length} videos)`,
@@ -2959,18 +3071,41 @@ export const api = createApi({
     }),
 
     // Approve design version
+    // intent: 'forApproval' (Cad QR → Design Approval Pending) | 'final' (Cad DAP → Order Placement)
+    // Coral always uses IsApprovedVersion (transitions Coral → Cad).
     approveDesignVersion: builder.mutation({
-      query: ({ enquiryId, designType, version }) => {
+      query: ({ enquiryId, designType, version, intent }) => {
         const versionParam = version
           ? `?version=${encodeURIComponent(version)}`
           : '';
 
+    let body;
+    if (designType.toLowerCase() === 'cad') {
+      if (intent === 'forApproval') {
+        body = { SendForApproval: true };
+      } else if (intent === 'approveDesign') {
+        body = { IsApprovedVersion: true };
+      } else {
+        body = { IsFinalVersion: true };
+      }
+    } else if (designType.toLowerCase() === 'coral') {
+      if (intent === 'forApproval') {
+        body = { SendForApproval: true };
+      } else if (intent === 'approveDesign') {
+        body = { IsApprovedVersion: true };
+      } else {
+        body = { IsApprovedVersion: true };
+      }
+    } else {
+      body = { IsApprovedVersion: true };
+    }
+
+    console.log('[approveDesignVersion] enquiryId:', enquiryId, 'designType:', designType, 'version:', version, 'intent:', intent, 'body:', JSON.stringify(body));
+
         return {
           url: `/api/enquiries/${enquiryId}/upload/${designType}${versionParam}`,
           method: 'PUT',
-          body: designType === 'cad'
-            ? { IsFinalVersion: true }
-            : { IsApprovedVersion: true },
+          body,
         };
       },
       invalidatesTags: (result, error, { enquiryId }) => [
@@ -2991,7 +3126,6 @@ export const api = createApi({
         };
       },
     }),
-
     // Save pricing for coral/CAD design
     savePricing: builder.mutation({
       query: ({ enquiryId, designType, version, pricingData }) => {
@@ -3258,37 +3392,34 @@ export const api = createApi({
 
     // Reject design version
     rejectDesignVersion: builder.mutation({
-      query: ({ enquiryId, designType, version, reason }) => {
-        const versionParam = version
-          ? `?version=${encodeURIComponent(version)}`
-          : '';
-        return {
-          url: `/api/enquiries/${enquiryId}/upload/${designType}${versionParam}`,
-          method: 'PUT',
-          body: designType === 'cad'
-            ? { IsFinalVersion: false, ReasonForRejection: reason || '' }
-            : { IsApprovedVersion: false, ReasonForRejection: reason || '' },
-        };
-      },
-      invalidatesTags: (result, error, { enquiryId }) => [
-        { type: 'Enquiry', id: enquiryId },
-        'Enquiry',
-      ],
-      transformResponse: response => {
-        return response;
-      },
-      transformErrorResponse: response => {
-        return {
-          status: response.status,
-          data: response.data,
-          error:
-            response.data?.message ||
-            response.data?.error ||
-            'Failed to reject design version',
-        };
-      },
-    }),
-
+  query: ({ enquiryId, designType, version, reason }) => {
+    const versionParam = version
+      ? `?version=${encodeURIComponent(version)}`
+      : '';
+    return {
+      url: `/api/enquiries/${enquiryId}/upload/${designType}${versionParam}`,
+      method: 'PUT',
+      body: { IsApprovedVersion: false, ReasonForRejection: reason || '' },
+    };
+  },
+  invalidatesTags: (result, error, { enquiryId }) => [
+    { type: 'Enquiry', id: enquiryId },
+    'Enquiry',
+  ],
+  transformResponse: response => {
+    return response;
+  },
+  transformErrorResponse: response => {
+    return {
+      status: response.status,
+      data: response.data,
+      error:
+        response.data?.message ||
+        response.data?.error ||
+        'Failed to reject design version',
+    };
+  },
+}),
     // Show to Client - Toggle visibility for clients
     updateShowToClient: builder.mutation({
       query: ({ enquiryId, designType, version, showToClient }) => {
@@ -3587,23 +3718,25 @@ export const api = createApi({
             );
             console.log('');
 
-            console.log('ðŸ“¤ [uploadReferenceImages] Preparing HTTP Request:', {
-              method: 'POST',
-              url: fullUrl,
-              endpoint: endpoint,
-              formDataFields: {
-                images:
-                  imageFiles.length > 0
-                    ? `${imageFiles.length} file(s)`
-                    : 'none',
-                videos:
-                  videoFiles.length > 0
-                    ? `${videoFiles.length} file(s)`
-                    : 'none',
+            console.log(
+              'ðŸ“¤ [uploadReferenceImages] Preparing HTTP Request:',
+              {
+                method: 'POST',
+                url: fullUrl,
+                endpoint: endpoint,
+                formDataFields: {
+                  images:
+                    imageFiles.length > 0
+                      ? `${imageFiles.length} file(s)`
+                      : 'none',
+                  videos:
+                    videoFiles.length > 0
+                      ? `${videoFiles.length} file(s)`
+                      : 'none',
+                },
+                totalFiles: imageFiles.length + videoFiles.length,
               },
-              totalFiles: imageFiles.length + videoFiles.length,
-            });
-
+            );
             console.log('ðŸ“‹ [uploadReferenceImages] FormData Summary:', {
               images: imageFiles.map(
                 (f, i) => `${i + 1}. ${f.name} (${f.type})`,
@@ -4203,6 +4336,111 @@ export const api = createApi({
         }
 
         return { gold: [], silver: [], platinum: [] };
+      },
+    }),
+    //============= Jwellery Estimation =============
+    JwelleryPriceData: builder.mutation({
+      query: ({
+        imageFrontView,
+        imageSideView,
+        image45view,
+        additionalImages,
+        clientId,
+        description,
+      }) => {
+        const formData = new FormData();
+
+        formData.append('clientId', clientId);
+        if (description) {
+          formData.append('description', description);
+        }
+
+        const appendImage = (fieldName, imgData) => {
+          if (imgData && imgData.uri) {
+            formData.append(fieldName, {
+              uri: imgData.uri,
+              type: imgData.type || 'image/jpeg',
+              name: imgData.name || `${fieldName}_${Date.now()}.jpg`,
+            });
+          } else if (imgData) {
+            formData.append(fieldName, imgData);
+          }
+        };
+
+        // 1. Required Top View
+        appendImage('topView', imageFrontView);
+
+        // 2. Optional Side View
+        if (imageSideView) {
+          appendImage('sideView', imageSideView);
+        }
+
+        // 3. Optional 45 Degree View (Fixed field name)
+        if (image45view) {
+          appendImage('fortyFiveView', image45view);
+        }
+
+        // 4. Optional Additional Images (Fixed field name)
+        if (additionalImages && Array.isArray(additionalImages)) {
+          additionalImages.forEach(img => {
+            appendImage('additional', img);
+          });
+        } else if (additionalImages) {
+          appendImage('additional', additionalImages);
+        }
+
+        return {
+          url: '/api/jewelry-estimate',
+          method: 'POST',
+          body: formData,
+        };
+      },
+
+      transformResponse: response => {
+        if (__DEV__) {
+          console.log(
+            '✅ [JwelleryPriceData] Response:',
+            JSON.stringify(response, null, 2),
+          );
+        }
+        return response;
+      },
+
+      transformErrorResponse: response => {
+        if (__DEV__) {
+          console.error(
+            '❌ [JwelleryPriceData] Error:',
+            JSON.stringify(response, null, 2),
+          );
+
+          if (response.data) {
+            if (typeof response.data === 'string') {
+              console.error('Error message (string):', response.data);
+            } else if (typeof response.data === 'object') {
+              console.error('Error object keys:', Object.keys(response.data));
+            }
+          }
+        }
+
+        let errorMessage =
+          response.data?.message ||
+          response.data?.error ||
+          `Pricing calculation failed (${response.status || 'Unknown error'})`;
+
+        if (
+          response.status === 500 &&
+          (!response.data?.message ||
+            response.data?.message === 'Internal server error')
+        ) {
+          errorMessage =
+            'Internal server error: Check backend configuration or file sizes.';
+        }
+
+        return {
+          status: response.status,
+          data: response.data,
+          error: errorMessage,
+        };
       },
     }),
     //============= image pricing extraction ===========
@@ -5684,22 +5922,26 @@ export const {
   // Enquiries
   useGetEnquiriesQuery,
   useGetEnquiryByIdQuery,
+  useLazyGetEnquiryByIdQuery,
   useCreateEnquiryMutation,
   useUpdateEnquiryMutation,
   useDeleteEnquiryMutation,
 
   // Clients
   useGetClientsQuery,
+  useGetDepartmentsQuery,
   useGetClientByIdQuery,
   useCreateClientMutation,
   useUpdateClientPricingMutation,
   useImagepriceDataMutation,
+  useJwelleryPriceDataMutation,
 
   // Dashboard
   useGetDashboardDataQuery,
 
   // Status Statistics
   useGetStatusStatisticsQuery,
+  useGetEnquiryBucketsQuery,
 
   // Metal Prices
   useGetMetalPricesQuery,

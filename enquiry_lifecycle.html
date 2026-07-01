@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Enquiry Lifecycle - API Endpoints</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; margin: 40px; color: #1a1a1a; }
+  h1 { color: #111827; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+  h2 { color: #1e40af; margin-top: 40px; }
+  h3 { color: #374151; margin-top: 30px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0 30px 0; font-size: 13px; }
+  th { background: #1e40af; color: #fff; padding: 10px 12px; text-align: left; font-weight: 600; }
+  td { padding: 8px 12px; border: 1px solid #d1d5db; vertical-align: top; }
+  tr:nth-child(even) { background: #f3f4f6; }
+  tr:hover { background: #dbeafe; }
+  .method { font-weight: bold; font-size: 12px; padding: 2px 8px; border-radius: 4px; display: inline-block; min-width: 42px; text-align: center; }
+  .get { background: #d1fae5; color: #065f46; }
+  .post { background: #dbeafe; color: #1e40af; }
+  .put { background: #fef3c7; color: #92400e; }
+  .delete { background: #fee2e2; color: #991b1b; }
+  .status { font-family: 'Courier New', monospace; font-size: 12px; background: #f0f9ff; padding: 2px 6px; border-radius: 3px; }
+  .substatus { font-family: 'Courier New', monospace; font-size: 12px; background: #fefce8; padding: 2px 6px; border-radius: 3px; }
+  code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .note { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; font-size: 13px; }
+  .section-divider { border: none; border-top: 2px solid #e5e7eb; margin: 40px 0; }
+  @media print {
+    body { margin: 20px; }
+    h1 { font-size: 22px; }
+    table { font-size: 11px; }
+    .note { break-inside: avoid; }
+    tr { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Enquiry Lifecycle - Complete API Endpoint Reference</h1>
+<p style="color:#6b7280; font-size:14px;">Chandra Jewellery Mobile App &mdash; Status Flow from Creation to Production</p>
+
+<h2>1. Status &amp; SubStatus Constants</h2>
+<table>
+  <tr><th>STATUS</th><th>Value</th></tr>
+  <tr><td><code>ENQUIRY_CREATED</code></td><td><span class="status">Enquiry Created</span></td></tr>
+  <tr><td><code>CORAL</code></td><td><span class="status">Coral</span></td></tr>
+  <tr><td><code>CAD</code></td><td><span class="status">Cad</span></td></tr>
+  <tr><td><code>DESIGN_APPROVAL_PENDING</code></td><td><span class="status">Design Approval Pending</span></td></tr>
+  <tr><td><code>PRODUCTION</code></td><td><span class="status">Production</span></td></tr>
+</table>
+
+<table>
+  <tr><th>SUBSTATUS</th><th>Value</th></tr>
+  <tr><td><code>AP</code></td><td><span class="substatus">Assign Pending</span></td></tr>
+  <tr><td><code>AS</code></td><td><span class="substatus">Assigned</span></td></tr>
+  <tr><td><code>RR</code></td><td><span class="substatus">Rejected - Redo</span></td></tr>
+  <tr><td><code>CM</code></td><td><span class="substatus">Cost Missing</span></td></tr>
+  <tr><td><code>QR</code></td><td><span class="substatus">Quotation Review</span></td></tr>
+  <tr><td><code>FU</code></td><td><span class="substatus">Final Cad Upload</span></td></tr>
+</table>
+
+<hr class="section-divider">
+
+<!-- ============================================================
+  SECTION 2: FULL LIFECYCLE FLOW — REDESIGN HERE
+
+  WHAT WAS HERE:
+  The complete step-by-step flow from enquiry creation through production.
+  13 steps covering: Create Enquiry, Assign Coral, Upload Coral,
+  Save Coral Pricing, Move to Approval, Accept Coral, Assign CAD,
+  Upload CAD, Save CAD Pricing, Mark Final CAD, Move to Approval (Final),
+  Accept Final CAD, Move to Production.
+
+  KEY FUNCTIONS INVOLVED:
+  - useEnquiryActions.js — all status transition logic
+    - createEnquiry()        → POST /api/enquiries
+    - assignDesigner()       → PUT /api/enquiries/:id (sets Status + SubStatus)
+    - uploadDesign()         → POST /api/enquiries/:id/upload/:type (coral|cad)
+    - savePricing()          → PUT /api/enquiries/:id/upload/:type?version=X
+    - moveToApproval()       → PUT /api/enquiries/:id (Status → Design Approval Pending)
+    - acceptDesign()         → PUT /api/enquiries/:id/upload/:type?version=X (IsApprovedVersion)
+    - markFinalCad()         → PUT /api/enquiries/:id/upload/:type?version=X (IsFinalVersion)
+    - moveToProduction()     → PUT /api/enquiries/:id (Status → Production)
+
+  - api.js — raw API call layer (RTK Query endpoints)
+  - constants/enquiry.js — STATUS, SUBSTATUS enums
+
+  WHAT TO BUILD:
+  Redesign this section with the new lifecycle flow. Replace the old
+  13-step table with whatever the new flow dictates.
+============================================================ -->
+<h2>2. Full Lifecycle: Enquiry Created &rarr; Production</h2>
+<!-- TODO: Redesign the full lifecycle flow table here -->
+
+<hr class="section-divider">
+
+<!-- ============================================================
+  SECTION 3: REJECTION PATHS — REDESIGN HERE
+
+  WHAT WAS HERE:
+  4 rejection scenarios:
+  R1: Reject Quotation (flag version rejected)
+  R2: Set Rejected - Redo (SubStatus → Rejected - Redo)
+  R3: Reject Approval (flag version rejected during approval)
+  R4: Reset to Cad + Rejected (Status back to Cad, SubStatus Rejected - Redo)
+
+  KEY FUNCTIONS INVOLVED:
+  - rejectDesign()          → PUT /api/enquiries/:id/upload/:type?version=X
+                               sets IsApprovedVersion: false, ReasonForRejection
+  - setRejectedRedo()       → PUT /api/enquiries/:id
+                               sets CurrentSubStatus: "Rejected - Redo"
+  - resetToCadRejected()   → PUT /api/enquiries/:id
+                               sets Status: "Cad", CurrentSubStatus: "Rejected - Redo"
+
+  WHAT TO BUILD:
+  Redesign rejection paths based on the new flow. Some rejections may
+  no longer exist or may work differently.
+============================================================ -->
+<h2>3. Rejection Paths</h2>
+<!-- TODO: Redesign rejection flow table here -->
+
+<hr class="section-divider">
+
+<h2>4. All Endpoints Summary</h2>
+<table>
+  <tr><th>Endpoint</th><th>Methods</th><th>Purpose</th></tr>
+  <tr>
+    <td><code>POST /api/enquiries</code></td>
+    <td><span class="method post">POST</span></td>
+    <td>Create new enquiry</td>
+  </tr>
+  <tr>
+    <td><code>GET /api/enquiries/search</code></td>
+    <td><span class="method get">GET</span></td>
+    <td>List enquiries with filters/pagination</td>
+  </tr>
+  <tr>
+    <td><code>GET /api/enquiries/:id</code></td>
+    <td><span class="method get">GET</span></td>
+    <td>Get single enquiry with Coral[]/Cad[] arrays</td>
+  </tr>
+  <tr>
+    <td><code>PUT /api/enquiries/:id</code></td>
+    <td><span class="method put">PUT</span></td>
+    <td>Update status, substatus, assignedTo, clientId</td>
+  </tr>
+  <tr>
+    <td><code>DELETE /api/enquiries/:id</code></td>
+    <td><span class="method delete">DEL</span></td>
+    <td>Delete enquiry</td>
+  </tr>
+  <tr>
+    <td><code>POST /api/enquiries/:id/upload/coral</code></td>
+    <td><span class="method post">POST</span></td>
+    <td>Upload coral design (FormData)</td>
+  </tr>
+  <tr>
+    <td><code>POST /api/enquiries/:id/upload/cad</code></td>
+    <td><span class="method post">POST</span></td>
+    <td>Upload CAD design (FormData)</td>
+  </tr>
+  <tr>
+    <td><code>PUT /api/enquiries/:id/upload/:type?version=X</code></td>
+    <td><span class="method put">PUT</span></td>
+    <td>Save pricing / Approve version / Reject version / Mark final</td>
+  </tr>
+  <tr>
+    <td><code>POST /api/enquiries/:id/upload/reference</code></td>
+    <td><span class="method post">POST</span></td>
+    <td>Upload reference images</td>
+  </tr>
+  <tr>
+    <td><code>GET /api/enquiries/aggregate</code></td>
+    <td><span class="method get">GET</span></td>
+    <td>Status statistics &amp; bucket counts</td>
+  </tr>
+  <tr>
+    <td><code>POST /api/validate-image</code></td>
+    <td><span class="method post">POST</span></td>
+    <td>Validate image before upload</td>
+  </tr>
+</table>
+
+<hr class="section-divider">
+
+<!-- ============================================================
+  SECTION 5: STATE MACHINE VISUAL — REDESIGN HERE
+
+  WHAT WAS HERE:
+  ASCII visual diagram of the full state machine:
+  Enquiry Created → Coral Assigned → Coral Upload → Pricing →
+  Approval → Accept Coral → CAD Assigned → CAD Upload →
+  Pricing → Mark Final → Approval (Final) → Accept → Production
+
+  With rejection branches at each approval point looping back.
+
+  KEY FUNCTIONS INVOLVED:
+  Same as Section 2 — the state machine is a visual representation
+  of the same useEnquiryActions.js functions.
+
+  WHAT TO BUILD:
+  Redesign the ASCII state diagram to match the new flow.
+============================================================ -->
+<h2>5. State Machine Flow (Visual)</h2>
+<!-- TODO: Redesign state machine diagram here -->
+
+<hr class="section-divider">
+<p style="color:#9ca3af; font-size:12px; text-align:center;">Generated from Chandra Jewellery Mobile App &mdash; useEnquiryActions.js + api.js + constants/enquiry.js</p>
+
+</body>
+</html>

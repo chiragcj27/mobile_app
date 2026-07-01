@@ -69,6 +69,16 @@ const stonesAreMissing = (stones) =>
   !Array.isArray(stones) || stones.length === 0 ||
   stones.every(s => num(s.Price) === 0);
 
+const mapSourceToPricingResult = (source) => {
+  if (!source) return null;
+  const mp = num(source.MetalPrice);
+  const dp = num(source.DiamondsPrice);
+  const da = num(source.DutiesAmount);
+  const tp = num(source.TotalPrice);
+  if (mp === 0 && dp === 0 && da === 0 && tp === 0) return null;
+  return { MetalPrice: mp, DiamondsPrice: dp, DutiesAmount: da, TotalPrice: tp };
+};
+
 const buildHtml = ({ enquiry, pricingResult, stones, metal, charges, clientName }) => {
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const stonesHtml = stones.map((s, i) => `
@@ -81,22 +91,22 @@ const buildHtml = ({ enquiry, pricingResult, stones, metal, charges, clientName 
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <style>
-    body{font-family:Arial,sans-serif;padding:24px;color:#333;font-size:13px}
-    .hdr{text-align:center;border-bottom:3px solid #D4AF37;padding-bottom:16px;margin-bottom:20px}
-    .hdr h1{color:#D4AF37;margin:0;font-size:24px}
-    .hdr p{color:#666;margin:4px 0;font-size:12px}
-    .sec-title{background:#D4AF37;color:#fff;padding:8px 12px;font-weight:bold;margin:18px 0 10px}
+    body{font-family:Arial,sans-serif;padding:24px;color:#2B3735;font-size:13px}
+    .hdr{text-align:center;border-bottom:3px solid #143F46;padding-bottom:16px;margin-bottom:20px}
+    .hdr h1{color:#143F46;margin:0;font-size:24px}
+    .hdr p{color:#BFA26C;margin:4px 0;font-size:12px}
+    .sec-title{background:#143F46;color:#fff;padding:8px 12px;font-weight:900;margin:18px 0 10px;border-left:4px solid #BFA26C}
     .grid{display:table;width:100%;margin-bottom:8px}
     .row{display:table-row}
-    .lbl{display:table-cell;padding:6px 8px;font-weight:bold;color:#555;width:42%;border-bottom:1px solid #eee}
-    .val{display:table-cell;padding:6px 8px;color:#333;border-bottom:1px solid #eee}
+    .lbl{display:table-cell;padding:6px 8px;font-weight:800;color:#2B3735;width:42%;border-bottom:1px solid #BFA26C}
+    .val{display:table-cell;padding:6px 8px;color:#2B3735;border-bottom:1px solid #BFA26C}
     table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px}
-    th{background:#8B4513;color:#fff;padding:8px;text-align:center;border:1px solid #ddd}
-    td{padding:7px;border:1px solid #ddd;text-align:center}
+    th{background:#143F46;color:#fff;padding:8px;text-align:center;border:1px solid #BFA26C;font-weight:900}
+    td{padding:7px;border:1px solid #BFA26C;text-align:center}
     .totals{background:#f5f5f5;padding:16px;border-radius:6px;margin-top:16px}
-    .tot-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #ddd}
-    .grand{font-size:18px;color:#D4AF37;margin-top:12px;padding-top:12px;border-top:2px solid #D4AF37}
-    .footer{text-align:center;margin-top:32px;padding-top:16px;border-top:2px solid #eee;color:#999;font-size:11px}
+    .tot-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #BFA26C}
+    .grand{font-size:18px;color:#143F46;margin-top:12px;padding-top:12px;border-top:2px solid #BFA26C}
+    .footer{text-align:center;margin-top:32px;padding-top:16px;border-top:2px solid #BFA26C;color:#BFA26C;font-size:11px}
   </style></head><body>
   <div class="hdr"><h1>Chandra Jewels</h1><p>Quotation</p><p>${date}</p></div>
 
@@ -191,6 +201,16 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
   const [calculatePricing, { isLoading: isCalculating }] = useCalculatePricingMutation();
   const [savePricing,      { isLoading: isSaving }]      = useSavePricingMutation();
+
+  const lastHistory = useMemo(() => {
+    const hist = fullEnquiry?.StatusHistory;
+    if (!Array.isArray(hist) || hist.length === 0) return null;
+    return hist[hist.length - 1];
+  }, [fullEnquiry]);
+  const currentSubStatus = fullEnquiry?.CurrentSubStatus ?? lastHistory?.SubStatus ?? null;
+  const isCMPhase = currentSubStatus === 'Cost Missing';
+  const isQRPhase = currentSubStatus === 'Quotation Review';
+
   const { data: metalPricesData } = useGetMetalPricesQuery(false);
 
   const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
@@ -247,8 +267,33 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       setMissingIndices(initialMissing);
 
       setClientMsg(p.ClientPricingMessage || '');
-      setPricingResult(null);
-      setPdfHtml(null);
+      if (isQRPhase && sourcePricing) {
+        const qrResult = mapSourceToPricingResult(sourcePricing);
+        setPricingResult(qrResult);
+        if (qrResult) {
+          const html = buildHtml({
+            enquiry: fullEnquiry,
+            pricingResult: qrResult,
+            stones: rawStones,
+            metal: {
+              Weight: num(p.Metal?.Weight ?? 0),
+              Quality: p.Metal?.Quality || '10K',
+              Rate: num(p.Metal?.Rate ?? 0),
+            },
+            charges: {
+              Loss: num(p.Loss ?? 0),
+              Labour: num(p.Labour ?? 0),
+              ExtraCharges: num(p.ExtraCharges ?? 0),
+              UndercutPrice: num(p.UndercutPrice ?? 0),
+            },
+            clientName: fullEnquiry?.ClientName || fullEnquiry?.clientName || '',
+          });
+          setPdfHtml(html);
+        }
+      } else {
+        setPricingResult(null);
+        setPdfHtml(null);
+      }
       setShowPdf(false);
       setShowCompareModal(false);
       setCopied(false);
@@ -450,24 +495,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       });
 
       setClientMsg(prev => {
-        if (!prev) {
-          if (result.ClientPricingMessage) return result.ClientPricingMessage;
-          return prev;
-        }
-        const swaps = [
-          [num(sourcePricing?.MetalPrice),    num(result.MetalPrice)],
-          [num(sourcePricing?.DiamondsPrice), num(result.DiamondsPrice)],
-          [num(sourcePricing?.DutiesAmount),  num(result.DutiesAmount)],
-          [num(sourcePricing?.TotalPrice),    num(result.TotalPrice)],
-        ];
-        let updated = prev;
-        for (const [oldVal, newVal] of swaps) {
-          if (oldVal <= 0 && newVal <= 0) continue;
-          const escaped = oldVal.toFixed(2).replace('.', '\\.');
-          const pattern = new RegExp(`\\$?${escaped}`, 'g');
-          updated = updated.replace(pattern, `$${newVal.toFixed(2)}`);
-        }
-        return updated;
+        if (result.ClientPricingMessage) return result.ClientPricingMessage;
+        return prev;
       });
 
       const html = buildHtml({
@@ -541,7 +570,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           {/* ── header ──────────────────────────────────────────────── */}
           <View style={s.header}>
             <View style={{ flex: 1 }}>
-              <Text style={s.headerTitle} numberOfLines={1}>View Quotation</Text>
+              <Text style={s.headerTitle} numberOfLines={1}>{isCMPhase ? 'Update Quotation' : 'View Quotation'}</Text>
               {fullEnquiry?.Name ? <Text style={s.headerSub} numberOfLines={1}>{fullEnquiry.Name}</Text> : null}
             </View>
             {isFetchingEnquiry && <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />}
@@ -587,45 +616,49 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               )}
 
               {/* ── METAL ─────────────────────────────────────────────── */}
-              <Text style={s.sectionTitle}>Metal</Text>
-              <View style={s.metalRow}>
-                {/* Weight */}
-                <View style={s.metalField}>
-                  <Text style={s.chargeLabel}>Weight (g)</Text>
-                  <TextInput
-                    style={[s.chargeInput, num(metalWeight) <= 0 && s.inputError]}
-                    value={metalWeight}
-                    onChangeText={setMetalWeight}
-                    keyboardType="decimal-pad"
-                    placeholder="0"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </View>
-                {/* Quality — dropdown */}
-                <View style={s.metalField}>
-                  <Text style={s.chargeLabel}>Quality</Text>
-                  <TouchableOpacity
-                    style={s.qualityBtn}
-                    onPress={() => setShowQualityPicker(true)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
-                    <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-                {/* Rate */}
-                <View style={s.metalField}>
-                  <Text style={s.chargeLabel}>Rate ($/g)</Text>
-                  <TextInput
-                    style={[s.chargeInput, num(metalRate) <= 0 && s.inputError]}
-                    value={metalRate}
-                    onChangeText={setMetalRate}
-                    keyboardType="decimal-pad"
-                    placeholder="0"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </View>
-              </View>
+              {!isQRPhase && (
+                <>
+                  <Text style={s.sectionTitle}>Metal</Text>
+                  <View style={s.metalRow}>
+                    {/* Weight */}
+                    <View style={s.metalField}>
+                      <Text style={s.chargeLabel}>Weight (g)</Text>
+                      <TextInput
+                        style={[s.chargeInput, num(metalWeight) <= 0 && s.inputError]}
+                        value={metalWeight}
+                        onChangeText={setMetalWeight}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={colors.textSecondary}
+                      />
+                    </View>
+                    {/* Quality — dropdown */}
+                    <View style={s.metalField}>
+                      <Text style={s.chargeLabel}>Quality</Text>
+                      <TouchableOpacity
+                        style={s.qualityBtn}
+                        onPress={() => setShowQualityPicker(true)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
+                        <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                    </View>
+                    {/* Rate */}
+                    <View style={s.metalField}>
+                      <Text style={s.chargeLabel}>Rate ($/g)</Text>
+                      <TextInput
+                        style={[s.chargeInput, num(metalRate) <= 0 && s.inputError]}
+                        value={metalRate}
+                        onChangeText={setMetalRate}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={colors.textSecondary}
+                      />
+                    </View>
+                  </View>
+                </>
+              )}
 
               {/* ── STONES (missing-price snapshot — refreshes on Calculate) ── */}
               {(() => {
@@ -700,35 +733,59 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               })()}
 
               {/* ── COMPARE IMAGES ────────────────────────────────────── */}
-              <TouchableOpacity
-                style={[s.calcBtn, { backgroundColor: '#7C3AED', marginBottom: 10 }]}
-                onPress={handleCompareImages}
-                activeOpacity={0.85}
-              >
-                <Icon name="compare" size={18} color="#fff" />
-                <Text style={s.calcBtnText}>Compare Images</Text>
-              </TouchableOpacity>
+              {!isQRPhase && (
+                <TouchableOpacity
+                  style={[s.calcBtn, { backgroundColor: '#7C3AED', marginBottom: 10 }]}
+                  onPress={handleCompareImages}
+                  activeOpacity={0.85}
+                >
+                  <Icon name="compare" size={18} color="#fff" />
+                  <Text style={s.calcBtnText}>Compare Images</Text>
+                </TouchableOpacity>
+              )}
 
               {/* ── CALCULATE ─────────────────────────────────────────── */}
-              <TouchableOpacity
-                style={[s.calcBtn, isCalculating && s.calcBtnDisabled]}
-                onPress={handleCalculate}
-                disabled={isCalculating}
-                activeOpacity={0.85}
-              >
-                {isCalculating
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <>
-                      <Icon name="calculate" size={18} color="#fff" />
-                      <Text style={s.calcBtnText}>{pricingResult ? 'Recalculate' : 'Calculate Pricing'}</Text>
-                    </>}
-              </TouchableOpacity>
+              {!isQRPhase && (
+                <TouchableOpacity
+                  style={[s.calcBtn, isCalculating && s.calcBtnDisabled]}
+                  onPress={handleCalculate}
+                  disabled={isCalculating}
+                  activeOpacity={0.85}
+                >
+                  {isCalculating
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <>
+                        <Icon name="calculate" size={18} color="#fff" />
+                        <Text style={s.calcBtnText}>{pricingResult ? 'Recalculate' : 'Calculate Pricing'}</Text>
+                      </>}
+                </TouchableOpacity>
+              )}
 
-              {/* ── AFTER CALCULATION: View PDF + Save ───────────────── */}
+              {/* ── AFTER CALCULATION: View PDF + Save / Compare Images ── */}
               {pricingResult && (
                 <>
+                  <Text style={s.sectionTitle}>Pricing</Text>
+                  <View style={s.resultCard}>
+                    <View style={s.resultRow}>
+                      <Text style={s.resultLbl}>Metal Price</Text>
+                      <Text style={s.resultVal}>${num(pricingResult.MetalPrice).toFixed(2)}</Text>
+                    </View>
+                    <View style={s.resultRow}>
+                      <Text style={s.resultLbl}>Diamonds Price</Text>
+                      <Text style={s.resultVal}>${num(pricingResult.DiamondsPrice).toFixed(2)}</Text>
+                    </View>
+                    <View style={s.resultRow}>
+                      <Text style={s.resultLbl}>Duties Amount</Text>
+                      <Text style={s.resultVal}>${num(pricingResult.DutiesAmount).toFixed(2)}</Text>
+                    </View>
+                    <View style={[s.resultRow, s.resultTotalRow]}>
+                      <Text style={s.resultTotalLbl}>TOTAL PRICE</Text>
+                      <Text style={s.resultTotalVal}>${num(pricingResult.TotalPrice).toFixed(2)}</Text>
+                    </View>
+                  </View>
+
                   <TouchableOpacity
-                    style={[s.calcBtn, { backgroundColor: '#DC2626', marginTop: 16 }]}
+                    style={[s.calcBtn, { backgroundColor: '#DC2626' }]}
                     onPress={() => setShowPdf(true)}
                     activeOpacity={0.85}
                   >
@@ -736,16 +793,27 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                     <Text style={s.calcBtnText}>View PDF</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[s.calcBtn, { backgroundColor: '#059669', marginTop: 10 }, (isSaving || isFetchingEnquiry) && s.calcBtnDisabled]}
-                    onPress={handleSaveQuotation}
-                    disabled={isSaving || isFetchingEnquiry}
-                    activeOpacity={0.85}
-                  >
-                    {(isSaving || isFetchingEnquiry)
-                      ? <><ActivityIndicator size="small" color="#fff" /><Text style={s.calcBtnText}>{isFetchingEnquiry ? 'Loading...' : 'Saving...'}</Text></>
-                      : <><Icon name="save" size={18} color="#fff" /><Text style={s.calcBtnText}>Save Quotation</Text></>}
-                  </TouchableOpacity>
+                  {isQRPhase ? (
+                    <TouchableOpacity
+                      style={[s.calcBtn, { backgroundColor: '#7C3AED' }]}
+                      onPress={handleCompareImages}
+                      activeOpacity={0.85}
+                    >
+                      <Icon name="compare" size={18} color="#fff" />
+                      <Text style={s.calcBtnText}>Compare Images</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={[s.calcBtn, { backgroundColor: '#059669', marginTop: 10 }, (isSaving || isFetchingEnquiry) && s.calcBtnDisabled]}
+                      onPress={handleSaveQuotation}
+                      disabled={isSaving || isFetchingEnquiry}
+                      activeOpacity={0.85}
+                    >
+                      {(isSaving || isFetchingEnquiry)
+                        ? <><ActivityIndicator size="small" color="#fff" /><Text style={s.calcBtnText}>{isFetchingEnquiry ? 'Loading...' : 'Saving...'}</Text></>
+                        : <><Icon name="save" size={18} color="#fff" /><Text style={s.calcBtnText}>Save Quotation</Text></>}
+                    </TouchableOpacity>
+                  )}
                 </>
               )}
               {(clientMsg !== null && clientMsg !== undefined && diamonds.length > 0) ? (

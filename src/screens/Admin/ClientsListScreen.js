@@ -240,8 +240,13 @@ const ClientsListScreen = ({ navigation }) => {
         </View>
 
         {!isSelecting && (
-          <TouchableOpacity style={styles.moreButton}>
-            <Text style={{ fontSize: 16, color: colors.textSecondary }}>⋮</Text>
+          <TouchableOpacity
+            style={styles.enquiryBtn}
+            onPress={() => navigation.navigate('ClientHandlerEnquiries', {
+              client: { id, name: client.name },
+            })}
+          >
+            <Icon name="visibility" size={18} color={colors.primary} />
           </TouchableOpacity>
         )}
       </TouchableOpacity>
@@ -567,6 +572,14 @@ const styles = StyleSheet.create({
   },
   modalConfirmDisabled: { backgroundColor: colors.border },
   modalConfirmText: { color: colors.textWhite, fontFamily: fonts.bold, fontSize: fonts.base },
+  enquiryBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.backgroundSecondary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });
 
 export default ClientsListScreen;

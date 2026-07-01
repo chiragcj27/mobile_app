@@ -141,29 +141,7 @@ const FinalLookModal = ({ visible, enquiryId, onClose, clientName, onApprove }) 
                       ? <ActivityIndicator size="small" color="#fff" />
                       : <><Icon name="save" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Save PDF</Text></>}
                   </TouchableOpacity>
-                  {onApprove && (
-                    <TouchableOpacity
-                      style={[s.pdfBarBtn, s.approveBtn]}
-                      onPress={async () => {
-                        if (isApproving) return;
-                        setIsApproving(true);
-                        try {
-                          await onApprove(enquiryId);
-                          onClose();
-                        } catch (e) {
-                          // error handled by parent
-                        } finally {
-                          setIsApproving(false);
-                        }
-                      }}
-                      disabled={isApproving}
-                      activeOpacity={0.85}
-                    >
-                      {isApproving
-                        ? <ActivityIndicator size="small" color="#fff" />
-                        : <><Icon name="check-circle" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Approve</Text></>}
-                    </TouchableOpacity>
-                  )}
+
                 </View>
               </View>
             ) : (

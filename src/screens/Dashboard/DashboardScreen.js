@@ -125,17 +125,18 @@ const DashboardScreen = ({ navigation }) => {
       <View style={styles.NewEnquiryPricingButtonContainer}>
         <TouchableOpacity
           style={styles.NewEnquiryButton}
-          onPress={() => navigation.navigate('AddEnquiryStep1')}
-        >
-          <Icon name="add-circle" size={20} color={colors.textWhite} />
-          <Text style={styles.NewEnquiryText}>Create New Enquiry</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.NewEnquiryButton}
           onPress={() => navigation.navigate('PricingCalci')}
         >
           <Icon name="attach-money" size={20} color={colors.textWhite} />
           <Text style={styles.NewEnquiryText}>Pricing Calculator</Text>
+        </TouchableOpacity>
+
+           <TouchableOpacity
+          style={styles.NewEnquiryButton}
+          onPress={() => navigation.navigate('EstimateJwellery')}
+        >
+          <Icon name="attach-money" size={20} color={colors.textWhite} />
+          <Text style={styles.NewEnquiryText}>Approx Pricing</Text>
         </TouchableOpacity>
 
           <TouchableOpacity
@@ -148,7 +149,53 @@ const DashboardScreen = ({ navigation }) => {
       </View>
 
       {/* Overview Section - Only show on mobile, hidden on tablets */}
-      {!isTablet && (
+     
+      {/* Clients & Departments - All Enquiries Button */}
+        <View style={styles.overviewSection}>
+            <Text style={styles.overviewTitle}>Client & Department Management</Text>
+          </View>
+      <View style={styles.allEnquiriesSection}>
+        
+        <TouchableOpacity
+          style={styles.allEnquiriesButton}
+          onPress={() => navigation.navigate('AllClientsDashboard', { showAll: true })}
+          activeOpacity={0.8}
+        >
+          <View style={styles.allEnquiriesIconContainer}>
+            <Icon name="people" size={28} color={colors.textWhite} />
+          </View>
+          <View style={styles.allEnquiriesTextContainer}>
+            <Text style={styles.allEnquiriesTitle}>All Enquiries</Text>
+            <Text style={styles.allEnquiriesSubtitle}>
+              Clients & Departments
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={28} color={colors.textWhite} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.allEnquiriesSection}>
+        <TouchableOpacity
+          style={styles.allEnquiriesButton}
+          onPress={() => navigation.navigate('ClientHandlerEnquiries', { assignedTo: { role: 'order_placement' } })}
+          activeOpacity={0.8}
+        >
+          <View style={styles.allEnquiriesIconContainer}>
+            <Icon name="receipt" size={28} color={colors.textWhite} />
+          </View>
+          <View style={styles.allEnquiriesTextContainer}>
+            <Text style={styles.allEnquiriesTitle}>View Order Placements</Text>
+            <Text style={styles.allEnquiriesSubtitle}>
+              All Order Placements
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={28} color={colors.textWhite} />
+        </TouchableOpacity>
+      </View>
+
+      
+
+       {!isTablet && (
         <>
           <View style={styles.overviewSection}>
             <Text style={styles.overviewTitle}> Overview</Text>
@@ -187,6 +234,7 @@ const DashboardScreen = ({ navigation }) => {
           </View>
         </>
       )}
+
     </View>
   );
 
@@ -283,30 +331,6 @@ const DashboardScreen = ({ navigation }) => {
         dashboardData?.specificStatusCounts?.['All'] ||
         '0';
 
-      // Check all case variations: CAD, Cad, cad
-      // Also check pendingDesigns which is set by API for CAD role
-      const cadFromPendingDesigns = dashboardData?.pendingDesigns;
-
-      // Priority: pendingDesigns (from API)
-      const cadCount =
-        cadFromPendingDesigns ||
-        '0';
-
-      if (__DEV__) {
-        console.log('🔍 [CAD CARD DEBUG] CAD Count Calculation:', {
-          cadFromPendingDesigns,
-          finalCadCount: cadCount,
-          pendingDesigns: dashboardData?.pendingDesigns,
-        });
-      }
-
-      const approvedCadCount =
-        dashboardData?.specificStatusCounts?.['Approved Cad'] ||
-        dashboardData?.specificStatusCounts?.['ApprovedCad'] ||
-        dashboardData?.categorizedCounts?.['Approved Cad'] ||
-        dashboardData?.categorizedCounts?.['ApprovedCad'] ||
-        '0';
-
       const designApprovalPendingCount =
         dashboardData?.approvalPendingDesigns ||
         dashboardData?.specificStatusCounts?.['Design Approval Pending'] ||
@@ -328,36 +352,6 @@ const DashboardScreen = ({ navigation }) => {
             }
             color={colors.primary}
             onPress={() => navigation.navigate('Enquiries')}
-            style={tabletStatusCardStyle}
-          />
-          <StatusCard
-            title="Cad"
-            value={cadCount}
-            icon={
-              <Icon
-                name="pending"
-                size={statusCardIconSize}
-                color={colors.textWhite}
-              />
-            }
-            color={colors.primaryDark}
-            onPress={() => navigateWithDashboardFilter({ filter: 'cad' })}
-            style={tabletStatusCardStyle}
-          />
-          <StatusCard
-            title="Approved Cad"
-            value={approvedCadCount}
-            icon={
-              <Icon
-                name="check-circle"
-                size={statusCardIconSize}
-                color={colors.textWhite}
-              />
-            }
-            color={colors.primaryLight}
-            onPress={() =>
-              navigateWithDashboardFilter({ filter: 'approved cad' })
-            }
             style={tabletStatusCardStyle}
           />
           <StatusCard
@@ -838,7 +832,7 @@ const DashboardScreen = ({ navigation }) => {
       {(user?.role === 'admin' || user?.role === 'client') && (
         <TouchableOpacity
           style={styles.fab}
-          onPress={() => navigation.navigate('AddEnquiryStep1')}
+          onPress={() => navigation.navigate('AllClientsDashboard', { showAll: true })}
           activeOpacity={0.8}
         >
           <Icon name="add-circle" size={24} color={colors.textWhite} />
@@ -1193,6 +1187,51 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     color: colors.textWhite,
     marginLeft: 10,
+  },
+
+  // All Enquiries Button
+  allEnquiriesSection: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  allEnquiriesButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 14,
+    padding: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  allEnquiriesIconContainer: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  allEnquiriesTextContainer: {
+    flex: 1,
+  },
+  allEnquiriesTitle: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    color: colors.textWhite,
+    letterSpacing: 0.3,
+  },
+  allEnquiriesSubtitle: {
+    fontSize: 13,
+    fontFamily: fonts.regular,
+    color: colors.textWhite,
+    opacity: 0.85,
+    marginTop: 2,
+    letterSpacing: 0.2,
   },
 });
 

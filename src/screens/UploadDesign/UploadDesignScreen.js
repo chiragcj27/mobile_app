@@ -26,12 +26,14 @@ import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { CustomText } from '../../components/common/Text';
-import { useValidateImageUploadMutation, useGetEnquiryByIdQuery } from '../../store/api';
+import { useValidateImageUploadMutation, useGetEnquiriesQuery } from '../../store/api';
 import { useAuth } from '../../context/AuthContext';
 import BrandedAlert from '../../components/common/BrandedAlert';
 
 const UploadDesignScreen = ({ route, navigation }) => {
-  const { designType, enquiry, enquiryId } = route.params || {};
+  const { designType, enquiry, enquiryId, returnRoute, isFinalVersion } = route.params || {};
+
+  console.log('[UploadDesignScreen] params:', { designType, enquiryId, isFinalVersion, returnRoute });
 
   const { user } = useAuth();
 
@@ -63,19 +65,22 @@ const UploadDesignScreen = ({ route, navigation }) => {
   const [designCode, setDesignCode] = useState(initialDesignCode);
   const [selectedVersion, setSelectedVersion] = useState(localNextVersion);
 
-  // Fetch full enquiry to get accurate version count (list API strips Coral/Cad arrays)
+  // Fetch enquiry to get accurate version count
   const resolvedEnquiryId = enquiry?.id || enquiry?._id || enquiryId;
-  const { data: fullEnquiry } = useGetEnquiryByIdQuery(resolvedEnquiryId, {
-    skip: !resolvedEnquiryId,
-  });
+  const { data: searchResult } = useGetEnquiriesQuery(
+    { id: resolvedEnquiryId, limit: 1 },
+    { skip: !resolvedEnquiryId },
+  );
+  const fullEnquiry = searchResult?.data?.[0] || null;
 
   useEffect(() => {
     if (!fullEnquiry) return;
-    const fullData =
-      designType === 'coral'
-        ? fullEnquiry?.Coral || []
-        : fullEnquiry?.Cad || [];
-    const nextVer = fullData.length + 1;
+    const raw = fullEnquiry?._originalData || fullEnquiry;
+    const lastCorObj = raw?.lastCoral;
+    const lastCadObj = raw?.lastCad;
+    const lastVersion = designType === 'coral' ? lastCorObj?.Version : lastCadObj?.Version;
+    const nextVer = lastVersion ? parseInt(lastVersion, 10) + 1 : 1;
+    console.log('[UploadDesign] designType:', designType, 'lastCorObj:', lastCorObj, 'lastCadObj:', lastCadObj, 'nextVer:', nextVer);
     setSelectedVersion(nextVer);
   }, [fullEnquiry, designType]);
 
@@ -433,6 +438,8 @@ const UploadDesignScreen = ({ route, navigation }) => {
                 images: selectedImages,
                 validationResult: result,
                 cost: cost,
+                returnRoute,
+                isFinalVersion,
               });
             },
           },

@@ -1029,7 +1029,7 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
         handleInputChange('remark', CLIENT_REMARK_BY_PROJECT_TYPE.coral);
       }
     } else if (type === 'cad') {
-      handleStatusChange('CAD');
+      handleStatusChange('Cad');
       if (isClient) {
         handleInputChange('remark', CLIENT_REMARK_BY_PROJECT_TYPE.cad);
       }
