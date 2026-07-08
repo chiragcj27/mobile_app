@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,6 +10,7 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  Keyboard,
 } from 'react-native';
 import BrandedAlert from '../../components/common/BrandedAlert';
 import PdfViewer from '../../components/common/PdfViewer';
@@ -115,13 +116,7 @@ export default function PricingCalci({ route }) {
     index: null,
   });
   const [isRecalculating, setIsRecalculating] = useState(false);
-  // is recalculation for single stone?
-  const [isSingleStoneRecalc, setIsSingleStoneRecalc] = useState(false);
-  const [singleRecaculateData, setSingleRecaculateData] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [showCompactTypeModal, setShowCompactTypeModal] = useState(false);
-  const [showCompactQualityModal, setShowCompactQualityModal] = useState(false);
-  const [compactContext, setCompactContext] = useState({ type: null });
   const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '' });
   const [commonCharges, setCommonCharges] = useState({ Loss: '', Labour: '', ExtraCharges: '', GoldDuties: '', SilverAndLabsDuties: '', LossAndLabourDuties: '' });
   const [expandedCommonSections, setExpandedCommonSections] = useState({
@@ -129,6 +124,10 @@ export default function PricingCalci({ route }) {
     charges: false,
   });
   const [stoneRecalcStatus, setStoneRecalcStatus] = useState({});
+
+  const isAutoRecalculatingRef = useRef(false);
+  const dataChangedRef = useRef(false);
+  const prevMissingCountRef = useRef(0);
 
   const handleCopyMsg = (text) => {
     if (text) {
@@ -177,15 +176,105 @@ export default function PricingCalci({ route }) {
     setEditModalVisible(false);
     setEditingContext({ type: null, index: 0 });
     setIsRecalculating(false);
-    setIsSingleStoneRecalc(false);
-    setSingleRecaculateData(null);
     setCopied(false);
-    setShowCompactTypeModal(false);
-    setShowCompactQualityModal(false);
-    setCompactContext({ type: null });
     setPdfHtml(null);
     setShowPdfModal(false);
   }, [clientId, selectedClient]);
+
+  // Auto-recalculate: mark data as changed when multiData or selectedStoneTypes update from user edits
+  useEffect(() => {
+    if (!isAutoRecalculatingRef.current) {
+      dataChangedRef.current = true;
+    }
+  }, [multiData, selectedStoneTypes]);
+
+  // Count missing stones — optionally filter by a specific type
+  const countMissingStones = useCallback((filterType) => {
+    let count = 0;
+    const details = [];
+    const typesToCheck = filterType ? [filterType] : Object.keys(multiData);
+    typesToCheck.forEach(type => {
+      const d = multiData[type];
+      if (!d || !Array.isArray(d.editableStones)) return;
+      d.editableStones.forEach((s, idx) => {
+        if (parseFloat(s.Price) <= 0) {
+          count++;
+          details.push({ type, index: idx, missing: 'Price' });
+        }
+      });
+    });
+    return count;
+  }, [multiData]);
+
+  // Auto-recalculate: when stone types change, trigger recalc after extraction settles
+  useEffect(() => {
+    if (dataChangedRef.current && clientId && Object.keys(multiData).length > 0) {
+      dataChangedRef.current = false;
+      const timer = setTimeout(() => {
+        if (!isAutoRecalculatingRef.current) {
+          isAutoRecalculatingRef.current = true;
+          handleRecalculateAll().finally(() => {
+            isAutoRecalculatingRef.current = false;
+          });
+        }
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedStoneTypes]);
+
+  // Auto-recalculate: listen for keyboard hide, debounce, then recalc
+  // skip if missing stones remain so user can finish editing all first
+  useEffect(() => {
+    let debounceTimer = null;
+    const subscription = Keyboard.addListener('keyboardDidHide', () => {
+      if (dataChangedRef.current && clientId && Object.keys(multiData).length > 0) {
+        const currentMissing = countMissingStones();
+        if (currentMissing > 0) return;
+        dataChangedRef.current = false;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (!isAutoRecalculatingRef.current) {
+            isAutoRecalculatingRef.current = true;
+            handleRecalculateAll().finally(() => {
+              isAutoRecalculatingRef.current = false;
+            });
+          }
+        }, 500);
+      }
+    });
+    return () => {
+      subscription?.remove();
+      clearTimeout(debounceTimer);
+    };
+  }, [clientId, multiData]);
+
+  // Auto-recalculate: when edit modal closes after editing, trigger recalc
+  // only if all missing stones of the EDITED TYPE are now filled
+  useEffect(() => {
+    if (editModalVisible) {
+      const editedType = editingContext.type;
+      const snapCount = editedType ? countMissingStones(editedType) : countMissingStones();
+      prevMissingCountRef.current = snapCount;
+      return;
+    }
+    const editedType = editingContext.type;
+    if (clientId && Object.keys(multiData).length > 0) {
+      const currentMissing = editedType ? countMissingStones(editedType) : countMissingStones();
+      if (currentMissing > 0) {
+        return;
+      }
+      dataChangedRef.current = false;
+      const timer = setTimeout(() => {
+        if (!isAutoRecalculatingRef.current) {
+          isAutoRecalculatingRef.current = true;
+          handleRecalculateAll().finally(() => {
+            isAutoRecalculatingRef.current = false;
+          });
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [editModalVisible]);
 
   const validatePricingData = useCallback(
     type => {
@@ -211,15 +300,7 @@ export default function PricingCalci({ route }) {
       const data = multiData[type];
       if (!data || !Array.isArray(data.editableStones)) return true;
       return data.editableStones.some(
-        stone =>
-          !stone.MmSize?.toString().trim() ||
-          !stone.Color?.toString().trim() ||
-          !stone.Shape?.toString().trim() ||
-          !stone.SieveSize?.toString().trim() ||
-          parseFloat(stone.Weight) <= 0 ||
-          parseInt(stone.Pcs) <= 0 ||
-          parseFloat(stone.CtWeight) <= 0 ||
-          parseFloat(stone.Price) <= 0,
+        stone => parseFloat(stone.Price) <= 0,
       );
     });
   }, [multiData]);
@@ -325,7 +406,6 @@ export default function PricingCalci({ route }) {
 
       return { type, data };
     } catch (error) {
-      console.error('❌ Image extraction failed for type:', type, error);
       return null;
     }
   };
@@ -382,130 +462,130 @@ export default function PricingCalci({ route }) {
     });
   };
 
-  const handleRecalculateSingleStone = async type => {
-    if (!clientId || !type) return;
-    let data = multiData[type];
-    const needsExtraction = !data || !hasStoneTypeBeenRecalculated(type);
+  // const handleRecalculateSingleStone = async type => {
+  //   if (!clientId || !type) return;
+  //   let data = multiData[type];
+  //   const needsExtraction = !data || !hasStoneTypeBeenRecalculated(type);
 
-    setIsSingleStoneRecalc(true);
-    setSingleRecaculateData({ type, phase: needsExtraction ? 'extracting' : 'recalculating' });
+  //   setIsSingleStoneRecalc(true);
+  //   setSingleRecaculateData({ type, phase: needsExtraction ? 'extracting' : 'recalculating' });
 
-    try {
-      if (needsExtraction) {
-        if (!imageFile) {
-          showAlert(
-            'Image Required',
-            'Please use the already uploaded image to extract this stone type.',
-            'warning',
-          );
-          return;
-        }
-        const extractionResult = await extractStoneTypeFromImage(type);
-        if (!extractionResult?.data) {
-          showAlert(
-            'Extraction Failed',
-            `Failed to extract ${type} from the uploaded image.`,
-            'warning',
-          );
-          return;
-        }
-        let extractedData = buildStoneDataFromExtraction(type, extractionResult.data);
-        if (!extractedData) {
-          showAlert(
-            'Extraction Failed',
-            `Failed to extract ${type} from the uploaded image.`,
-            'warning',
-          );
-          return;
-        }
-        if (data?.editableCharges) {
-          extractedData = {
-            ...extractedData,
-            editableCharges: {
-              ...extractedData.editableCharges,
-              ...data.editableCharges,
-            },
-          };
-        }
-        data = extractedData;
-        setMultiData(prev => ({ ...prev, [type]: data }));
-        setSingleRecaculateData({ type, phase: 'recalculating' });
-      }
+  //   try {
+  //     if (needsExtraction) {
+  //       if (!imageFile) {
+  //         showAlert(
+  //           'Image Required',
+  //           'Please use the already uploaded image to extract this stone type.',
+  //           'warning',
+  //         );
+  //         return;
+  //       }
+  //       const extractionResult = await extractStoneTypeFromImage(type);
+  //       if (!extractionResult?.data) {
+  //         showAlert(
+  //           'Extraction Failed',
+  //           `Failed to extract ${type} from the uploaded image.`,
+  //           'warning',
+  //         );
+  //         return;
+  //       }
+  //       let extractedData = buildStoneDataFromExtraction(type, extractionResult.data);
+  //       if (!extractedData) {
+  //         showAlert(
+  //           'Extraction Failed',
+  //           `Failed to extract ${type} from the uploaded image.`,
+  //           'warning',
+  //         );
+  //         return;
+  //       }
+  //       if (data?.editableCharges) {
+  //         extractedData = {
+  //           ...extractedData,
+  //           editableCharges: {
+  //             ...extractedData.editableCharges,
+  //             ...data.editableCharges,
+  //           },
+  //         };
+  //       }
+  //       data = extractedData;
+  //       setMultiData(prev => ({ ...prev, [type]: data }));
+  //       setSingleRecaculateData({ type, phase: 'recalculating' });
+  //     }
 
-      const canCalc = validatePricingData(type);
-      if (!canCalc) return;
+  //     const canCalc = validatePricingData(type);
+  //     if (!canCalc) return;
 
-      const payload = buildRecalculatePayload({
-        clientId,
-        type,
-        data,
-        metalKt,
-        selectedClient,
-        commonMetal,
-        commonCharges,
-      });
+  //     const payload = buildRecalculatePayload({
+  //       clientId,
+  //       type,
+  //       data,
+  //       metalKt,
+  //       selectedClient,
+  //       commonMetal,
+  //       commonCharges,
+  //     });
 
-      const result = await calculatePricing(payload).unwrap();
-      setMultiData(prev => {
-        const next = { ...prev };
-        next[type] = {
-          imageData: prev[type]?.imageData || data.imageData || null,
-          editableStones: result.Stones?.map(s => ({ Type: type, ...s })) || [],
-          editableMetal: {
-            Weight: result.Metal?.Weight ?? prev[type]?.editableMetal?.Weight ?? 0,
-            Quality: result.Metal?.Quality || prev[type]?.editableMetal?.Quality || metalKt,
-            Rate: result.Metal?.Rate ?? prev[type]?.editableMetal?.Rate ?? 0,
-          },
-          editableCharges: {
-            Loss: result.Client?.Loss ?? prev[type]?.editableCharges?.Loss ?? 0,
-            Labour: result.Client?.Labour ?? prev[type]?.editableCharges?.Labour ?? 0,
-            ExtraCharges: result.Client?.ExtraCharges ?? prev[type]?.editableCharges?.ExtraCharges ?? 0,
-            GoldDuties: result.Client?.GoldDuties ?? prev[type]?.editableCharges?.GoldDuties ?? 0,
-            SilverAndLabsDuties: result.Client?.SilverAndLabsDuties ?? prev[type]?.editableCharges?.SilverAndLabsDuties ?? 0,
-            LossAndLabourDuties: result.Client?.LossAndLabourDuties ?? prev[type]?.editableCharges?.LossAndLabourDuties ?? 0,
-          },
-          dutyRates: {
-            UndercutPrice:
-              prev[type]?.dutyRates?.UndercutPrice !== undefined
-                ? prev[type].dutyRates.UndercutPrice
-                : result.Client?.UndercutPrice,
-            UndercutPriceTouched: prev[type]?.dutyRates?.UndercutPriceTouched ?? false,
-            NaturalDuties:
-              prev[type]?.dutyRates?.NaturalDuties !== undefined
-                ? prev[type].dutyRates.NaturalDuties
-                : result.Client?.NaturalDuties ?? 0,
-            LabDuties:
-              prev[type]?.dutyRates?.LabDuties !== undefined
-                ? prev[type].dutyRates.LabDuties
-                : result.Client?.LabDuties ?? 0,
-          },
-          pricingResult: result,
-        };
-        return next;
-      });
-      setStoneRecalcStatus(prev => ({ ...prev, [type]: true }));
-      setExpandedStones(prev => ({ ...prev, [type]: true }));
-      setCommonMetal(prev => ({
-        Weight: result.Metal?.Weight?.toString() || prev.Weight,
-        Rate: result.Metal?.Rate?.toString() || prev.Rate,
-      }));
-      setCommonCharges(prev => ({
-        Loss: result.Client?.Loss?.toString() || prev.Loss,
-        Labour: result.Client?.Labour?.toString() || prev.Labour,
-        ExtraCharges: result.Client?.ExtraCharges?.toString() || prev.ExtraCharges,
-        GoldDuties: result.Client?.GoldDuties?.toString() || prev.GoldDuties,
-        SilverAndLabsDuties: result.Client?.SilverAndLabsDuties?.toString() || prev.SilverAndLabsDuties,
-        LossAndLabourDuties: result.Client?.LossAndLabourDuties?.toString() || prev.LossAndLabourDuties,
-      }));
-      showAlert('Recalculated', `${type} recalculated successfully`, 'success');
-    } catch (error) {
-      console.error(`❌ Single stone recalculation failed for ${type}:`, error);
-      showAlert('Recalculation Failed', `Failed to recalculate ${type}.`, 'error');
-    } finally {
-      setIsSingleStoneRecalc(false);
-      setSingleRecaculateData(null);
-    }
-  };
+  //     const result = await calculatePricing(payload).unwrap();
+  //     setMultiData(prev => {
+  //       const next = { ...prev };
+  //       next[type] = {
+  //         imageData: prev[type]?.imageData || data.imageData || null,
+  //         editableStones: result.Stones?.map(s => ({ Type: type, ...s })) || [],
+  //         editableMetal: {
+  //           Weight: result.Metal?.Weight ?? prev[type]?.editableMetal?.Weight ?? 0,
+  //           Quality: result.Metal?.Quality || prev[type]?.editableMetal?.Quality || metalKt,
+  //           Rate: result.Metal?.Rate ?? prev[type]?.editableMetal?.Rate ?? 0,
+  //         },
+  //         editableCharges: {
+  //           Loss: result.Client?.Loss ?? prev[type]?.editableCharges?.Loss ?? 0,
+  //           Labour: result.Client?.Labour ?? prev[type]?.editableCharges?.Labour ?? 0,
+  //           ExtraCharges: result.Client?.ExtraCharges ?? prev[type]?.editableCharges?.ExtraCharges ?? 0,
+  //           GoldDuties: result.Client?.GoldDuties ?? prev[type]?.editableCharges?.GoldDuties ?? 0,
+  //           SilverAndLabsDuties: result.Client?.SilverAndLabsDuties ?? prev[type]?.editableCharges?.SilverAndLabsDuties ?? 0,
+  //           LossAndLabourDuties: result.Client?.LossAndLabourDuties ?? prev[type]?.editableCharges?.LossAndLabourDuties ?? 0,
+  //         },
+  //         dutyRates: {
+  //           UndercutPrice:
+  //             prev[type]?.dutyRates?.UndercutPrice !== undefined
+  //               ? prev[type].dutyRates.UndercutPrice
+  //               : result.Client?.UndercutPrice,
+  //           UndercutPriceTouched: prev[type]?.dutyRates?.UndercutPriceTouched ?? false,
+  //           NaturalDuties:
+  //             prev[type]?.dutyRates?.NaturalDuties !== undefined
+  //               ? prev[type].dutyRates.NaturalDuties
+  //               : result.Client?.NaturalDuties ?? 0,
+  //           LabDuties:
+  //             prev[type]?.dutyRates?.LabDuties !== undefined
+  //               ? prev[type].dutyRates.LabDuties
+  //               : result.Client?.LabDuties ?? 0,
+  //         },
+  //         pricingResult: result,
+  //       };
+  //       return next;
+  //     });
+  //     setStoneRecalcStatus(prev => ({ ...prev, [type]: true }));
+  //     setExpandedStones(prev => ({ ...prev, [type]: true }));
+  //     setCommonMetal(prev => ({
+  //       Weight: result.Metal?.Weight?.toString() || prev.Weight,
+  //       Rate: result.Metal?.Rate?.toString() || prev.Rate,
+  //     }));
+  //     setCommonCharges(prev => ({
+  //       Loss: result.Client?.Loss?.toString() || prev.Loss,
+  //       Labour: result.Client?.Labour?.toString() || prev.Labour,
+  //       ExtraCharges: result.Client?.ExtraCharges?.toString() || prev.ExtraCharges,
+  //       GoldDuties: result.Client?.GoldDuties?.toString() || prev.GoldDuties,
+  //       SilverAndLabsDuties: result.Client?.SilverAndLabsDuties?.toString() || prev.SilverAndLabsDuties,
+  //       LossAndLabourDuties: result.Client?.LossAndLabourDuties?.toString() || prev.LossAndLabourDuties,
+  //     }));
+  //     showAlert('Recalculated', `${type} recalculated successfully`, 'success');
+  //   } catch (error) {
+  //     console.error(`❌ Single stone recalculation failed for ${type}:`, error);
+  //     showAlert('Recalculation Failed', `Failed to recalculate ${type}.`, 'error');
+  //   } finally {
+  //     setIsSingleStoneRecalc(false);
+  //     setSingleRecaculateData(null);
+  //   }
+  // };
 
   const handleRecalculateAll = async () => {
     const selectedTypes = selectedStoneTypes.length > 0 ? selectedStoneTypes : Object.keys(multiData);
@@ -816,20 +896,18 @@ export default function PricingCalci({ route }) {
               });
             }
           }
-        } catch (apiError) {
-          console.error('❌ API Error:', apiError);
-          showAlert(
-            'Extraction Error',
-            'Failed to extract pricing data. Check configuration.',
-            'error',
-          );
-          setImageFile(null);
+      } catch (apiError) {
+        showAlert(
+          'Extraction Error',
+          'Failed to extract pricing data. Check configuration.',
+          'error',
+        );
+        setImageFile(null);
         } finally {
           setIsExtracting(false);
         }
       }
     } catch (error) {
-      console.error('❌ Image Picker Error:', error);
       showAlert('Error', 'Failed to pick image.', 'error');
       setIsExtracting(false);
     }
@@ -1307,8 +1385,7 @@ export default function PricingCalci({ route }) {
         </Card>
 
         {Object.keys(multiData).length > 0 && (
-          <Card style={[styles.card, { marginTop: 16 }]}>
-            <Text style={styles.subSectionTitle}>Charges and Metal Data</Text>
+          <Card style={[styles.card, { marginTop: 16, borderBottomWidth: 0 }]}>
 
             {(!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && (
               <View style={styles.validationWarning}>
@@ -1324,7 +1401,7 @@ export default function PricingCalci({ route }) {
               style={styles.commonSectionHeader}
               onPress={() => toggleCommonSection('metal')}
             >
-              <Text style={styles.commonSectionTitle}>Metal</Text>
+              <Text style={styles.commonSectionTitle}>Metal Weight & Rate</Text>
               <Icon
                 name={expandedCommonSections.metal ? 'expand-less' : 'expand-more'}
                 size={20}
@@ -1340,6 +1417,7 @@ export default function PricingCalci({ route }) {
                     keyboardType="decimal-pad"
                     value={String(commonMetal.Weight || '')}
                     onChangeText={v => updateCommonMetal('Weight', v)}
+                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                   />
                 </View>
                 <View style={styles.chargeField}>
@@ -1359,6 +1437,7 @@ export default function PricingCalci({ route }) {
                     keyboardType="decimal-pad"
                     value={String(commonMetal.Rate || '')}
                     onChangeText={v => updateCommonMetal('Rate', v)}
+                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                   />
                 </View>
               </View>
@@ -1369,7 +1448,8 @@ export default function PricingCalci({ route }) {
               style={styles.commonSectionHeader}
               onPress={() => toggleCommonSection('charges')}
             >
-              <Text style={styles.commonSectionTitle}>Client Charges</Text>
+              <Text style={styles.commonSectionTitle}>Client Metal Charges & Duties
+              </Text>
               <Icon
                 name={expandedCommonSections.charges ? 'expand-less' : 'expand-more'}
                 size={20}
@@ -1385,6 +1465,7 @@ export default function PricingCalci({ route }) {
                     keyboardType="decimal-pad"
                     value={String(commonCharges.Loss || '')}
                     onChangeText={v => updateCommonCharges('Loss', v)}
+                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                   />
                 </View>
                 <View style={styles.chargeField}>
@@ -1394,6 +1475,7 @@ export default function PricingCalci({ route }) {
                     keyboardType="decimal-pad"
                     value={String(commonCharges.Labour || '')}
                     onChangeText={v => updateCommonCharges('Labour', v)}
+                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                   />
                 </View>
                 <View style={styles.chargeField}>
@@ -1403,6 +1485,7 @@ export default function PricingCalci({ route }) {
                     keyboardType="decimal-pad"
                     value={String(commonCharges.ExtraCharges || '')}
                     onChangeText={v => updateCommonCharges('ExtraCharges', v)}
+                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                   />
                 </View>
               </View>
@@ -1417,6 +1500,7 @@ export default function PricingCalci({ route }) {
                       keyboardType="decimal-pad"
                       value={String(commonCharges[fieldKey] ?? '')}
                       onChangeText={v => updateCommonCharges(fieldKey, v)}
+                      onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                     />
                   </View>
                 ))}
@@ -1436,15 +1520,7 @@ export default function PricingCalci({ route }) {
 
           // Identify stones with missing data exactly as your original code did
           const missingStones = (Array.isArray(data.editableStones) ? data.editableStones : []).filter(
-            stone =>
-              !stone.MmSize?.toString().trim() ||
-              !stone.Color?.toString().trim() ||
-              !stone.Shape?.toString().trim() ||
-              !stone.SieveSize?.toString().trim() ||
-              parseFloat(stone.Weight) <= 0 ||
-              parseInt(stone.Pcs) <= 0 ||
-              parseFloat(stone.CtWeight) <= 0 ||
-              parseFloat(stone.Price) <= 0,
+            stone => parseFloat(stone.Price) <= 0,
           );
 
           return (
@@ -1495,341 +1571,275 @@ export default function PricingCalci({ route }) {
 
               {isExpanded && (
                 <View style={styles.accordionBody}>
-                  {/* Compact Selectors Row */}
-                  <View style={styles.compactSelectorsRow}>
-                    <View style={styles.compactSelectorField}>
-                      <Text style={styles.compactSelectorLabel}>Type</Text>
-                      <TouchableOpacity
-                        style={styles.compactSelector}
-                        onPress={() => {
-                          setCompactContext({ type });
-                          setShowCompactTypeModal(true);
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.compactSelectorText} numberOfLines={1}>
-                          {(Array.isArray(data.editableStones) && data.editableStones[0]?.Type) || type}
-                        </Text>
-                        <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
-                      </TouchableOpacity>
-                    </View>
-                    <View style={styles.compactSelectorField}>
-                      <Text style={styles.compactSelectorLabel}>Quality</Text>
-                      <TouchableOpacity
-                        style={styles.compactSelector}
-                        onPress={() => {
-                          setCompactContext({ type });
-                          setShowCompactQualityModal(true);
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.compactSelectorText} numberOfLines={1}>
-                          {data.editableMetal?.Quality || 'N/A'}
-                        </Text>
-                        <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  {/* Restored EXACT Table widths and rendering missing stones ONLY */}
-                  <Text style={styles.subSectionTitle}>
-                    Missing Stones Data
-                  </Text>
-                  <View style={styles.compactTableWrapper}>
-                    <View style={styles.compactTableHeader}>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 44 }]}
-                      >
-                        Type
+                  {missingStones.length > 0 && (
+                    <>
+                      <Text style={styles.subSectionTitle}>
+                        Missing Stones Data
                       </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 42 }]}
-                      >
-                        MM
-                      </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 30 }]}
-                      >
-                        Col
-                      </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 30 }]}
-                      >
-                        Shp
-                      </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 36 }]}
-                      >
-                        Sieve
-                      </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 36 }]}
-                      >
-                        Wt
-                      </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 30 }]}
-                      >
-                        Pcs
-                      </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 36 }]}
-                      >
-                        CtWt
-                      </Text>
-                      <Text
-                        style={[styles.compactTableHeaderText, { width: 42 }]}
-                      >
-                        $/Ct
-                      </Text>
-                    </View>
-
-                    <ScrollView
-                      style={styles.compactTableBody}
-                      nestedScrollEnabled
-                    >
-                      {missingStones.map((stone, i) => {
-                        const originalIndex =
-                          Array.isArray(data.editableStones) ? data.editableStones.indexOf(stone) : -1;
-                        return (
-                          <TouchableOpacity
-                            key={originalIndex}
-                            style={styles.compactTableRow}
-                            onPress={() => {
-                              setEditingContext({ type, index: originalIndex });
-                              setEditModalVisible(true);
-                            }}
-                          >
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 44,
-                                  fontFamily: !stone.Type
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.Type || type}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 42,
-                                  color: !stone.MmSize
-                                    ? colors.error
-                                    : colors.textPrimary,
-                                  fontFamily: !stone.MmSize
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.MmSize || '-'}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 30,
-                                  color: !stone.Color
-                                    ? colors.error
-                                    : colors.textPrimary,
-                                  fontFamily: !stone.Color
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.Color || '-'}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 30,
-                                  color: !stone.Shape
-                                    ? colors.error
-                                    : colors.textPrimary,
-                                  fontFamily: !stone.Shape
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.Shape || '-'}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 36,
-                                  color: !stone.SieveSize
-                                    ? colors.error
-                                    : colors.textPrimary,
-                                  fontFamily: !stone.SieveSize
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.SieveSize || '-'}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 36,
-                                  color: !stone.Weight
-                                    ? colors.error
-                                    : colors.textPrimary,
-                                  fontFamily: !stone.Weight
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.Weight ?? 0}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 30,
-                                  color: !stone.Pcs
-                                    ? colors.error
-                                    : colors.textPrimary,
-                                  fontFamily: !stone.Pcs
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.Pcs ?? 0}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 36,
-                                  color: !stone.CtWeight
-                                    ? colors.error
-                                    : colors.textPrimary,
-                                  fontFamily: !stone.CtWeight
-                                    ? fonts.bold
-                                    : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.CtWeight ?? 0}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.compactTableCell,
-                                {
-                                  width: 42,
-                                  color:
-                                    !stone.Price || parseFloat(stone.Price) <= 0
-                                      ? colors.error
-                                      : colors.textPrimary,
-                                  fontFamily:
-                                    !stone.Price || parseFloat(stone.Price) <= 0
-                                      ? fonts.bold
-                                      : fonts.regular,
-                                },
-                              ]}
-                            >
-                              {stone.Price ?? 0}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                      {missingStones.length === 0 && (
-                        <View style={{ padding: 12, alignItems: 'center' }}>
+                      <View style={styles.compactTableWrapper}>
+                        <View style={styles.compactTableHeader}>
                           <Text
-                            style={{
-                              color: colors.textSecondary,
-                              fontSize: fonts.xs,
-                            }}
+                            style={[styles.compactTableHeaderText, { width: 44 }]}
                           >
-                            All stones data is complete
+                            Type
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 42 }]}
+                          >
+                            MM
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 30 }]}
+                          >
+                            Col
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 30 }]}
+                          >
+                            Shp
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 36 }]}
+                          >
+                            Sieve
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 36 }]}
+                          >
+                            Wt
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 30 }]}
+                          >
+                            Pcs
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 36 }]}
+                          >
+                            CtWt
+                          </Text>
+                          <Text
+                            style={[styles.compactTableHeaderText, { width: 42 }]}
+                          >
+                            $/Ct
                           </Text>
                         </View>
-                      )}
-                    </ScrollView>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.addStoneButton}
-                    onPress={() => addStone(type)}
-                  >
-                    <Icon name="add" size={16} color={colors.textWhite} />
-                    <Text style={styles.addStoneButtonText}>Add Stone</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.recalcButton,
-                      (isRecalculating || (isSingleStoneRecalc && singleRecaculateData?.type !== type)) && styles.recalcButtonDisabled,
-                      { marginTop: 10 },
-                    ]}
-                    disabled={isRecalculating || (isSingleStoneRecalc && singleRecaculateData?.type !== type)}
-                    onPress={() => handleRecalculateSingleStone(type)}
-                  >
-                    {singleRecaculateData?.type === type && isSingleStoneRecalc ? (
-                      <ActivityIndicator size="small" color={colors.textWhite} />
-                    ) : (
-                      <Icon name="refresh" size={20} color={colors.textWhite} />
-                    )}
-                    <Text style={styles.calculateButtonText}>
-                      {singleRecaculateData?.type === type && isSingleStoneRecalc
-                        ? singleRecaculateData.phase === 'extracting'
-                          ? 'Extracting...'
-                          : 'Recalculating...'
-                        : `Recalculate ${type}`}
-                    </Text>
-                  </TouchableOpacity>
 
-                  {/* Stone Charges (collapsible) */}
+                        <ScrollView
+                          style={styles.compactTableBody}
+                          nestedScrollEnabled
+                        >
+                          {missingStones.map((stone, i) => {
+                            const originalIndex =
+                              Array.isArray(data.editableStones) ? data.editableStones.indexOf(stone) : -1;
+                            return (
+                              <TouchableOpacity
+                                key={originalIndex}
+                                style={styles.compactTableRow}
+                                onPress={() => {
+                                  setEditingContext({ type, index: originalIndex });
+                                  setEditModalVisible(true);
+                                }}
+                              >
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 44,
+                                      fontFamily: !stone.Type
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.Type || type}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 42,
+                                      color: !stone.MmSize
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                      fontFamily: !stone.MmSize
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.MmSize || '-'}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 30,
+                                      color: !stone.Color
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                      fontFamily: !stone.Color
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.Color || '-'}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 30,
+                                      color: !stone.Shape
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                      fontFamily: !stone.Shape
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.Shape || '-'}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 36,
+                                      color: !stone.SieveSize
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                      fontFamily: !stone.SieveSize
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.SieveSize || '-'}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 36,
+                                      color: !stone.Weight
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                      fontFamily: !stone.Weight
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.Weight ?? 0}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 30,
+                                      color: !stone.Pcs
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                      fontFamily: !stone.Pcs
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.Pcs ?? 0}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 36,
+                                      color: !stone.CtWeight
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                      fontFamily: !stone.CtWeight
+                                        ? fonts.bold
+                                        : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.CtWeight ?? 0}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.compactTableCell,
+                                    {
+                                      width: 42,
+                                      color:
+                                        !stone.Price || parseFloat(stone.Price) <= 0
+                                          ? colors.error
+                                          : colors.textPrimary,
+                                      fontFamily:
+                                        !stone.Price || parseFloat(stone.Price) <= 0
+                                          ? fonts.bold
+                                          : fonts.regular,
+                                    },
+                                  ]}
+                                >
+                                  {stone.Price ?? 0}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                    </>
+                  )}
+
+                  {/* Stone Charges & Duties (collapsible) */}
                   {pricingResult && getStoneDependentDuties(type, data.editableMetal?.Quality || metalKt).length > 0 && (
                     <>
                       <TouchableOpacity
-                        style={styles.commonSectionHeader}
+                        style={styles.stoneChargesHeader}
                         onPress={() => {
                           const key = `stoneCharges_${type}`;
                           setExpandedStones(prev => ({ ...prev, [key]: !prev[key] }));
                         }}
+                        activeOpacity={0.7}
                       >
-                        <Text style={styles.commonSectionTitle}>Stone Charges</Text>
+                        <View style={styles.stoneChargesTitleRow}>
+                          <Icon name="diamond" size={16} color={colors.primary} />
+                          <Text style={styles.stoneChargesTitle}>Stone Charges & Duties</Text>
+                        </View>
                         <Icon
                           name={expandedStones[`stoneCharges_${type}`] ? 'expand-less' : 'expand-more'}
                           size={20}
-                          color={colors.textSecondary}
+                          color={colors.primary}
                         />
                       </TouchableOpacity>
                       {expandedStones[`stoneCharges_${type}`] && (
-                        <View style={styles.chargesRow}>
-                          {getStoneDependentDuties(type, data.editableMetal?.Quality || metalKt).map(fieldKey => (
-                            <View key={fieldKey} style={styles.chargeField}>
-                              <Text style={styles.fieldLabel}>{DUTY_LABELS[fieldKey]}</Text>
-                              <TextInput
-                                style={styles.fieldInput}
-                                keyboardType="decimal-pad"
-                                value={String(
-                                  data.dutyRates?.[fieldKey]
-                                  ?? data.editableCharges?.[fieldKey]
-                                  ?? pricingResult.Client?.[fieldKey]
-                                  ?? ''
-                                )}
-                                onChangeText={v =>
-                                  updateMultiData(type, 'dutyRates', {
-                                    ...data.dutyRates,
-                                    [fieldKey]: v,
-                                    ...(fieldKey === 'UndercutPrice' ? { UndercutPriceTouched: true } : {}),
-                                  })
-                                }
-                              />
-                            </View>
-                          ))}
+                        <View style={styles.stoneChargesExpanded}>
+                          <View style={styles.stoneChargesRow}>
+                            {getStoneDependentDuties(type, data.editableMetal?.Quality || metalKt).map(fieldKey => (
+                              <View key={fieldKey} style={styles.stoneChargeField}>
+                                <Text style={styles.stoneChargeLabel}>{DUTY_LABELS[fieldKey]}</Text>
+                                <TextInput
+                                  style={styles.stoneChargeInput}
+                                  keyboardType="decimal-pad"
+                                  value={String(
+                                    data.dutyRates?.[fieldKey]
+                                    ?? data.editableCharges?.[fieldKey]
+                                    ?? pricingResult.Client?.[fieldKey]
+                                    ?? ''
+                                  )}
+                                  onChangeText={v => {
+                                    updateMultiData(type, 'dutyRates', {
+                                      ...data.dutyRates,
+                                      [fieldKey]: v,
+                                      ...(fieldKey === 'UndercutPrice' ? { UndercutPriceTouched: true } : {}),
+                                    });
+                                  }}
+                                  onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
+                                />
+                              </View>
+                            ))}
+                          </View>
                         </View>
                       )}
                     </>
@@ -1975,14 +1985,6 @@ export default function PricingCalci({ route }) {
                       )}
                     </View>
                   ) : null}
-
-                  {singleRecaculateData?.type === type && isSingleStoneRecalc && (
-                    <View style={styles.singleRecalcNotice}>
-                      <Text style={styles.singleRecalcNoticeText}>
-                        Single stone recalculation in progress
-                      </Text>
-                    </View>
-                  )}
                 </View>
               )}
             </Card>
@@ -2334,142 +2336,6 @@ export default function PricingCalci({ route }) {
         </View>
       </Modal>
 
-      {/* COMPACT TYPE SELECTOR MODAL */}
-      <Modal
-        visible={showCompactTypeModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowCompactTypeModal(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowCompactTypeModal(false)}
-        >
-          <View style={styles.modalContent}>
-            <Text style={styles.multiSelectHeader}>Select Stone Type</Text>
-            <ScrollView showsVerticalScrollIndicator={true}>
-              {stoneOptions.map(st => {
-                const opt = { label: st.label, value: st.value };
-                const isSelected = compactContext.type && multiData[compactContext.type]?.editableStones?.every(s => s.Type === opt.value);
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[
-                      styles.dropdownOption,
-                      isSelected && styles.dropdownOptionSelected,
-                    ]}
-                    onPress={() => {
-                      if (compactContext.type && compactContext.type !== opt.value) {
-                        const oldKey = compactContext.type;
-                        const newKey = opt.value;
-                        setMultiData(prev => {
-                          const { [oldKey]: data, ...rest } = prev;
-                          if (!data) return prev;
-                          return {
-                            ...rest,
-                            [newKey]: {
-                              ...data,
-                              editableStones: data.editableStones.map(s => ({
-                                ...s,
-                                Type: newKey,
-                              })),
-                            },
-                          };
-                        });
-                        setExpandedStones(prev => {
-                          const { [oldKey]: val, ...rest } = prev;
-                          return { ...rest, [newKey]: val ?? false };
-                        });
-                      }
-                      setShowCompactTypeModal(false);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownOptionText,
-                        isSelected && styles.dropdownOptionTextSelected,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                    {isSelected && (
-                      <Icon name="check" size={20} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <TouchableOpacity
-              style={styles.doneButton}
-              onPress={() => setShowCompactTypeModal(false)}
-            >
-              <Text style={styles.doneButtonText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* COMPACT QUALITY SELECTOR MODAL */}
-      <Modal
-        visible={showCompactQualityModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowCompactQualityModal(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowCompactQualityModal(false)}
-        >
-          <View style={styles.modalContent}>
-            <Text style={styles.multiSelectHeader}>Select Metal Quality</Text>
-            <ScrollView showsVerticalScrollIndicator={true}>
-              {metalQualityOptions.map(opt => {
-                const currentQuality = compactContext.type
-                  ? multiData[compactContext.type]?.editableMetal?.Quality
-                  : null;
-                const isSelected = currentQuality === opt.value;
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[
-                      styles.dropdownOption,
-                      isSelected && styles.dropdownOptionSelected,
-                    ]}
-                    onPress={() => {
-                      if (compactContext.type) {
-                        const prev = multiData[compactContext.type]?.editableMetal || {};
-                        updateMultiData(compactContext.type, 'editableMetal', { ...prev, Quality: opt.value });
-                      }
-                      setShowCompactQualityModal(false);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownOptionText,
-                        isSelected && styles.dropdownOptionTextSelected,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                    {isSelected && (
-                      <Icon name="check" size={20} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <TouchableOpacity
-              style={styles.doneButton}
-              onPress={() => setShowCompactQualityModal(false)}
-            >
-              <Text style={styles.doneButtonText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
       <BrandedAlert {...alertConfig} onClose={hideAlert} />
     </View>
   );
@@ -2638,6 +2504,65 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.textPrimary,
   },
+  stoneChargesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: colors.primaryExtraLight,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent,
+    borderRadius: 6,
+    marginTop: 10,
+  },
+  stoneChargesTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  stoneChargesTitle: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+  },
+  stoneChargesExpanded: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 6,
+    padding: 10,
+    marginTop: -4,
+    marginBottom: 8,
+  },
+  stoneChargesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  stoneChargeField: {
+    width: '46%',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 6,
+    padding: 8,
+  },
+  stoneChargeLabel: {
+    fontSize: fonts.xs,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  stoneChargeInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    backgroundColor: colors.backgroundSecondary,
+  },
   subSectionTitle: {
     fontSize: fonts.md,
     fontFamily: fonts.bold,
@@ -2751,18 +2676,6 @@ const styles = StyleSheet.create({
     fontSize: fonts.md,
     fontFamily: fonts.bold,
     color: colors.primary,
-  },
-
-  singleRecalcNotice: {
-    backgroundColor: colors.primary,
-    padding: 8,
-    borderRadius: 6,
-    marginBottom: 10,
-  },
-  singleRecalcNoticeText: {
-    color: colors.textWhite,
-    fontFamily: fonts.medium,
-    fontSize: fonts.xs,
   },
 
   dutiesContainer: {
@@ -3072,36 +2985,5 @@ const styles = StyleSheet.create({
     fontSize: fonts.sm || 13,
     color: colors.textPrimary,
     backgroundColor: colors.background,
-  },
-  compactSelectorsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
-  },
-  compactSelectorField: {
-    flex: 1,
-  },
-  compactSelectorLabel: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  compactSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: colors.background,
-  },
-  compactSelectorText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.bold,
-    color: colors.primary,
-    flex: 1,
   },
 });

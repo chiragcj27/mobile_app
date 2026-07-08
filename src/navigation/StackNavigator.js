@@ -27,7 +27,7 @@ import PricingScreen from '../screens/Pricing/PricingScreen';
 import UploadDesignScreen from '../screens/UploadDesign/UploadDesignScreen';
 import UploadExcelScreen from '../screens/UploadDesign/uploadExcel';
 import PdfViewerTestScreen from '../screens/Test/PdfViewerTestScreen';
-import PricingCalci from '../screens/Pricing/PricingCalci';
+import PricingCalci from '../screens/Pricing/PricingCalculator';
 import ClientHandlerDashboardScreen from '../screens/ClientHandler/ClientHandlerDashboardScreen';
 import Reports from '../screens/Reports/reports'
 import JwelleryEstimate from '../screens/Pricing/JwelleryEstimate';

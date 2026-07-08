@@ -30,7 +30,7 @@ function resolveDutyRates(data, selectedClient, commonCharges = {}) {
     undercutPrice = parseFloat(src.UndercutPrice) || 0;
   }
 
-  return {
+  const result = {
     UndercutPrice:        undercutPrice,
     NaturalDuties:        parseFloat(src.NaturalDuties) || 0,
     LabDuties:            parseFloat(src.LabDuties) || 0,
@@ -38,6 +38,8 @@ function resolveDutyRates(data, selectedClient, commonCharges = {}) {
     SilverAndLabsDuties:  parseFloat(src.SilverAndLabsDuties) || 0,
     LossAndLabourDuties:  parseFloat(src.LossAndLabourDuties) || 0,
   };
+
+  return result;
 }
 
 export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selectedClient, commonMetal = {}, commonCharges = {} }) => {
@@ -59,7 +61,7 @@ export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selecte
   const previousCharges = resolveCharges(data, commonCharges);
   const previousDutyRates = resolveDutyRates(data, selectedClient, commonCharges);
 
-  return {
+  const payload = {
     details: {
       Metal: {
         Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
@@ -81,4 +83,6 @@ export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selecte
     clientId,
     isRecalculate: true,
   };
+
+  return payload;
 };
