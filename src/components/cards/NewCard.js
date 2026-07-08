@@ -757,7 +757,7 @@ export default function NewEnquiryCard({
               <Text style={styles.ChatButtonText}>View Quotation</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
+              style={[styles.QuickActionButton, { backgroundColor: '#F59E0B' }]}
               disabled={isActionLoading}
               onPress={() => {
                 const targetType = (fullSrc?.CurrentStatus || item?.CurrentStatus) === STATUS.CORAL ? 'coral' : 'cad';
@@ -791,7 +791,7 @@ export default function NewEnquiryCard({
             >
               {isActionLoading
                 ? <ActivityIndicator size="small" color="#fff" />
-                : <><Icon name="check-circle" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Move to Approval</Text></>}
+                : <><Icon name="check-circle" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Send for Approval</Text></>}
             </TouchableOpacity>
           </View>
         ) : shouldShowApprovalButtons ? (

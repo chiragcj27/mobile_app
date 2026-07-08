@@ -174,7 +174,7 @@ const DashboardScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.allEnquiriesSection}>
+      {/* <View style={styles.allEnquiriesSection}>
         <TouchableOpacity
           style={styles.allEnquiriesButton}
           onPress={() => navigation.navigate('ClientHandlerEnquiries', { assignedTo: { role: 'order_placement' } })}
@@ -191,7 +191,7 @@ const DashboardScreen = ({ navigation }) => {
           </View>
           <Icon name="chevron-right" size={28} color={colors.textWhite} />
         </TouchableOpacity>
-      </View>
+      </View> */}
 
       
 

@@ -20,7 +20,7 @@ import React, {
 } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView,
-  TextInput, ActivityIndicator, Platform,
+  TextInput, ActivityIndicator, Platform, Animated, Keyboard,
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import Share from 'react-native-share';
@@ -28,7 +28,7 @@ import RNFS from 'react-native-fs';
 import Icon from '../common/Icon';
 import PdfViewer from '../common/PdfViewer';
 import BrandedAlert from '../common/BrandedAlert';
-import DiamondEditModal from '../../screens/Admin/components/DiamondEditModal';
+// import DiamondEditModal from '../../screens/Admin/components/DiamondEditModal';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import {
@@ -38,6 +38,11 @@ import {
   useGetEnquiryByIdQuery,
 } from '../../store/api';
 import CompareRefrences from './CompareRefrences';
+import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
+
+const hapticOptions = { enableVibrateFallback: true, ignoreAndroidSystemSettings: true };
+const triggerHaptic = (type = 'impactMedium') =>
+  ReactNativeHapticFeedback.trigger(type, hapticOptions);
 
 const METAL_QUALITY_OPTIONS = ['10K', '14K', '18K', '22K', 'Silver 925', 'Platinum'];
 
@@ -185,9 +190,13 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
   const [diamonds,            setDiamonds]            = useState([]);
   const [missingIndices,      setMissingIndices]      = useState(new Set());
-  const [editModalVisible,    setEditModalVisible]    = useState(false);
-  const [selectedIndex,       setSelectedIndex]       = useState(null);
-  const [selectedDiamondData, setSelectedDiamondData] = useState({});
+  // const [editModalVisible,    setEditModalVisible]    = useState(false);
+  // const [selectedIndex,       setSelectedIndex]       = useState(null);
+  // const [selectedDiamondData, setSelectedDiamondData] = useState({});
+  const [inlineEditIndex, setInlineEditIndex] = useState(null);
+  const [inlineEditPrice, setInlineEditPrice] = useState('');
+  const [editedPrices, setEditedPrices] = useState({});
+  const inlinePriceRef = useRef(null);
 
   const [pricingResult, setPricingResult] = useState(null);
   const [pdfHtml,       setPdfHtml]       = useState(null);
@@ -256,7 +265,6 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             Price:     num(st.Price),
             Color:     st.Color     || '',
             Weight:    num(st.Weight),
-            Pcs:       num(st.Pcs),
             Markup:    num(st.Markup),
           }))
         : []);
@@ -323,33 +331,57 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     ]);
   }, [showAlert]);
 
-  const openEditModal = useCallback((index, diamond) => {
-    setSelectedIndex(index);
-    setSelectedDiamondData({
-      Type:      diamond.Type      || '',
-      Shape:     diamond.Shape     || '',
-      Carat:     String(diamond.Carat    ?? ''),
-      MmSize:    String(diamond.MmSize   ?? ''),
-      SieveSize: diamond.SieveSize || '',
-      Price:     String(diamond.Price    ?? ''),
+  const startInlineEdit = useCallback((index, diamond) => {
+    setInlineEditIndex(index);
+    const local = editedPrices[index];
+    setInlineEditPrice(local !== undefined ? local : (num(diamond.Price) > 0 ? String(diamond.Price) : ''));
+  }, [editedPrices]);
+
+  useEffect(() => {
+    if (inlineEditIndex !== null && inlinePriceRef.current) {
+      Keyboard.dismiss();
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          inlinePriceRef.current?.focus();
+        }, 150);
+      });
+    }
+  }, [inlineEditIndex]);
+
+  const saveInlineEdit = useCallback(() => {
+    if (inlineEditIndex === null) return;
+    setEditedPrices(prev => {
+      const next = { ...prev, [inlineEditIndex]: inlineEditPrice };
+      const stillMissing = [...missingIndices].filter(idx => {
+        const ep = next[idx] !== undefined ? num(next[idx]) : num(diamonds[idx]?.Price);
+        return ep <= 0;
+      });
+      if (stillMissing.length > 0) {
+        const nextIdx = stillMissing[0];
+        setTimeout(() => {
+          setInlineEditIndex(nextIdx);
+          const nd = diamonds[nextIdx];
+          setInlineEditPrice(next[nextIdx] !== undefined ? next[nextIdx] : (num(nd?.Price) > 0 ? String(nd.Price) : ''));
+        }, 100);
+      } else {
+        setInlineEditIndex(null);
+        setInlineEditPrice('');
+      }
+      return next;
     });
-    setEditModalVisible(true);
+  }, [inlineEditIndex, inlineEditPrice, missingIndices, diamonds]);
+
+  const cancelInlineEdit = useCallback(() => {
+    setInlineEditIndex(null);
+    setInlineEditPrice('');
   }, []);
 
-  const handleDiamondSave = useCallback((updated) => {
-    setDiamonds(prev => prev.map((d, i) => i !== selectedIndex ? d : {
-      ...d,
-      Type:      updated.Type      || '',
-      Shape:     updated.Shape     || '',
-      Carat:     num(updated.Carat),
-      MmSize:    num(updated.MmSize),
-      SieveSize: updated.SieveSize || '',
-      Price:     num(updated.Price),
-    }));
-    setEditModalVisible(false);
-    setSelectedIndex(null);
-  }, [selectedIndex]);
-
+  useEffect(() => {
+    if (missingIndices.size > 0 && inlineEditIndex === null) {
+      const first = [...missingIndices][0];
+      startInlineEdit(first, diamonds[first]);
+    }
+  }, [missingIndices]);
 
   const handleSaveQuotation = useCallback(async () => {
     if (!pricingResult) return;
@@ -365,9 +397,13 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       return;
     }
 
+    const mergedForSave = diamonds.map((d, i) =>
+      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
+    );
+
     const pricingToSave = {
       Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-      Stones: diamonds.map(d => ({
+      Stones: mergedForSave.map(d => ({
         Type:      d.Type      || '',
         Color:     d.Color     || '',
         Shape:     d.Shape     || '',
@@ -425,7 +461,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       showAlert('Save Failed', e?.data?.message || 'Could not save the quotation. Please try again.', 'error', [{ text: 'OK' }]);
     }
   }, [pricingResult, isFetchingEnquiry, enquiryId, fullEnquiry,
-      metalWeight, metalQuality, metalRate, diamonds, sourcePricing,
+      metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing,
       clientMsg, savePricing, showAlert]);
 
   const handleCalculate = useCallback(async () => {
@@ -433,17 +469,20 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       showAlert('Validation', 'Please add at least one stone before calculating.', 'warning', [{ text: 'OK' }]);
       return;
     }
-    if (num(metalWeight) <= 0) {
-      showAlert('Validation', 'Metal weight must be greater than 0.', 'warning', [{ text: 'OK' }]);
-      return;
-    }
-    if (num(metalRate) <= 0) {
-      showAlert('Validation', 'Metal rate must be greater than 0.', 'warning', [{ text: 'OK' }]);
-      return;
-    }
-    const missingPrice = diamonds.some(d => num(d.Price) <= 0);
-    if (missingPrice) {
-      showAlert('Validation', 'All stones must have a price ($/Ct) greater than 0.', 'warning', [{ text: 'OK' }]);
+
+    const mergedDiamonds = diamonds.map((d, i) =>
+      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
+    );
+
+    const missingItems = [];
+    if (num(metalWeight) <= 0) missingItems.push('Metal Weight');
+    if (num(metalRate) <= 0) missingItems.push('Metal Rate');
+    mergedDiamonds.forEach((d, i) => {
+      if (num(d.Price) <= 0) missingItems.push(`${d.Type || 'Stone'} ${d.Shape || ''} #${i + 1} Price`);
+    });
+
+    if (missingItems.length > 0) {
+      showAlert('Data Missing', missingItems.join(', ') + ' — please fill all missing fields before calculating.', 'warning', [{ text: 'OK' }]);
       return;
     }
 
@@ -456,7 +495,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           Quality: metalQuality,
           Rate:    num(metalRate),
         },
-        Stones: diamonds.map(d => ({
+        Stones: mergedDiamonds.map(d => ({
           Type:      d.Type      || '',
           Color:     d.Color     || '',
           Shape:     d.Shape     || '',
@@ -487,13 +526,6 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       const result = await calculatePricing(payload).unwrap();
       setPricingResult(result);
 
-      setDiamonds(prev => {
-        setMissingIndices(new Set(
-          prev.reduce((acc, st, i) => { if (num(st.Price) <= 0) acc.push(i); return acc; }, [])
-        ));
-        return prev;
-      });
-
       setClientMsg(prev => {
         if (result.ClientPricingMessage) return result.ClientPricingMessage;
         return prev;
@@ -502,7 +534,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       const html = buildHtml({
         enquiry: fullEnquiry,
         pricingResult: result,
-        stones: diamonds,
+        stones: mergedDiamonds,
         metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
         charges: {
           Loss: num(sourcePricing?.Loss ?? 0),
@@ -513,10 +545,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         clientName: fullEnquiry?.ClientName || fullEnquiry?.clientName || '',
       });
       setPdfHtml(html);
+      setShowPdf(true);
     } catch (e) {
       showAlert('Calculation Failed', e?.data?.message || 'Failed to calculate pricing. Please try again.', 'error', [{ text: 'OK' }]);
     }
-  }, [diamonds, metalWeight, metalQuality, metalRate, sourcePricing, fullEnquiry, calculatePricing, showAlert]);
+  }, [diamonds, editedPrices, metalWeight, metalQuality, metalRate, sourcePricing, fullEnquiry, calculatePricing, showAlert]);
 
   const handleSharePdf = useCallback(async () => {
     if (!pdfHtml) return;
@@ -552,7 +585,51 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     setShowCompareModal(true);
   }, []);
 
-  const hasMissingStones = missingIndices.size > 0 || diamonds.length === 0;
+  const hasMissingStones = missingIndices.size > 0 && diamonds.some((d, i) => {
+    if (!missingIndices.has(i)) return false;
+    const effectivePrice = editedPrices[i] !== undefined ? num(editedPrices[i]) : num(d.Price);
+    return effectivePrice <= 0;
+  }) || diamonds.length === 0;
+  const hasMissingMetal = num(metalWeight) <= 0 || num(metalRate) <= 0;
+
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (hasMissingStones) {
+      const loop = Animated.loop(
+        Animated.parallel([
+          Animated.sequence([
+            Animated.timing(shakeAnim, { toValue: 1, duration: 80, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: -1, duration: 80, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: 1, duration: 80, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: 0, duration: 80, useNativeDriver: true }),
+            Animated.delay(1000),
+          ]),
+          Animated.sequence([
+            Animated.timing(scaleAnim, { toValue: 1.08, duration: 150, useNativeDriver: true }),
+            Animated.timing(scaleAnim, { toValue: 0.92, duration: 150, useNativeDriver: true }),
+            Animated.timing(scaleAnim, { toValue: 1.08, duration: 150, useNativeDriver: true }),
+            Animated.timing(scaleAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
+            Animated.delay(1000),
+          ]),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    }
+  }, [hasMissingStones]);
+
+  const vibrateOnMountRef = useRef(null);
+  useEffect(() => {
+    if (!visible || isQRPhase) return;
+    if (vibrateOnMountRef.current === enquiryId) return;
+    vibrateOnMountRef.current = enquiryId;
+
+    const t1 = setTimeout(() => triggerHaptic('notificationWarning'), 0);
+    const t2 = hasMissingMetal ? setTimeout(() => triggerHaptic('notificationWarning'), 900) : null;
+    const t3 = hasMissingStones ? setTimeout(() => triggerHaptic('notificationWarning'), 1300) : null;
+    return () => { clearTimeout(t1); if (t2) clearTimeout(t2); if (t3) clearTimeout(t3); };
+  }, [visible, isQRPhase, enquiryId, hasMissingMetal, hasMissingStones]);
 
   const handleCopyMsg = useCallback(() => {
     if (!clientMsg) return;
@@ -561,16 +638,146 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     setTimeout(() => setCopied(false), 2000);
   }, [clientMsg]);
 
-  return (
-    <>
+  // ── Stones IIFE (shared by both renders) ──────────────────────────
+  const renderStonesSection = () => {
+    if (diamonds.length === 0) {
+      return (
+        <View style={s.emptyStones}>
+          <Icon name="diamond" size={28} color={colors.textSecondary} />
+          <Text style={s.emptyStonesText}>No stones added yet</Text>
+          <TouchableOpacity style={[s.addBtn, { marginTop: 4 }]} onPress={handleAddDiamond} activeOpacity={0.8}>
+            <Icon name="add" size={16} color="#fff" />
+            <Text style={s.addBtnText}>Add First Stone</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    const missingStones = diamonds
+      .map((d, i) => ({ d, i }))
+      .filter(({ i }) => missingIndices.has(i));
+
+    return (
+      <>
+        <View style={s.sectionRow}>
+          <Text style={s.sectionTitle}>
+            {missingStones.length > 0
+              ? `Stones needing price (${missingStones.length})`
+              : 'Stones'}
+          </Text>
+        </View>
+
+        {missingStones.length === 0 ? (
+          <TouchableOpacity
+            style={[s.calcBtn, { paddingVertical: 18, marginTop: 20 }]}
+            onPress={handleCalculate}
+            disabled={isCalculating}
+            activeOpacity={0.85}
+          >
+            {isCalculating
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <>
+                  <Icon name="calculate" size={20} color="#fff" />
+                  <Text style={[s.calcBtnText, { fontSize: (fonts.base || 16) }]}>Recalculate</Text>
+                </>}
+          </TouchableOpacity>
+        ) : (
+        <View style={s.stoneTable}>
+            <View style={s.stoneTableHeader}>
+              <Text style={[s.stoneCol, s.stoneColType,  s.stoneTh]}>Type</Text>
+              <Text style={[s.stoneCol, s.stoneColShape, s.stoneTh]}>Shape</Text>
+              <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTh]}>Ct</Text>
+              <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTh]}>Pcs</Text>
+              <Text style={[s.stoneCol, s.stoneColPrice, s.stoneTh]}>$/Ct</Text>
+              <View style={s.stoneColActions} />
+            </View>
+            {missingStones.map(({ d, i }, rowIdx) => {
+              const effectivePrice = editedPrices[i] !== undefined ? num(editedPrices[i]) : num(d.Price);
+              const isEdited = editedPrices[i] !== undefined && effectivePrice > 0;
+              const isEditing = inlineEditIndex === i;
+              return (
+                <Animated.View
+                  key={d.localId || i}
+                  style={[
+                    s.stoneRow,
+                    rowIdx % 2 === 1 && s.stoneRowAlt,
+                    !isEdited && s.stoneRowMissing,
+                    !isEdited && { transform: [{ translateX: shakeAnim }, { scale: scaleAnim }] },
+                  ]}
+                >
+                  <Text style={[s.stoneCol, s.stoneColType,  s.stoneTd]} numberOfLines={1}>{d.Type || '—'}</Text>
+                  <Text style={[s.stoneCol, s.stoneColShape, s.stoneTd]} numberOfLines={1}>{d.Shape || '—'}</Text>
+                  <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTd]}>{num(d.Carat).toFixed(2)}</Text>
+                  <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTd]}>{num(d.Pcs)}</Text>
+
+                  {isEditing ? (
+                    <TextInput
+                      ref={inlinePriceRef}
+                      style={[s.stoneCol, s.stoneColPrice, s.inlinePriceInput]}
+                      value={inlineEditPrice}
+                      onChangeText={setInlineEditPrice}
+                      keyboardType="decimal-pad"
+                      placeholder="$/Ct"
+                      placeholderTextColor="#A0A0A0"
+                      onSubmitEditing={saveInlineEdit}
+                      returnKeyType="done"
+                    />
+                  ) : (
+                    <Text style={[s.stoneCol, s.stoneColPrice, s.stoneTd, !isEdited && s.stonePriceMissing]}>
+                      {effectivePrice > 0 ? `$${effectivePrice.toFixed(2)}` : '—'}
+                    </Text>
+                  )}
+
+                  <View style={s.stoneColActions}>
+                    {!isEdited && (
+                      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+                        <Icon name="warning" size={16} color="#DC2626" />
+                      </Animated.View>
+                    )}
+                    {!isEditing && (
+                      <TouchableOpacity onPress={() => startInlineEdit(i, d)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }} style={[s.inlineActionBtn, { borderColor: colors.primary }]}>
+                        <Icon name="edit" size={14} color={colors.primary} />
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity onPress={() => handleDeleteDiamond(i)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }} style={[s.inlineActionBtn, { borderColor: colors.error || '#EF4444' }]}>
+                      <Icon name="delete-outline" size={14} color={colors.error || '#EF4444'} />
+                    </TouchableOpacity>
+                  </View>
+                </Animated.View>
+              );
+            })}
+            <TouchableOpacity style={s.stoneAddRow} onPress={handleAddDiamond} activeOpacity={0.8}>
+              <Icon name="add" size={14} color={colors.primary} />
+              <Text style={s.stoneAddRowText}>Add another stone</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[s.calcBtn, { paddingVertical: 18, marginTop: 20 }]}
+          onPress={handleCalculate}
+          disabled={isCalculating}
+          activeOpacity={0.85}
+        >
+          {isCalculating
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <>
+                <Icon name="calculate" size={20} color="#fff" />
+                <Text style={[s.calcBtnText, { fontSize: (fonts.base || 16) }]}>Recalculate</Text>
+              </>}
+        </TouchableOpacity>
+      </>
+    );
+  };
+
+  // ── QR Phase render ────────────────────────────────────────────────
+  const renderQRPhase = () => (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (showPdf) { setShowPdf(false); } else { onClose(); } }}>
       <View style={s.overlay}>
         <View style={s.sheet}>
-
-          {/* ── header ──────────────────────────────────────────────── */}
           <View style={s.header}>
             <View style={{ flex: 1 }}>
-              <Text style={s.headerTitle} numberOfLines={1}>{isCMPhase ? 'Update Quotation' : 'View Quotation'}</Text>
+              <Text style={s.headerTitle} numberOfLines={1}>View Quotation</Text>
               {fullEnquiry?.Name ? <Text style={s.headerSub} numberOfLines={1}>{fullEnquiry.Name}</Text> : null}
             </View>
             {isFetchingEnquiry && <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />}
@@ -579,7 +786,6 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             </TouchableOpacity>
           </View>
 
-          {/* ── PDF full-screen overlay ──────────────────────────────── */}
           {showPdf ? (
             <View style={{ flex: 1 }}>
               <PdfViewer html={pdfHtml} style={{ flex: 1 }} />
@@ -588,10 +794,15 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                   <Icon name="arrow-back" size={18} color="#fff" />
                   <Text style={s.pdfBarBtnText}>Back</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[s.pdfBarBtn, s.shareBtn]} onPress={handleSharePdf} disabled={isSharing} activeOpacity={0.85}>
-                  {isSharing
+                <TouchableOpacity
+                  style={[s.pdfBarBtn, s.shareBtn]}
+                  onPress={async () => { await handleSaveQuotation(); handleSharePdf(); }}
+                  disabled={isSaving || isSharing}
+                  activeOpacity={0.85}
+                >
+                  {(isSaving || isSharing)
                     ? <ActivityIndicator size="small" color="#fff" />
-                    : <><Icon name="share" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Share</Text></>}
+                    : <><Icon name="share" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Save & Share</Text></>}
                 </TouchableOpacity>
               </View>
             </View>
@@ -602,166 +813,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              {/* ── banner ────────────────────────────────────────────── */}
-              {hasMissingStones ? (
-                <View style={s.warningBanner}>
-                  <Icon name="warning" size={15} color="#92400E" />
-                  <Text style={s.warningText}>Stone prices are missing — fill them in below to calculate pricing.</Text>
-                </View>
-              ) : (
-                <View style={s.infoBanner}>
-                  <Icon name="info" size={15} color={colors.primary} />
-                  <Text style={s.infoText}>Stones pre-filled from the latest design version.</Text>
-                </View>
-              )}
+              <View style={s.infoBanner}>
+                <Icon name="info" size={15} color={colors.primary} />
+                <Text style={s.infoText}>Stones pre-filled from the latest design version.</Text>
+              </View>
 
-              {/* ── METAL ─────────────────────────────────────────────── */}
-              {!isQRPhase && (
-                <>
-                  <Text style={s.sectionTitle}>Metal</Text>
-                  <View style={s.metalRow}>
-                    {/* Weight */}
-                    <View style={s.metalField}>
-                      <Text style={s.chargeLabel}>Weight (g)</Text>
-                      <TextInput
-                        style={[s.chargeInput, num(metalWeight) <= 0 && s.inputError]}
-                        value={metalWeight}
-                        onChangeText={setMetalWeight}
-                        keyboardType="decimal-pad"
-                        placeholder="0"
-                        placeholderTextColor={colors.textSecondary}
-                      />
-                    </View>
-                    {/* Quality — dropdown */}
-                    <View style={s.metalField}>
-                      <Text style={s.chargeLabel}>Quality</Text>
-                      <TouchableOpacity
-                        style={s.qualityBtn}
-                        onPress={() => setShowQualityPicker(true)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
-                        <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
-                      </TouchableOpacity>
-                    </View>
-                    {/* Rate */}
-                    <View style={s.metalField}>
-                      <Text style={s.chargeLabel}>Rate ($/g)</Text>
-                      <TextInput
-                        style={[s.chargeInput, num(metalRate) <= 0 && s.inputError]}
-                        value={metalRate}
-                        onChangeText={setMetalRate}
-                        keyboardType="decimal-pad"
-                        placeholder="0"
-                        placeholderTextColor={colors.textSecondary}
-                      />
-                    </View>
-                  </View>
-                </>
-              )}
-
-              {/* ── STONES (missing-price snapshot — refreshes on Calculate) ── */}
-              {(() => {
-                // Use the frozen snapshot — doesn't change when user edits a price,
-                // only refreshes after Calculate so the table stays stable while editing.
-                const visibleStones = diamonds
-                  .map((d, i) => ({ d, i }))
-                  .filter(({ i }) => missingIndices.has(i));
-
-                if (missingIndices.size === 0 && diamonds.length > 0) return null;
-
-                return (
-                  <>
-                    <View style={s.sectionRow}>
-                      <Text style={s.sectionTitle}>
-                        {visibleStones.length > 0
-                          ? `Stones needing price (${visibleStones.length})`
-                          : 'Stones'}
-                      </Text>
-                      <TouchableOpacity style={s.addBtn} onPress={handleAddDiamond} activeOpacity={0.8}>
-                        <Icon name="add" size={16} color="#fff" />
-                        <Text style={s.addBtnText}>Add Stone</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {visibleStones.length === 0 ? (
-                      <View style={s.emptyStones}>
-                        <Icon name="diamond" size={28} color={colors.textSecondary} />
-                        <Text style={s.emptyStonesText}>No stones added yet</Text>
-                        <TouchableOpacity style={[s.addBtn, { marginTop: 4 }]} onPress={handleAddDiamond} activeOpacity={0.8}>
-                          <Icon name="add" size={16} color="#fff" />
-                          <Text style={s.addBtnText}>Add First Stone</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <View style={s.stoneTable}>
-                        <View style={s.stoneTableHeader}>
-                          <Text style={[s.stoneCol, s.stoneColType,  s.stoneTh]}>Type</Text>
-                          <Text style={[s.stoneCol, s.stoneColShape, s.stoneTh]}>Shape</Text>
-                          <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTh]}>Ct</Text>
-                          <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTh]}>Pcs</Text>
-                          <Text style={[s.stoneCol, s.stoneColPrice, s.stoneTh]}>$/Ct</Text>
-                          <View style={s.stoneColActions} />
-                        </View>
-                        {visibleStones.map(({ d, i }, rowIdx) => (
-                          <View key={d.localId || i} style={[s.stoneRow, rowIdx % 2 === 1 && s.stoneRowAlt]}>
-                            <Text style={[s.stoneCol, s.stoneColType,  s.stoneTd]} numberOfLines={1}>{d.Type || '—'}</Text>
-                            <Text style={[s.stoneCol, s.stoneColShape, s.stoneTd]} numberOfLines={1}>{d.Shape || '—'}</Text>
-                            <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTd]}>{num(d.Carat).toFixed(2)}</Text>
-                            <Text style={[s.stoneCol, s.stoneColNum,   s.stoneTd]}>{num(d.Pcs)}</Text>
-                            <Text style={[s.stoneCol, s.stoneColPrice, s.stoneTd, num(d.Price) <= 0 ? s.stonePriceMissing : null]}>
-                              {num(d.Price) > 0 ? `$${num(d.Price).toFixed(2)}` : '—'}
-                            </Text>
-                            <View style={s.stoneColActions}>
-                              <TouchableOpacity onPress={() => openEditModal(i, d)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }}>
-                                <Icon name="edit" size={15} color={colors.primary} />
-                              </TouchableOpacity>
-                              <TouchableOpacity onPress={() => handleDeleteDiamond(i)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }}>
-                                <Icon name="delete-outline" size={15} color={colors.error || '#EF4444'} />
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        ))}
-                        <TouchableOpacity style={s.stoneAddRow} onPress={handleAddDiamond} activeOpacity={0.8}>
-                          <Icon name="add" size={14} color={colors.primary} />
-                          <Text style={s.stoneAddRowText}>Add another stone</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </>
-                );
-              })()}
-
-              {/* ── COMPARE IMAGES ────────────────────────────────────── */}
-              {!isQRPhase && (
-                <TouchableOpacity
-                  style={[s.calcBtn, { backgroundColor: '#7C3AED', marginBottom: 10 }]}
-                  onPress={handleCompareImages}
-                  activeOpacity={0.85}
-                >
-                  <Icon name="compare" size={18} color="#fff" />
-                  <Text style={s.calcBtnText}>Compare Images</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* ── CALCULATE ─────────────────────────────────────────── */}
-              {!isQRPhase && (
-                <TouchableOpacity
-                  style={[s.calcBtn, isCalculating && s.calcBtnDisabled]}
-                  onPress={handleCalculate}
-                  disabled={isCalculating}
-                  activeOpacity={0.85}
-                >
-                  {isCalculating
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <>
-                        <Icon name="calculate" size={18} color="#fff" />
-                        <Text style={s.calcBtnText}>{pricingResult ? 'Recalculate' : 'Calculate Pricing'}</Text>
-                      </>}
-                </TouchableOpacity>
-              )}
-
-              {/* ── AFTER CALCULATION: View PDF + Save / Compare Images ── */}
               {pricingResult && (
                 <>
                   <Text style={s.sectionTitle}>Pricing</Text>
@@ -793,27 +849,14 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                     <Text style={s.calcBtnText}>View PDF</Text>
                   </TouchableOpacity>
 
-                  {isQRPhase ? (
-                    <TouchableOpacity
-                      style={[s.calcBtn, { backgroundColor: '#7C3AED' }]}
-                      onPress={handleCompareImages}
-                      activeOpacity={0.85}
-                    >
-                      <Icon name="compare" size={18} color="#fff" />
-                      <Text style={s.calcBtnText}>Compare Images</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={[s.calcBtn, { backgroundColor: '#059669', marginTop: 10 }, (isSaving || isFetchingEnquiry) && s.calcBtnDisabled]}
-                      onPress={handleSaveQuotation}
-                      disabled={isSaving || isFetchingEnquiry}
-                      activeOpacity={0.85}
-                    >
-                      {(isSaving || isFetchingEnquiry)
-                        ? <><ActivityIndicator size="small" color="#fff" /><Text style={s.calcBtnText}>{isFetchingEnquiry ? 'Loading...' : 'Saving...'}</Text></>
-                        : <><Icon name="save" size={18} color="#fff" /><Text style={s.calcBtnText}>Save Quotation</Text></>}
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    style={[s.calcBtn, { backgroundColor: '#7C3AED' }]}
+                    onPress={handleCompareImages}
+                    activeOpacity={0.85}
+                  >
+                    <Icon name="compare" size={18} color="#fff" />
+                    <Text style={s.calcBtnText}>Compare Images</Text>
+                  </TouchableOpacity>
                 </>
               )}
               {(clientMsg !== null && clientMsg !== undefined && diamonds.length > 0) ? (
@@ -836,13 +879,122 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                   />}
                 </View>
               ) : null}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // ── Update Quotation render ────────────────────────────────────────
+  const renderUpdateQuotation = () => (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (showPdf) { setShowPdf(false); } else { onClose(); } }}>
+      <View style={s.overlay}>
+        <View style={s.sheet}>
+          <View style={s.header}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.headerTitle} numberOfLines={1}>Update Quotation</Text>
+              {fullEnquiry?.Name ? <Text style={s.headerSub} numberOfLines={1}>{fullEnquiry.Name}</Text> : null}
+            </View>
+            {isFetchingEnquiry && <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />}
+            <TouchableOpacity style={s.closeBtn} onPress={showPdf ? () => setShowPdf(false) : onClose} activeOpacity={0.7}>
+              <Icon name={showPdf ? 'arrow-back' : 'close'} size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          {showPdf ? (
+            <View style={{ flex: 1 }}>
+              <PdfViewer html={pdfHtml} style={{ flex: 1 }} />
+              <View style={s.pdfBar}>
+                <TouchableOpacity style={s.pdfBarBtn} onPress={() => setShowPdf(false)} activeOpacity={0.8}>
+                  <Icon name="arrow-back" size={18} color="#fff" />
+                  <Text style={s.pdfBarBtnText}>Update Prices</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.pdfBarBtn, s.shareBtn]}
+                  onPress={async () => { await handleSaveQuotation(); handleSharePdf(); }}
+                  disabled={isSaving || isSharing}
+                  activeOpacity={0.85}
+                >
+                  {(isSaving || isSharing)
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <><Icon name="share" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Save & Share</Text></>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <ScrollView
+              style={s.scrollBody}
+              contentContainerStyle={s.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {hasMissingStones && hasMissingMetal && (
+                <View style={s.missingBadge}>
+                  <Icon name="warning" size={14} color="#DC2626" />
+                  <Text style={s.missingBadgeText}>Missing Metal Details</Text>
+                </View>
+              )}
+
+              <View style={[s.metalSection, hasMissingStones && hasMissingMetal && s.metalSectionMissing]}>
+                <Text style={s.sectionTitle}>Metal</Text>
+                <View style={s.metalRow}>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Weight (g)</Text>
+                    <TextInput
+                      style={[s.chargeInput, num(metalWeight) <= 0 && s.inputErrorHighlight]}
+                      value={metalWeight}
+                      onChangeText={setMetalWeight}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textSecondary}
+                    />
+                  </View>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Quality</Text>
+                    <TouchableOpacity
+                      style={s.qualityBtn}
+                      onPress={() => setShowQualityPicker(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
+                      <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Rate ($/g)</Text>
+                    <TextInput
+                      style={[s.chargeInput, num(metalRate) <= 0 && s.inputErrorHighlight]}
+                      value={metalRate}
+                      onChangeText={setMetalRate}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textSecondary}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {hasMissingStones ? (
+                <View style={s.warningBanner}>
+                  <Icon name="warning" size={15} color="#92400E" />
+                  <Text style={s.warningText}>Stone prices are missing — fill them in below to calculate pricing.</Text>
+                </View>
+              ) : (
+                <View style={s.infoBanner}>
+                  <Icon name="info" size={15} color={colors.primary} />
+                  <Text style={s.infoText}>All stones filled. Ready to calculate pricing.</Text>
+                </View>
+              )}
+
+
+              {renderStonesSection()}
 
             </ScrollView>
           )}
         </View>
       </View>
 
-      {/* ── Quality picker modal ──────────────────────────────────────── */}
       <Modal visible={showQualityPicker} transparent animationType="fade" onRequestClose={() => setShowQualityPicker(false)}>
         <TouchableOpacity style={s.pickerOverlay} activeOpacity={1} onPress={() => setShowQualityPicker(false)}>
           <TouchableOpacity activeOpacity={1} style={s.pickerSheet}>
@@ -861,28 +1013,31 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-
     </Modal>
+  );
 
-    <CompareRefrences
-      visible={showCompareModal}
-      onClose={() => setShowCompareModal(false)}
-      fullEnquiry={fullEnquiry}
-      isFetchingEnquiry={isFetchingEnquiry}
-    />
+  return (
+    <>
+      {isQRPhase ? renderQRPhase() : renderUpdateQuotation()}
 
-    {/* ── DiamondEditModal — outside parent Modal so iOS events work ── */}
-    <DiamondEditModal
-      visible={editModalVisible}
-      diamond={selectedDiamondData}
-      onClose={() => { setEditModalVisible(false); setSelectedIndex(null); }}
-      onSave={handleDiamondSave}
-    />
+      <CompareRefrences
+        visible={showCompareModal}
+        onClose={() => setShowCompareModal(false)}
+        fullEnquiry={fullEnquiry}
+        isFetchingEnquiry={isFetchingEnquiry}
+      />
 
-    <BrandedAlert
-      visible={alertCfg.visible} title={alertCfg.title} message={alertCfg.message}
-      type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
-    />
+      {/* <DiamondEditModal
+        visible={editModalVisible}
+        diamond={selectedDiamondData}
+        onClose={() => { setEditModalVisible(false); setSelectedIndex(null); }}
+        onSave={handleDiamondSave}
+      /> */}
+
+      <BrandedAlert
+        visible={alertCfg.visible} title={alertCfg.title} message={alertCfg.message}
+        type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
+      />
     </>
   );
 };
@@ -938,15 +1093,17 @@ const s = StyleSheet.create({
   scrollContent: { padding: 16, paddingBottom: 32 },
 
   warningBanner: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    backgroundColor: '#FEF3C7', borderRadius: 8, padding: 12, marginBottom: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#FEF3C7', borderRadius: 10, padding: 14, marginBottom: 14,
+    borderWidth: 1, borderColor: '#F59E0B',
   },
-  warningText: { flex: 1, fontFamily: fonts.regular, fontSize: fonts.xs || 12, color: '#92400E', lineHeight: 18 },
+  warningText: { flex: 1, fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: '#92400E', lineHeight: 20 },
   infoBanner: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    backgroundColor: colors.primary + '15', borderRadius: 8, padding: 12, marginBottom: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: colors.primary + '15', borderRadius: 10, padding: 14, marginBottom: 14,
+    borderWidth: 1, borderColor: colors.primary + '40',
   },
-  infoText: { flex: 1, fontFamily: fonts.regular, fontSize: fonts.xs || 12, color: colors.primary, lineHeight: 18 },
+  infoText: { flex: 1, fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.primary, lineHeight: 20 },
 
   sectionTitle: {
     fontFamily: fonts.bold, fontSize: fonts.sm || 13,
@@ -970,6 +1127,22 @@ const s = StyleSheet.create({
     color: colors.textPrimary, backgroundColor: colors.background,
   },
   inputError: { borderColor: colors.error || '#EF4444', borderWidth: 1.5 },
+  inputErrorHighlight: { borderColor: '#DC2626', borderWidth: 1.5 },
+
+  metalSection: { marginBottom: 8 },
+  metalSectionMissing: { borderWidth: 1.5, borderColor: '#DC2626', borderRadius: 10, padding: 8 },
+
+  missingBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#FEF2F2', borderRadius: 8,
+    paddingVertical: 8, paddingHorizontal: 12,
+    marginBottom: 10, borderWidth: 1, borderColor: '#DC2626',
+  },
+  missingBadgeText: {
+    fontFamily: fonts.bold, fontSize: fonts.xs || 12, color: '#DC2626',
+  },
+
+  recalcBtnDisabled: { opacity: 0.4 },
 
   stoneTable: {
     borderWidth: 1, borderColor: colors.borderLight || '#E8E8E8',
@@ -979,25 +1152,46 @@ const s = StyleSheet.create({
   stoneTableHeader: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: colors.primary,
-    paddingVertical: 8, paddingHorizontal: 10,
+    paddingVertical: 10, paddingHorizontal: 12,
   },
   stoneRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 9, paddingHorizontal: 10,
+    paddingVertical: 12, paddingHorizontal: 12,
     borderTopWidth: 1, borderTopColor: colors.borderLight || '#F0F0F0',
   },
   stoneRowAlt: { backgroundColor: colors.backgroundSecondary || '#F8F8F8' },
+  stoneRowMissing: { borderWidth: 1.5, borderColor: '#DC2626', backgroundColor: '#FEF2F2' },
 
   stoneCol:        { textAlign: 'center' },
   stoneColType:    { flex: 2.5, textAlign: 'left' },
   stoneColShape:   { flex: 2, textAlign: 'left' },
   stoneColNum:     { flex: 1.2 },
   stoneColPrice:   { flex: 1.8 },
-  stoneColActions: { width: 44, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 },
+  stoneColActions: { width: 74, flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
+  inlinePriceInput: {
+    borderWidth: 1.5,
+    borderColor: '#DC2626',
+    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+    textAlign: 'left',
+  },
+  inlineActionBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-  stoneTh: { fontFamily: fonts.bold,    fontSize: 10, color: '#fff' },
-  stoneTd: { fontFamily: fonts.regular, fontSize: 11, color: colors.textPrimary },
-  stonePriceMissing: { color: colors.error || '#EF4444' },
+  stoneTh: { fontFamily: fonts.bold,    fontSize: 11, color: '#fff' },
+  stoneTd: { fontFamily: fonts.regular, fontSize: 12, color: colors.textPrimary },
+  stonePriceMissing: { color: colors.error || '#EF4444', fontWeight: 'bold' },
 
   stoneAddRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
