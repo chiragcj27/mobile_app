@@ -16,22 +16,20 @@ import BrandedAlert from '../../components/common/BrandedAlert';
 import PdfViewer from '../../components/common/PdfViewer';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
-import Clipboard from '@react-native-clipboard/clipboard';
 import { launchImageLibrary } from 'react-native-image-picker';
-
-let DocumentPicker;
-try {
-  DocumentPicker = require('react-native-document-picker').default;
-} catch (e) {
-  DocumentPicker = null;
-}
 
 import { Card } from '../../components/cards/Cards';
 import Icon from '../../components/common/Icon';
+import SingleStonePricing from './SingleStonePricing';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
+import {
+  groupStoneDataByCategory,
+  splitGroupedDataForRecalc,
+  regroupApiResults,
+} from '../../utils/stoneDataGrouper';
 import {
   useGetStoneTypesQuery,
   useGetMetalPricesQuery,
@@ -47,51 +45,16 @@ try {
     mod.generatePDF || mod.default?.generatePDF || mod.default;
 } catch (e) {}
 
-const isLabType = (t) => t === 'LabGrown' || t === 'CVDLabGrown';
 
-const getMetalDependentDuties = (metalKt) => {
-  const isSilver = metalKt === 'Silver 925';
-  const isGold = !isSilver && metalKt !== 'Platinum';
-  const fields = [];
-  if (isGold) fields.push('GoldDuties');
-  if (isSilver) fields.push('SilverAndLabsDuties');
-  fields.push('LossAndLabourDuties');
-  return fields;
-};
-
-const getStoneDependentDuties = (stoneType, metalKt) => {
-  const isLab = isLabType(stoneType);
-  const isSilver = metalKt === 'Silver 925';
-  const isGold = !isSilver && metalKt !== 'Platinum';
-  const fields = [];
-  if (!isLab) {
-    fields.push('UndercutPrice', 'NaturalDuties');
-  } else if (isGold) {
-    fields.push('LabDuties');
-  }
-  return fields;
-};
-
-const DUTY_LABELS = {
-  UndercutPrice:       'Undercut ($/ct)',
-  NaturalDuties:       'Natural Duty (%)',
-  LabDuties:           'Lab Duty (%)',
-  GoldDuties:          'Gold Duty (%)',
-  SilverAndLabsDuties: 'Silver+Lab Duty (%)',
-  LossAndLabourDuties: 'Loss+Labour Duty (%)',
-};
-
-export default function PricingCalci({ route }) {
+export default function PricingCalci({ route, navigation }) {
   const [clientId, setClientId] = useState(route?.params?.clientId || '');
   const [selectedStoneTypes, setSelectedStoneTypes] = useState([]);
   const [metalKt, setMetalKt] = useState('18K');
   const [imageFile, setImageFile] = useState(null);
-  const [excelFile, setExcelFile] = useState(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  // Unified State for Multiple Results
-  const [multiData, setMultiData] = useState({});
-  const [expandedStones, setExpandedStones] = useState({});
+  // Grouped State for Multiple Results
+  const [groupedData, setGroupedData] = useState({});
 
   const [alertConfig, setAlertConfig] = useState({
     visible: false,
@@ -108,6 +71,7 @@ export default function PricingCalci({ route }) {
   const [showStoneModal, setShowStoneModal] = useState(false);
   const [showMetalModal, setShowMetalModal] = useState(false);
   const [showAllPricesModal, setShowAllPricesModal] = useState(false);
+  const [expandedCommonSections, setExpandedCommonSections] = useState({ metal: true });
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -116,26 +80,21 @@ export default function PricingCalci({ route }) {
     index: null,
   });
   const [isRecalculating, setIsRecalculating] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '' });
-  const [commonCharges, setCommonCharges] = useState({ Loss: '', Labour: '', ExtraCharges: '', GoldDuties: '', SilverAndLabsDuties: '', LossAndLabourDuties: '' });
-  const [expandedCommonSections, setExpandedCommonSections] = useState({
-    metal: true,
-    charges: false,
-  });
   const [stoneRecalcStatus, setStoneRecalcStatus] = useState({});
+  const [showSingleStoneModal, setShowSingleStoneModal] = useState(false);
+  const [singleStoneCatData, setSingleStoneCatData] = useState(null);
+  const [singleStoneModalKey, setSingleStoneModalKey] = useState(0);
 
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
   const prevMissingCountRef = useRef(0);
-
-  const handleCopyMsg = (text) => {
-    if (text) {
-      Clipboard.setString(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
+  const metalWeightRef = useRef(null);
+  const singleStoneCatDataRef = useRef(singleStoneCatData);
+  const groupedDataRef = useRef(groupedData);
+  const handleRecalculateAllRef = useRef(null);
+  useEffect(() => { singleStoneCatDataRef.current = singleStoneCatData; }, [singleStoneCatData]);
+  useEffect(() => { groupedDataRef.current = groupedData; }, [groupedData]);
 
   const { clients = [] } = useClients();
   const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
@@ -143,7 +102,7 @@ export default function PricingCalci({ route }) {
   const { data: selectedClient } = useGetClientByIdQuery(clientId, {
     skip: !clientId,
   });
-  const [calculatePricing, { isLoading: isCalculating }] =
+  const [calculatePricing] =
     useCalculatePricingMutation();
   const [GetimagepriceData, { isLoading: isImageLoading }] =
     useImagepriceDataMutation();
@@ -155,60 +114,38 @@ export default function PricingCalci({ route }) {
     } else {
       setSelectedStoneTypes([]);
     }
-    if (clientId && selectedClient?.Pricing) {
-      setCommonCharges({
-        Loss: selectedClient.Pricing.Loss ?? '',
-        Labour: selectedClient.Pricing.Labour ?? '',
-        ExtraCharges: selectedClient.Pricing.ExtraCharges ?? '',
-        GoldDuties: selectedClient.Pricing.GoldDuties ?? '',
-        SilverAndLabsDuties: selectedClient.Pricing.SilverAndLabsDuties ?? '',
-        LossAndLabourDuties: selectedClient.Pricing.LossAndLabourDuties ?? '',
-      });
-    }
-    setMultiData({});
-    setExpandedStones({});
+    setGroupedData({});
     setStoneRecalcStatus({});
-    setCommonMetal({ Weight: '', Rate: '' });
-    setExpandedCommonSections({ metal: true, charges: false });
     setMetalKt('18K');
     setImageFile(null);
-    setExcelFile(null);
     setEditModalVisible(false);
     setEditingContext({ type: null, index: 0 });
     setIsRecalculating(false);
-    setCopied(false);
     setPdfHtml(null);
     setShowPdfModal(false);
   }, [clientId, selectedClient]);
 
-  // Auto-recalculate: mark data as changed when multiData or selectedStoneTypes update from user edits
-  useEffect(() => {
-    if (!isAutoRecalculatingRef.current) {
-      dataChangedRef.current = true;
-    }
-  }, [multiData, selectedStoneTypes]);
-
   // Count missing stones — optionally filter by a specific type
   const countMissingStones = useCallback((filterType) => {
     let count = 0;
-    const details = [];
-    const typesToCheck = filterType ? [filterType] : Object.keys(multiData);
-    typesToCheck.forEach(type => {
-      const d = multiData[type];
-      if (!d || !Array.isArray(d.editableStones)) return;
-      d.editableStones.forEach((s, idx) => {
-        if (parseFloat(s.Price) <= 0) {
-          count++;
-          details.push({ type, index: idx, missing: 'Price' });
-        }
+    Object.values(groupedData).forEach((catData) => {
+      catData.types.forEach((type) => {
+        if (filterType && type !== filterType) return;
+        const d = catData.byType[type];
+        if (!d || !Array.isArray(d.editableStones)) return;
+        d.editableStones.forEach((s, idx) => {
+          if (parseFloat(s.Price) <= 0) {
+            count++;
+          }
+        });
       });
     });
     return count;
-  }, [multiData]);
+  }, [groupedData]);
 
   // Auto-recalculate: when stone types change, trigger recalc after extraction settles
   useEffect(() => {
-    if (dataChangedRef.current && clientId && Object.keys(multiData).length > 0) {
+    if (dataChangedRef.current && clientId && Object.keys(groupedData).length > 0) {
       dataChangedRef.current = false;
       const timer = setTimeout(() => {
         if (!isAutoRecalculatingRef.current) {
@@ -227,7 +164,7 @@ export default function PricingCalci({ route }) {
   useEffect(() => {
     let debounceTimer = null;
     const subscription = Keyboard.addListener('keyboardDidHide', () => {
-      if (dataChangedRef.current && clientId && Object.keys(multiData).length > 0) {
+      if (dataChangedRef.current && clientId && Object.keys(groupedData).length > 0) {
         const currentMissing = countMissingStones();
         if (currentMissing > 0) return;
         dataChangedRef.current = false;
@@ -246,7 +183,7 @@ export default function PricingCalci({ route }) {
       subscription?.remove();
       clearTimeout(debounceTimer);
     };
-  }, [clientId, multiData]);
+  }, [clientId, groupedData]);
 
   // Auto-recalculate: when edit modal closes after editing, trigger recalc
   // only if all missing stones of the EDITED TYPE are now filled
@@ -258,7 +195,7 @@ export default function PricingCalci({ route }) {
       return;
     }
     const editedType = editingContext.type;
-    if (clientId && Object.keys(multiData).length > 0) {
+    if (clientId && Object.keys(groupedData).length > 0) {
       const currentMissing = editedType ? countMissingStones(editedType) : countMissingStones();
       if (currentMissing > 0) {
         return;
@@ -276,119 +213,96 @@ export default function PricingCalci({ route }) {
     }
   }, [editModalVisible]);
 
-  const validatePricingData = useCallback(
-    type => {
-      const data = multiData[type];
-      if (!data || !Array.isArray(data.editableStones)) return false;
-      if (data.editableStones.length === 0) return true;
-      return data.editableStones.every(
-        stone =>
-          parseFloat(stone.Price || 0) > 0 &&
-          parseFloat(stone.Weight || 0) > 0 &&
-          parseInt(stone.Pcs || 0) > 0 &&
-          parseFloat(stone.CtWeight || 0) > 0,
-      );
-    },
-    [multiData],
-  );
+  // Auto-focus metal weight input when grouped data appears and weight is missing
+  useEffect(() => {
+    if (
+      Object.keys(groupedData).length > 0 &&
+      (!commonMetal.Weight || parseFloat(commonMetal.Weight) <= 0)
+    ) {
+      setTimeout(() => metalWeightRef.current?.focus(), 400);
+    }
+  }, [groupedData]);
 
   const hasAnyMissingStoneData = useCallback(() => {
-    const activeTypes = Object.keys(multiData);
-    if (activeTypes.length === 0) return true;
+    const allTypes = [];
+    Object.values(groupedData).forEach((catData) => {
+      catData.types.forEach((type) => allTypes.push(type));
+    });
+    if (allTypes.length === 0) return true;
 
-    return activeTypes.some(type => {
-      const data = multiData[type];
+    return allTypes.some((type) => {
+      let data = null;
+      Object.values(groupedData).forEach((catData) => {
+        if (catData.byType[type]) data = catData.byType[type];
+      });
       if (!data || !Array.isArray(data.editableStones)) return true;
       return data.editableStones.some(
         stone => parseFloat(stone.Price) <= 0,
       );
     });
-  }, [multiData]);
+  }, [groupedData]);
 
   const hasAnyZeroTotal = useCallback(() => {
-    const activeTypes = Object.keys(multiData);
-    if (activeTypes.length === 0) return true;
-    return activeTypes.some(type => {
-      const data = multiData[type];
+    const allTypes = [];
+    Object.values(groupedData).forEach((catData) => {
+      catData.types.forEach((type) => allTypes.push(type));
+    });
+    if (allTypes.length === 0) return true;
+    return allTypes.some((type) => {
+      let data = null;
+      Object.values(groupedData).forEach((catData) => {
+        if (catData.byType[type]) data = catData.byType[type];
+      });
       if (!data || !data.pricingResult) return true;
       return !data.pricingResult.TotalPrice || parseFloat(data.pricingResult.TotalPrice) <= 0;
     });
-  }, [multiData]);
-
-  const toggleAccordion = type => {
-    setExpandedStones(prev => ({ ...prev, [type]: !prev[type] }));
-  };
-
-  const updateMultiData = (type, key, val) => {
-    setMultiData(prev => ({
-      ...prev,
-      [type]: { ...prev[type], [key]: val },
-    }));
-  };
+  }, [groupedData]);
 
   const updateStone = (type, index, field, value) => {
-    setMultiData(prev => {
-      if (!prev[type] || !Array.isArray(prev[type].editableStones)) return prev;
-      const nextStones = [...prev[type].editableStones];
-      nextStones[index] = { ...nextStones[index], [field]: value };
-      return { ...prev, [type]: { ...prev[type], editableStones: nextStones } };
-    });
-  };
-
-  const deleteStone = (type, index) => {
-    setMultiData(prev => {
-      if (!prev[type] || !Array.isArray(prev[type].editableStones)) return prev;
-      return {
-        ...prev,
-        [type]: {
-          ...prev[type],
-          editableStones: prev[type].editableStones.filter((_, i) => i !== index),
-        },
-      };
-    });
-  };
-
-  const addStone = type => {
-    setMultiData(prev => {
-      if (!prev[type]) return prev;
-      return {
-        ...prev,
-        [type]: {
-          ...prev[type],
-          editableStones: [
-            ...(Array.isArray(prev[type].editableStones) ? prev[type].editableStones : []),
-            {
-              Type: type,
-              Color: 'WH',
-              Shape: 'RD',
-              MmSize: '',
-              SieveSize: '',
-              Weight: 0,
-              Pcs: 0,
-              CtWeight: 0,
-              Price: 0,
-              Markup: 0,
-            },
-          ],
-        },
-      };
-    });
-  };
-
-  const updateCommonMetal = (field, value) => {
-    const updated = { ...commonMetal, [field]: value };
-    setCommonMetal(updated);
-    setMultiData(prev => {
+    dataChangedRef.current = true;
+    setGroupedData((prev) => {
       const next = { ...prev };
-      Object.keys(next).forEach(type => {
-        next[type] = { ...next[type], editableMetal: { ...updated } };
+      Object.keys(next).forEach((cat) => {
+        if (next[cat].byType[type]) {
+          const typeData = next[cat].byType[type];
+          if (!Array.isArray(typeData.editableStones)) return;
+          const nextStones = [...typeData.editableStones];
+          nextStones[index] = { ...nextStones[index], [field]: value };
+          next[cat] = {
+            ...next[cat],
+            byType: {
+              ...next[cat].byType,
+              [type]: { ...typeData, editableStones: nextStones },
+            },
+          };
+        }
       });
       return next;
     });
   };
 
-  const markStoneTypeRecalculated = type => {
-    setStoneRecalcStatus(prev => ({ ...prev, [type]: true }));
+  const deleteStone = (type, index) => {
+    dataChangedRef.current = true;
+    setGroupedData((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((cat) => {
+        if (next[cat].byType[type]) {
+          const typeData = next[cat].byType[type];
+          if (!Array.isArray(typeData.editableStones)) return;
+          next[cat] = {
+            ...next[cat],
+            byType: {
+              ...next[cat].byType,
+              [type]: {
+                ...typeData,
+                editableStones: typeData.editableStones.filter((_, i) => i !== index),
+              },
+            },
+          };
+        }
+      });
+      return next;
+    });
   };
 
   const hasStoneTypeBeenRecalculated = type => Boolean(stoneRecalcStatus[type]);
@@ -439,165 +353,51 @@ export default function PricingCalci({ route }) {
     };
   };
 
-  const getPendingStoneTypesForRecalculation = useCallback(() => {
-    const allTypes = selectedStoneTypes.length > 0 ? selectedStoneTypes : Object.keys(multiData);
-    return allTypes.filter(type => !hasStoneTypeBeenRecalculated(type));
-  }, [multiData, selectedStoneTypes, stoneRecalcStatus]);
-
-  const toggleCommonSection = (section) => {
-    setExpandedCommonSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
-
-  const updateCommonCharges = (field, value) => {
-    setCommonCharges(prev => ({ ...prev, [field]: value }));
-    setMultiData(prev => {
+  const updateCommonMetal = (field, value) => {
+    dataChangedRef.current = true;
+    const updated = { ...commonMetal, [field]: value };
+    setCommonMetal(updated);
+    setGroupedData((prev) => {
       const next = { ...prev };
-      Object.keys(next).forEach(type => {
-        next[type] = {
-          ...next[type],
-          editableCharges: { ...next[type].editableCharges, [field]: value },
-        };
+      Object.keys(next).forEach((cat) => {
+        const newByType = { ...next[cat].byType };
+        Object.keys(newByType).forEach((type) => {
+          newByType[type] = { ...newByType[type], editableMetal: { ...updated } };
+        });
+        next[cat] = { ...next[cat], byType: newByType };
       });
       return next;
     });
   };
 
-  // const handleRecalculateSingleStone = async type => {
-  //   if (!clientId || !type) return;
-  //   let data = multiData[type];
-  //   const needsExtraction = !data || !hasStoneTypeBeenRecalculated(type);
-
-  //   setIsSingleStoneRecalc(true);
-  //   setSingleRecaculateData({ type, phase: needsExtraction ? 'extracting' : 'recalculating' });
-
-  //   try {
-  //     if (needsExtraction) {
-  //       if (!imageFile) {
-  //         showAlert(
-  //           'Image Required',
-  //           'Please use the already uploaded image to extract this stone type.',
-  //           'warning',
-  //         );
-  //         return;
-  //       }
-  //       const extractionResult = await extractStoneTypeFromImage(type);
-  //       if (!extractionResult?.data) {
-  //         showAlert(
-  //           'Extraction Failed',
-  //           `Failed to extract ${type} from the uploaded image.`,
-  //           'warning',
-  //         );
-  //         return;
-  //       }
-  //       let extractedData = buildStoneDataFromExtraction(type, extractionResult.data);
-  //       if (!extractedData) {
-  //         showAlert(
-  //           'Extraction Failed',
-  //           `Failed to extract ${type} from the uploaded image.`,
-  //           'warning',
-  //         );
-  //         return;
-  //       }
-  //       if (data?.editableCharges) {
-  //         extractedData = {
-  //           ...extractedData,
-  //           editableCharges: {
-  //             ...extractedData.editableCharges,
-  //             ...data.editableCharges,
-  //           },
-  //         };
-  //       }
-  //       data = extractedData;
-  //       setMultiData(prev => ({ ...prev, [type]: data }));
-  //       setSingleRecaculateData({ type, phase: 'recalculating' });
-  //     }
-
-  //     const canCalc = validatePricingData(type);
-  //     if (!canCalc) return;
-
-  //     const payload = buildRecalculatePayload({
-  //       clientId,
-  //       type,
-  //       data,
-  //       metalKt,
-  //       selectedClient,
-  //       commonMetal,
-  //       commonCharges,
-  //     });
-
-  //     const result = await calculatePricing(payload).unwrap();
-  //     setMultiData(prev => {
-  //       const next = { ...prev };
-  //       next[type] = {
-  //         imageData: prev[type]?.imageData || data.imageData || null,
-  //         editableStones: result.Stones?.map(s => ({ Type: type, ...s })) || [],
-  //         editableMetal: {
-  //           Weight: result.Metal?.Weight ?? prev[type]?.editableMetal?.Weight ?? 0,
-  //           Quality: result.Metal?.Quality || prev[type]?.editableMetal?.Quality || metalKt,
-  //           Rate: result.Metal?.Rate ?? prev[type]?.editableMetal?.Rate ?? 0,
-  //         },
-  //         editableCharges: {
-  //           Loss: result.Client?.Loss ?? prev[type]?.editableCharges?.Loss ?? 0,
-  //           Labour: result.Client?.Labour ?? prev[type]?.editableCharges?.Labour ?? 0,
-  //           ExtraCharges: result.Client?.ExtraCharges ?? prev[type]?.editableCharges?.ExtraCharges ?? 0,
-  //           GoldDuties: result.Client?.GoldDuties ?? prev[type]?.editableCharges?.GoldDuties ?? 0,
-  //           SilverAndLabsDuties: result.Client?.SilverAndLabsDuties ?? prev[type]?.editableCharges?.SilverAndLabsDuties ?? 0,
-  //           LossAndLabourDuties: result.Client?.LossAndLabourDuties ?? prev[type]?.editableCharges?.LossAndLabourDuties ?? 0,
-  //         },
-  //         dutyRates: {
-  //           UndercutPrice:
-  //             prev[type]?.dutyRates?.UndercutPrice !== undefined
-  //               ? prev[type].dutyRates.UndercutPrice
-  //               : result.Client?.UndercutPrice,
-  //           UndercutPriceTouched: prev[type]?.dutyRates?.UndercutPriceTouched ?? false,
-  //           NaturalDuties:
-  //             prev[type]?.dutyRates?.NaturalDuties !== undefined
-  //               ? prev[type].dutyRates.NaturalDuties
-  //               : result.Client?.NaturalDuties ?? 0,
-  //           LabDuties:
-  //             prev[type]?.dutyRates?.LabDuties !== undefined
-  //               ? prev[type].dutyRates.LabDuties
-  //               : result.Client?.LabDuties ?? 0,
-  //         },
-  //         pricingResult: result,
-  //       };
-  //       return next;
-  //     });
-  //     setStoneRecalcStatus(prev => ({ ...prev, [type]: true }));
-  //     setExpandedStones(prev => ({ ...prev, [type]: true }));
-  //     setCommonMetal(prev => ({
-  //       Weight: result.Metal?.Weight?.toString() || prev.Weight,
-  //       Rate: result.Metal?.Rate?.toString() || prev.Rate,
-  //     }));
-  //     setCommonCharges(prev => ({
-  //       Loss: result.Client?.Loss?.toString() || prev.Loss,
-  //       Labour: result.Client?.Labour?.toString() || prev.Labour,
-  //       ExtraCharges: result.Client?.ExtraCharges?.toString() || prev.ExtraCharges,
-  //       GoldDuties: result.Client?.GoldDuties?.toString() || prev.GoldDuties,
-  //       SilverAndLabsDuties: result.Client?.SilverAndLabsDuties?.toString() || prev.SilverAndLabsDuties,
-  //       LossAndLabourDuties: result.Client?.LossAndLabourDuties?.toString() || prev.LossAndLabourDuties,
-  //     }));
-  //     showAlert('Recalculated', `${type} recalculated successfully`, 'success');
-  //   } catch (error) {
-  //     console.error(`❌ Single stone recalculation failed for ${type}:`, error);
-  //     showAlert('Recalculation Failed', `Failed to recalculate ${type}.`, 'error');
-  //   } finally {
-  //     setIsSingleStoneRecalc(false);
-  //     setSingleRecaculateData(null);
-  //   }
-  // };
+  const toggleCommonSection = (section) => {
+    setExpandedCommonSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
 
   const handleRecalculateAll = async () => {
-    const selectedTypes = selectedStoneTypes.length > 0 ? selectedStoneTypes : Object.keys(multiData);
+    dataChangedRef.current = false;
+    const selectedTypes = selectedStoneTypes.length > 0 ? selectedStoneTypes : [];
+    Object.values(groupedData).forEach((catData) => {
+      catData.types.forEach((type) => {
+        if (!selectedTypes.includes(type)) selectedTypes.push(type);
+      });
+    });
     if (selectedTypes.length === 0 || !clientId) return;
 
-    setExpandedStones({});
     setIsRecalculating(true);
 
-    const snapshot = { ...multiData };
     const newTypes = selectedTypes.filter(
-      type => !snapshot[type] || !hasStoneTypeBeenRecalculated(type),
+      type => !hasStoneTypeBeenRecalculated(type),
     );
+
+    const rawMultiData = {};
+    Object.values(groupedData).forEach((catData) => {
+      catData.types.forEach((type) => {
+        if (catData.byType[type]) {
+          rawMultiData[type] = catData.byType[type];
+        }
+      });
+    });
 
     if (newTypes.length > 0) {
       if (!imageFile) {
@@ -619,17 +419,10 @@ export default function PricingCalci({ route }) {
         const type = newTypes[i];
         if (settled.status === 'fulfilled' && settled.value?.data) {
           const data = settled.value.data;
-          const existingData = snapshot[type];
           const extracted = buildStoneDataFromExtraction(type, data);
-          snapshot[type] = existingData
-            ? {
-                ...extracted,
-                editableCharges: {
-                  ...extracted.editableCharges,
-                  ...existingData.editableCharges,
-                },
-              }
-            : extracted;
+          if (extracted) {
+            rawMultiData[type] = extracted;
+          }
         } else {
           failedExtractionTypes.push(type);
         }
@@ -646,26 +439,18 @@ export default function PricingCalci({ route }) {
       }
     }
 
-    selectedTypes.forEach(type => {
-      if (snapshot[type]) {
-        snapshot[type] = {
-          ...snapshot[type],
-          editableMetal: { ...snapshot[type].editableMetal, Quality: metalKt },
-        };
-      }
-    });
-    setMultiData(snapshot);
+    const allTypeEntries = splitGroupedDataForRecalc(
+      groupStoneDataByCategory(rawMultiData),
+    );
 
-    const payloads = selectedTypes.map(type => ({
+    const payloads = allTypeEntries.map(({ type, data }) => ({
       type,
       payload: buildRecalculatePayload({
         clientId,
         type,
-        data: snapshot[type],
+        data,
         metalKt,
         selectedClient,
-        commonMetal,
-        commonCharges,
       }),
     }));
 
@@ -688,46 +473,26 @@ export default function PricingCalci({ route }) {
     });
 
     if (succeededTypes.length > 0) {
-      setMultiData(prev => {
+      const updatedGrouped = regroupApiResults(succeededTypes, groupedData);
+      setGroupedData((prev) => {
         const next = { ...prev };
-        succeededTypes.forEach(({ type, result }) => {
-          next[type] = {
-            imageData: prev[type]?.imageData || null,
-            editableStones: result.Stones?.map(s => ({ Type: type, ...s })) || [],
-            editableMetal: {
-              Weight: result.Metal?.Weight ?? 0,
-              Quality: metalKt,
-              Rate: result.Metal?.Rate ?? 0,
-            },
-            editableCharges: {
-              Loss: result.Client?.Loss ?? prev[type]?.editableCharges?.Loss ?? 0,
-              Labour: result.Client?.Labour ?? prev[type]?.editableCharges?.Labour ?? 0,
-              ExtraCharges: result.Client?.ExtraCharges ?? prev[type]?.editableCharges?.ExtraCharges ?? 0,
-              GoldDuties: result.Client?.GoldDuties ?? prev[type]?.editableCharges?.GoldDuties ?? 0,
-              SilverAndLabsDuties: result.Client?.SilverAndLabsDuties ?? prev[type]?.editableCharges?.SilverAndLabsDuties ?? 0,
-              LossAndLabourDuties: result.Client?.LossAndLabourDuties ?? prev[type]?.editableCharges?.LossAndLabourDuties ?? 0,
-            },
-            dutyRates: {
-              UndercutPrice:
-                prev[type]?.dutyRates?.UndercutPrice !== undefined
-                  ? prev[type].dutyRates.UndercutPrice
-                  : result.Client?.UndercutPrice,
-              UndercutPriceTouched: prev[type]?.dutyRates?.UndercutPriceTouched ?? false,
-              NaturalDuties:
-                prev[type]?.dutyRates?.NaturalDuties !== undefined
-                  ? prev[type].dutyRates.NaturalDuties
-                  : result.Client?.NaturalDuties ?? 0,
-              LabDuties:
-                prev[type]?.dutyRates?.LabDuties !== undefined
-                  ? prev[type].dutyRates.LabDuties
-                  : result.Client?.LabDuties ?? 0,
-            },
-            pricingResult: result,
-          };
+        Object.keys(updatedGrouped).forEach((cat) => {
+          if (next[cat]) {
+            next[cat] = {
+              ...next[cat],
+              byType: {
+                ...next[cat].byType,
+                ...updatedGrouped[cat].byType,
+              },
+            };
+          } else {
+            next[cat] = updatedGrouped[cat];
+          }
         });
         return next;
       });
-      setStoneRecalcStatus(prev => {
+
+      setStoneRecalcStatus((prev) => {
         const next = { ...prev };
         succeededTypes.forEach(({ type }) => {
           next[type] = true;
@@ -735,27 +500,13 @@ export default function PricingCalci({ route }) {
         return next;
       });
 
-      setExpandedStones(prev => {
-        const next = {};
-        succeededTypes.forEach(({ type }) => {
-          next[type] = false;
-        });
-        return next;
-      });
-
       const first = succeededTypes[0];
-      setCommonMetal({
-        Weight: first.result.Metal?.Weight?.toString() || commonMetal.Weight,
-        Rate: first.result.Metal?.Rate?.toString() || commonMetal.Rate,
-      });
-      setCommonCharges({
-        Loss: first.result.Client?.Loss?.toString() || commonCharges.Loss,
-        Labour: first.result.Client?.Labour?.toString() || commonCharges.Labour,
-        ExtraCharges: first.result.Client?.ExtraCharges?.toString() || commonCharges.ExtraCharges,
-        GoldDuties: first.result.Client?.GoldDuties?.toString() || commonCharges.GoldDuties,
-        SilverAndLabsDuties: first.result.Client?.SilverAndLabsDuties?.toString() || commonCharges.SilverAndLabsDuties,
-        LossAndLabourDuties: first.result.Client?.LossAndLabourDuties?.toString() || commonCharges.LossAndLabourDuties,
-      });
+      if (first) {
+        setCommonMetal({
+          Weight: first.result.Metal?.Weight ? first.result.Metal.Weight.toString() : commonMetal.Weight,
+          Rate: first.result.Metal?.Rate ? first.result.Metal.Rate.toString() : commonMetal.Rate,
+        });
+      }
     }
 
     setIsRecalculating(false);
@@ -766,6 +517,8 @@ export default function PricingCalci({ route }) {
       showAlert('Recalculated', 'All types recalculated successfully', 'success');
     }
   };
+
+  handleRecalculateAllRef.current = handleRecalculateAll;
 
   const handleImagePick = async () => {
     if (!clientId) {
@@ -821,8 +574,7 @@ export default function PricingCalci({ route }) {
           );
 
           const resultsArray = await Promise.all(requests);
-          const newMultiData = {};
-          const newExpanded = {};
+          const rawMultiData = {};
 
           resultsArray.forEach(({ type, data }) => {
             const p = data.pricing || data.extractedData || data;
@@ -838,9 +590,8 @@ export default function PricingCalci({ route }) {
               extractedData.TotalPieces > 0;
 
             if (hasData) {
-              newMultiData[type] = {
+              rawMultiData[type] = {
                 imageData: data,
-                // Ensure Type is set if missing
                 editableStones: (p.Stones || []).map(s => ({
                   Type: type,
                   ...s,
@@ -854,46 +605,56 @@ export default function PricingCalci({ route }) {
                   Loss: p.Client?.Loss ?? 10,
                   Labour: p.Client?.Labour ?? 7,
                   ExtraCharges: p.Client?.ExtraCharges ?? 0,
+                  GoldDuties: p.Client?.GoldDuties ?? 0,
+                  SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
+                  LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
                 },
                 dutyRates: {
                   UndercutPrice: p.Client?.UndercutPrice ?? undefined,
                   UndercutPriceTouched: false,
                   NaturalDuties: p.Client?.NaturalDuties ?? 0,
                   LabDuties: p.Client?.LabDuties ?? 0,
-                  GoldDuties: p.Client?.GoldDuties ?? 0,
-                  SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
-                  LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
                 },
                 pricingResult: p,
               };
-              newExpanded[type] = true;
             }
           });
 
-          if (Object.keys(newMultiData).length === 0) {
+          if (Object.keys(rawMultiData).length === 0) {
             showAlert(
               'No Data Found',
               'No pricing data was extracted from the image.',
               'warning',
             );
             setImageFile(null);
-            setMultiData({});
+            setGroupedData({});
             setStoneRecalcStatus({});
           } else {
-            setMultiData(newMultiData);
-            setExpandedStones(newExpanded);
+            const grouped = groupStoneDataByCategory(rawMultiData);
+            setGroupedData(grouped);
+            const allTypes = [];
+            Object.values(grouped).forEach((catData) => {
+              catData.types.forEach((type) => allTypes.push(type));
+            });
             setStoneRecalcStatus(
-              Object.keys(newMultiData).reduce((acc, type) => {
+              allTypes.reduce((acc, type) => {
                 acc[type] = true;
                 return acc;
               }, {}),
             );
-            const firstType = Object.keys(newMultiData)[0];
+            const firstType = allTypes[0];
             if (firstType) {
-              setCommonMetal(newMultiData[firstType].editableMetal);
-              setCommonCharges({
-                ...newMultiData[firstType].editableCharges,
+              let firstData = null;
+              Object.values(grouped).forEach((catData) => {
+                if (catData.byType[firstType]) firstData = catData.byType[firstType];
               });
+              if (firstData) {
+                const m = firstData.editableMetal;
+                setCommonMetal({
+                  Weight: m.Weight ? String(m.Weight) : commonMetal.Weight,
+                  Rate: m.Rate ? String(m.Rate) : commonMetal.Rate,
+                });
+              }
             }
           }
       } catch (apiError) {
@@ -914,8 +675,15 @@ export default function PricingCalci({ route }) {
   };
 
   const buildPricingHtml = useCallback(() => {
-    const activeTypes = Object.keys(multiData);
-    if (activeTypes.length === 0) return '';
+    const allTypes = [];
+    Object.values(groupedData).forEach((catData) => {
+      catData.types.forEach((type) => {
+        if (catData.byType[type]) {
+          allTypes.push({ type, data: catData.byType[type] });
+        }
+      });
+    });
+    if (allTypes.length === 0) return '';
 
     const clientName =
       clients.find(c => c.id === clientId || c._id === clientId)?.name || 'N/A';
@@ -925,9 +693,8 @@ export default function PricingCalci({ route }) {
       day: 'numeric',
     });
 
-    let sectionsHtml = activeTypes
-      .map(type => {
-        const data = multiData[type];
+    let sectionsHtml = allTypes
+      .map(({ type, data }) => {
         if (!data) return '';
         const result = data.pricingResult;
 
@@ -1059,7 +826,7 @@ export default function PricingCalci({ route }) {
       .join('');
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>@page{margin:0;padding:0}*{margin:0;padding:0;box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;padding:10px;color:#1A1A1A}.header{text-align:center;margin-bottom:12px;border-bottom:2px solid #143F45;padding-bottom:8px}.header h1{color:#143F45;margin:0 0 4px 0;font-size:22px}.header p{margin:2px 0;font-size:12px}.info-grid{display:table;width:100%;margin-bottom:10px}.info-row{display:table-row}.info-label{display:table-cell;padding:5px;font-weight:bold;width:40%;border-bottom:1px solid #F3F4F6;font-size:11px}.info-value{display:table-cell;padding:5px;border-bottom:1px solid #F3F4F6;font-size:11px}table{width:100%;border-collapse:collapse;margin:10px 0}th{background:#8B4513;color:white;padding:6px 3px;font-size:10px;border:1px solid #E5E7EB}td{padding:5px 3px;border:1px solid #E5E7EB;font-size:10px}.total-section{background:#F8F9FB;padding:12px;border-radius:4px;margin-top:12px}.total-row{display:flex;justify-content:space-between;padding:4px 0;font-size:11px}.grand-total{font-size:14px;font-weight:bold}.footer{text-align:center;margin-top:15px;padding-top:8px;border-top:1px solid #F3F4F6;color:#9CA3AF;font-size:9px}.section{page-break-inside:avoid;border:1px solid #eee;padding:12px;border-radius:4px;margin-bottom:12px}.section h2{color:#143F45;border-bottom:1px solid #143F45;padding-bottom:6px;margin:0 0 10px 0;font-size:16px}.section h3{background:#143F45;color:white;padding:5px 6px;font-size:12px;margin:10px 0 6px 0}</style></head><body><div class="header"><h1>Chandra Jewels</h1><p>Multi-Stone Pricing Report - ${clientName}</p><p>${currentDate}</p></div>${sectionsHtml}<div class="footer"><p>Generated by Chandra Jewels Management App</p><p>This is a computer-generated document and does not require a signature</p></div></body></html>`;
-  }, [multiData, clients, clientId]);
+  }, [groupedData, clients, clientId]);
 
   const generatePdfFile = useCallback(async () => {
     if (typeof generatePDFModule !== 'function')
@@ -1094,6 +861,41 @@ export default function PricingCalci({ route }) {
       if (e?.message && !e.message.includes('cancel'))
         showAlert('Share Failed', 'Failed to share PDF.', 'error');
     }
+  };
+
+  const findTypeData = (type) => {
+    let found = null;
+    Object.values(groupedData).forEach((catData) => {
+      if (catData.byType[type]) found = catData.byType[type];
+    });
+    return found;
+  };
+
+  const openSingleStoneModal = (catData) => {
+    if (catData) {
+      setSingleStoneCatData(catData);
+      setSingleStoneModalKey(k => k + 1);
+      setShowSingleStoneModal(true);
+    }
+  };
+
+  const handleSingleStoneRecalculated = (type, updatedData) => {
+    setGroupedData(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(cat => {
+        if (next[cat].byType[type]) {
+          next[cat] = {
+            ...next[cat],
+            byType: {
+              ...next[cat].byType,
+              [type]: updatedData,
+            },
+          };
+        }
+      });
+      return next;
+    });
+    setStoneRecalcStatus(prev => ({ ...prev, [type]: true }));
   };
 
   const clientOptions = clients.map(c => ({
@@ -1235,6 +1037,7 @@ export default function PricingCalci({ route }) {
                     isSelected && styles.dropdownOptionSelected,
                   ]}
                   onPress={() => {
+                    dataChangedRef.current = true;
                     setSelectedStoneTypes(prev =>
                       isSelected
                         ? prev.filter(v => v !== opt.value)
@@ -1365,7 +1168,7 @@ export default function PricingCalci({ route }) {
                   <TouchableOpacity
                     onPress={() => {
                       setImageFile(null);
-                      setMultiData({});
+                      setGroupedData({});
                     }}
                   >
                     <Icon name="close" size={20} color={colors.error} />
@@ -1384,7 +1187,7 @@ export default function PricingCalci({ route }) {
           </View>
         </Card>
 
-        {Object.keys(multiData).length > 0 && (
+        {Object.keys(groupedData).length > 0 && (
           <Card style={[styles.card, { marginTop: 16, borderBottomWidth: 0 }]}>
 
             {(!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && (
@@ -1402,18 +1205,21 @@ export default function PricingCalci({ route }) {
               onPress={() => toggleCommonSection('metal')}
             >
               <Text style={styles.commonSectionTitle}>Metal Weight & Rate</Text>
-              <Icon
-                name={expandedCommonSections.metal ? 'expand-less' : 'expand-more'}
-                size={20}
-                color={colors.textSecondary}
-              />
+        
             </TouchableOpacity>
-            {expandedCommonSections.metal && (
+           
               <View style={styles.chargesRow}>
                 <View style={styles.chargeField}>
-                  <Text style={styles.fieldLabel}>Weight (g)</Text>
+                  <Text style={[
+                    styles.fieldLabel,
+                    (!commonMetal.Weight || parseFloat(commonMetal.Weight) <= 0) && styles.fieldLabelError,
+                  ]}>Weight (g) *</Text>
                   <TextInput
-                    style={styles.fieldInput}
+                    ref={metalWeightRef}
+                    style={[
+                      styles.fieldInput,
+                      (!commonMetal.Weight || parseFloat(commonMetal.Weight) <= 0) && styles.fieldInputError,
+                    ]}
                     keyboardType="decimal-pad"
                     value={String(commonMetal.Weight || '')}
                     onChangeText={v => updateCommonMetal('Weight', v)}
@@ -1441,552 +1247,69 @@ export default function PricingCalci({ route }) {
                   />
                 </View>
               </View>
-            )}
-
-            {/* Charges Section */}
-            <TouchableOpacity
-              style={styles.commonSectionHeader}
-              onPress={() => toggleCommonSection('charges')}
-            >
-              <Text style={styles.commonSectionTitle}>Client Metal Charges & Duties
-              </Text>
-              <Icon
-                name={expandedCommonSections.charges ? 'expand-less' : 'expand-more'}
-                size={20}
-                color={colors.textSecondary}
-              />
-            </TouchableOpacity>
-            {expandedCommonSections.charges && (
-              <View style={styles.chargesRow}>
-                <View style={styles.chargeField}>
-                  <Text style={styles.fieldLabel}>Loss (%)</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    keyboardType="decimal-pad"
-                    value={String(commonCharges.Loss || '')}
-                    onChangeText={v => updateCommonCharges('Loss', v)}
-                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                  />
-                </View>
-                <View style={styles.chargeField}>
-                  <Text style={styles.fieldLabel}>Labour ($/g)</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    keyboardType="decimal-pad"
-                    value={String(commonCharges.Labour || '')}
-                    onChangeText={v => updateCommonCharges('Labour', v)}
-                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                  />
-                </View>
-                <View style={styles.chargeField}>
-                  <Text style={styles.fieldLabel}>Extra (%)</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    keyboardType="decimal-pad"
-                    value={String(commonCharges.ExtraCharges || '')}
-                    onChangeText={v => updateCommonCharges('ExtraCharges', v)}
-                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                  />
-                </View>
-              </View>
-            )}
-            {expandedCommonSections.charges && (
-              <View style={styles.chargesRow}>
-                {getMetalDependentDuties(metalKt).map(fieldKey => (
-                  <View key={fieldKey} style={styles.chargeField}>
-                    <Text style={styles.fieldLabel}>{DUTY_LABELS[fieldKey]}</Text>
-                    <TextInput
-                      style={styles.fieldInput}
-                      keyboardType="decimal-pad"
-                      value={String(commonCharges[fieldKey] ?? '')}
-                      onChangeText={v => updateCommonCharges(fieldKey, v)}
-                      onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                    />
-                  </View>
-                ))}
-              </View>
-            )}
+   
 
           </Card>
         )}
 
         {/* ACCORDION SECTIONS */}
-        {Object.keys(multiData).map(type => {
-          const data = multiData[type];
-          if (!data) return null;
-          const isExpanded = expandedStones[type];
-          const canCalc = validatePricingData(type);
-          const pricingResult = data.pricingResult;
+        {Object.entries(groupedData).map(([category, catData]) => {
+          if (!catData || !catData.types || catData.types.length === 0) return null;
 
-          // Identify stones with missing data exactly as your original code did
-          const missingStones = (Array.isArray(data.editableStones) ? data.editableStones : []).filter(
-            stone => parseFloat(stone.Price) <= 0,
-          );
+          const categoryTotal = catData.types.reduce((sum, type) => {
+            const typeData = catData.byType[type];
+            return sum + (typeData?.pricingResult?.TotalPrice || 0);
+          }, 0);
+
+          const hasMissing = catData.types.some(type => {
+            const d = catData.byType[type];
+            return d?.editableStones?.some(s => parseFloat(s.Price) <= 0);
+          });
 
           return (
             <Card
-              key={type}
+              key={category}
               style={[
                 styles.card,
                 { marginTop: 16, padding: 0, overflow: 'hidden' },
               ]}
             >
-
-                {!canCalc && (
-                        <View style={styles.validationWarning}>
-                          <Icon
-                            name="warning"
-                            size={16}
-                            color={colors.warning}
-                          />
-                          <Text style={styles.validationWarningText}>
-                            Fill all stone prices before
-                            recalculating
-                          </Text>
-                        </View>
-                      )}
+              {hasMissing && (
+                <View style={styles.validationWarning}>
+                  <Icon name="warning" size={16} color={colors.warning} />
+                  <Text style={styles.validationWarningText}>
+                    Fill all stone prices before recalculating
+                  </Text>
+                </View>
+              )}
               <TouchableOpacity
                 style={styles.accordionHeader}
-                onPress={() => toggleAccordion(type)}
+                onPress={() => openSingleStoneModal(catData)}
               >
                 <View
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
                 >
                   <Icon name="diamond" size={20} color={colors.primary} />
-                  <Text style={styles.accordionTitle}>{type} Pricing</Text>
+                  <Text style={styles.accordionTitle}>{catData.label} Pricing</Text>
                 </View>
-                <View
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                <TouchableOpacity
+                  style={styles.previewSummaryBtn}
+                  onPress={() => {
+                    const entries = catData.types
+                      .map(type => catData.byType[type]?.pricingResult)
+                      .filter(Boolean);
+                    navigation.navigate('PricingPreview', {
+                      pricingEntries: entries,
+                      clientName: clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client',
+                      metalKt,
+                    });
+                  }}
+                  activeOpacity={0.8}
                 >
-                  <Text style={styles.accordionTotal}>
-                    ${(pricingResult?.TotalPrice || 0).toFixed(2)}
-                  </Text>
-                  <Icon
-                    name={isExpanded ? 'expand-less' : 'expand-more'}
-                    size={24}
-                    color={colors.textSecondary}
-                  />
-                </View>
+                  <Icon name="visibility" size={16} color={colors.textWhite} />
+                  <Text style={styles.previewSummaryBtnText}>Preview</Text>
+                </TouchableOpacity>
               </TouchableOpacity>
-
-              {isExpanded && (
-                <View style={styles.accordionBody}>
-                  {missingStones.length > 0 && (
-                    <>
-                      <Text style={styles.subSectionTitle}>
-                        Missing Stones Data
-                      </Text>
-                      <View style={styles.compactTableWrapper}>
-                        <View style={styles.compactTableHeader}>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 44 }]}
-                          >
-                            Type
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 42 }]}
-                          >
-                            MM
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 30 }]}
-                          >
-                            Col
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 30 }]}
-                          >
-                            Shp
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 36 }]}
-                          >
-                            Sieve
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 36 }]}
-                          >
-                            Wt
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 30 }]}
-                          >
-                            Pcs
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 36 }]}
-                          >
-                            CtWt
-                          </Text>
-                          <Text
-                            style={[styles.compactTableHeaderText, { width: 42 }]}
-                          >
-                            $/Ct
-                          </Text>
-                        </View>
-
-                        <ScrollView
-                          style={styles.compactTableBody}
-                          nestedScrollEnabled
-                        >
-                          {missingStones.map((stone, i) => {
-                            const originalIndex =
-                              Array.isArray(data.editableStones) ? data.editableStones.indexOf(stone) : -1;
-                            return (
-                              <TouchableOpacity
-                                key={originalIndex}
-                                style={styles.compactTableRow}
-                                onPress={() => {
-                                  setEditingContext({ type, index: originalIndex });
-                                  setEditModalVisible(true);
-                                }}
-                              >
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 44,
-                                      fontFamily: !stone.Type
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.Type || type}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 42,
-                                      color: !stone.MmSize
-                                        ? colors.error
-                                        : colors.textPrimary,
-                                      fontFamily: !stone.MmSize
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.MmSize || '-'}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 30,
-                                      color: !stone.Color
-                                        ? colors.error
-                                        : colors.textPrimary,
-                                      fontFamily: !stone.Color
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.Color || '-'}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 30,
-                                      color: !stone.Shape
-                                        ? colors.error
-                                        : colors.textPrimary,
-                                      fontFamily: !stone.Shape
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.Shape || '-'}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 36,
-                                      color: !stone.SieveSize
-                                        ? colors.error
-                                        : colors.textPrimary,
-                                      fontFamily: !stone.SieveSize
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.SieveSize || '-'}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 36,
-                                      color: !stone.Weight
-                                        ? colors.error
-                                        : colors.textPrimary,
-                                      fontFamily: !stone.Weight
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.Weight ?? 0}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 30,
-                                      color: !stone.Pcs
-                                        ? colors.error
-                                        : colors.textPrimary,
-                                      fontFamily: !stone.Pcs
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.Pcs ?? 0}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 36,
-                                      color: !stone.CtWeight
-                                        ? colors.error
-                                        : colors.textPrimary,
-                                      fontFamily: !stone.CtWeight
-                                        ? fonts.bold
-                                        : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.CtWeight ?? 0}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.compactTableCell,
-                                    {
-                                      width: 42,
-                                      color:
-                                        !stone.Price || parseFloat(stone.Price) <= 0
-                                          ? colors.error
-                                          : colors.textPrimary,
-                                      fontFamily:
-                                        !stone.Price || parseFloat(stone.Price) <= 0
-                                          ? fonts.bold
-                                          : fonts.regular,
-                                    },
-                                  ]}
-                                >
-                                  {stone.Price ?? 0}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </ScrollView>
-                      </View>
-                    </>
-                  )}
-
-                  {/* Stone Charges & Duties (collapsible) */}
-                  {pricingResult && getStoneDependentDuties(type, data.editableMetal?.Quality || metalKt).length > 0 && (
-                    <>
-                      <TouchableOpacity
-                        style={styles.stoneChargesHeader}
-                        onPress={() => {
-                          const key = `stoneCharges_${type}`;
-                          setExpandedStones(prev => ({ ...prev, [key]: !prev[key] }));
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <View style={styles.stoneChargesTitleRow}>
-                          <Icon name="diamond" size={16} color={colors.primary} />
-                          <Text style={styles.stoneChargesTitle}>Stone Charges & Duties</Text>
-                        </View>
-                        <Icon
-                          name={expandedStones[`stoneCharges_${type}`] ? 'expand-less' : 'expand-more'}
-                          size={20}
-                          color={colors.primary}
-                        />
-                      </TouchableOpacity>
-                      {expandedStones[`stoneCharges_${type}`] && (
-                        <View style={styles.stoneChargesExpanded}>
-                          <View style={styles.stoneChargesRow}>
-                            {getStoneDependentDuties(type, data.editableMetal?.Quality || metalKt).map(fieldKey => (
-                              <View key={fieldKey} style={styles.stoneChargeField}>
-                                <Text style={styles.stoneChargeLabel}>{DUTY_LABELS[fieldKey]}</Text>
-                                <TextInput
-                                  style={styles.stoneChargeInput}
-                                  keyboardType="decimal-pad"
-                                  value={String(
-                                    data.dutyRates?.[fieldKey]
-                                    ?? data.editableCharges?.[fieldKey]
-                                    ?? pricingResult.Client?.[fieldKey]
-                                    ?? ''
-                                  )}
-                                  onChangeText={v => {
-                                    updateMultiData(type, 'dutyRates', {
-                                      ...data.dutyRates,
-                                      [fieldKey]: v,
-                                      ...(fieldKey === 'UndercutPrice' ? { UndercutPriceTouched: true } : {}),
-                                    });
-                                  }}
-                                  onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                                />
-                              </View>
-                            ))}
-                          </View>
-                        </View>
-                      )}
-                    </>
-                  )}
-
-                  {/* Pricing Summary Block */}
-                  {pricingResult && (
-                    <>
-                      <Text style={styles.subSectionTitle}>
-                        Pricing Summary
-                      </Text>
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Metal Price</Text>
-                        <Text style={styles.summaryValue}>
-                          ${(pricingResult.MetalPrice || 0).toFixed(2)}
-                        </Text>
-                      </View>
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Diamonds Price</Text>
-                        <Text style={styles.summaryValue}>
-                          ${(pricingResult.DiamondsPrice || 0).toFixed(2)}
-                        </Text>
-                      </View>
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Duties Amount</Text>
-                        <Text style={styles.summaryValue}>
-                          ${(pricingResult.DutiesAmount || 0).toFixed(2)}
-                        </Text>
-                      </View>
-
-                      {pricingResult.Applicable && (
-                        <View style={styles.dutiesContainer}>
-                          <Text style={styles.dutiesTitle}>
-                            Applicable Duties:
-                          </Text>
-                          {Object.entries(pricingResult.Applicable).map(
-                            ([key, value]) =>
-                              value && (
-                                <View key={key} style={styles.dutyRow}>
-                                  <Icon
-                                    name="check-circle"
-                                    size={14}
-                                    color={colors.success}
-                                  />
-                                  <Text style={styles.dutyText}>
-                                    {key.replace(/([A-Z])/g, ' $1').trim()}
-                                  </Text>
-                                </View>
-                              ),
-                          )}
-                        </View>
-                      )}
-
-                      <View style={[styles.summaryRow, styles.totalRow]}>
-                        <Text style={styles.totalLabel}>Total Price</Text>
-                        <Text style={styles.totalValue}>
-                          ${(pricingResult.TotalPrice || 0).toFixed(2)}
-                        </Text>
-                      </View>
-
-                      {/* {pricingResult.Client && (
-                        <View style={styles.clientChargesContainer}>
-                          <Text style={styles.clientChargesTitle}>
-                            Client Charges Applied:
-                          </Text>
-                          <View style={styles.chargeDetailRow}>
-                            <Text style={styles.chargeDetailLabel}>Loss:</Text>
-                            <Text style={styles.chargeDetailValue}>
-                              {pricingResult.Client.Loss || 0}%
-                            </Text>
-                          </View>
-                          <View style={styles.chargeDetailRow}>
-                            <Text style={styles.chargeDetailLabel}>
-                              Labour:
-                            </Text>
-                            <Text style={styles.chargeDetailValue}>
-                              ${pricingResult.Client.Labour || 0}/g
-                            </Text>
-                          </View>
-                          <View style={styles.chargeDetailRow}>
-                            <Text style={styles.chargeDetailLabel}>
-                              Extra Charges:
-                            </Text>
-                            <Text style={styles.chargeDetailValue}>
-                              {pricingResult.Client.ExtraCharges || 0}%
-                            </Text>
-                          </View>
-                          {pricingResult.Client.UndercutPrice > 0 && (
-                            <View style={styles.chargeDetailRow}>
-                              <Text style={styles.chargeDetailLabel}>
-                                Undercut Price:
-                              </Text>
-                              <Text style={styles.chargeDetailValue}>
-                                ${pricingResult.Client.UndercutPrice || 0}/ct
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      )} */}
-
-                    
-                    </>
-                  )}
-
-                  {pricingResult?.ClientPricingMessage &&
-                  (Array.isArray(data.editableStones) ? data.editableStones.length : 0) > 0 ? (
-                    <View style={styles.clientMsgCard}>
-                      <View style={styles.clientMsgHeader}>
-                        <Text style={styles.clientMsgLabel}>
-                          Copy pricing format for your client
-                        </Text>
-                        <TouchableOpacity
-                          style={styles.copyBtn}
-                          onPress={() => handleCopyMsg(pricingResult.ClientPricingMessage)}
-                          activeOpacity={0.8}
-                        >
-                          <Icon
-                            name={copied ? 'check' : 'content-copy'}
-                            size={15}
-                            color={copied ? '#059669' : colors.primary}
-                          />
-                          <Text
-                            style={[
-                              styles.copyBtnText,
-                              copied && { color: '#059669' },
-                            ]}
-                          >
-                            {copied ? 'Copied!' : 'Copy'}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                      {Array.isArray(data.editableStones) && data.editableStones.length > 0 && (
-                        <TextInput
-                          style={styles.clientMsgInput}
-                          value={pricingResult.ClientPricingMessage}
-                          onChangeText={() => {}}
-                          multiline
-                          placeholder="No pricing message saved yet..."
-                          placeholderTextColor={colors.textSecondary}
-                          textAlignVertical="top"
-                          editable={false}
-                        />
-                      )}
-                    </View>
-                  ) : null}
-                </View>
-              )}
             </Card>
           );
         })}
@@ -1999,11 +1322,11 @@ export default function PricingCalci({ route }) {
             style={[
               styles.calculateButton,
               { flex: 1 },
-              (Object.keys(multiData).length === 0 || isRecalculating || !commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) &&
+              (Object.keys(groupedData).length === 0 || isRecalculating) &&
                 styles.calculateButtonDisabled,
             ]}
             onPress={handleRecalculateAll}
-            disabled={Object.keys(multiData).length === 0 || isRecalculating || !commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0}
+            disabled={Object.keys(groupedData).length === 0 || isRecalculating}
           >
             {isRecalculating ? (
               <ActivityIndicator size="small" color={colors.textWhite} />
@@ -2018,7 +1341,7 @@ export default function PricingCalci({ route }) {
             style={[
               styles.calculateButton,
               { flex: 1 },
-              (Object.keys(multiData).length === 0 || hasAnyMissingStoneData() || hasAnyZeroTotal()) &&
+              (Object.keys(groupedData).length === 0 || hasAnyMissingStoneData() || hasAnyZeroTotal()) &&
                 styles.calculateButtonDisabled,
             ]}
             onPress={() => {
@@ -2026,7 +1349,7 @@ export default function PricingCalci({ route }) {
               setShowPdfModal(true);
             }}
             disabled={
-              Object.keys(multiData).length === 0 || hasAnyMissingStoneData() || hasAnyZeroTotal()
+              Object.keys(groupedData).length === 0 || hasAnyMissingStoneData() || hasAnyZeroTotal()
             }
           >
             <Icon name="picture-as-pdf" size={20} color={colors.textWhite} />
@@ -2107,11 +1430,12 @@ export default function PricingCalci({ route }) {
             <ScrollView>
               {editingContext.type !== null &&
                 editingContext.index !== null &&
-                multiData[editingContext.type] &&
-                Array.isArray(multiData[editingContext.type].editableStones) &&
+                findTypeData(editingContext.type) &&
+                Array.isArray(findTypeData(editingContext.type).editableStones) &&
                 (() => {
+                  const typeData = findTypeData(editingContext.type);
                   const stone =
-                    multiData[editingContext.type].editableStones[
+                    typeData.editableStones[
                       editingContext.index
                     ];
                   if (!stone) return null;
@@ -2336,7 +1660,73 @@ export default function PricingCalci({ route }) {
         </View>
       </Modal>
 
-      <BrandedAlert {...alertConfig} onClose={hideAlert} />
+      <SingleStonePricing
+        key={singleStoneModalKey}
+        visible={showSingleStoneModal}
+        onClose={() => {
+          setShowSingleStoneModal(false);
+          setSingleStoneCatData(null);
+        }}
+        onDone={() => {
+          setShowSingleStoneModal(false);
+          const catKey = Object.keys(groupedDataRef.current).find(
+            k => groupedDataRef.current[k]?.label === singleStoneCatDataRef.current?.label
+          );
+          setTimeout(async () => {
+            if (handleRecalculateAllRef.current) {
+              await handleRecalculateAllRef.current();
+            }
+            await new Promise(r => setTimeout(r, 150));
+            const cat = catKey && groupedDataRef.current[catKey];
+            if (cat) {
+              setSingleStoneCatData(cat);
+              setSingleStoneModalKey(k => k + 1);
+              setShowSingleStoneModal(true);
+            }
+          }, 400);
+        }}
+        catData={singleStoneCatData}
+        clientId={clientId}
+        metalKt={metalKt}
+        selectedClient={selectedClient}
+        onRecalculated={handleSingleStoneRecalculated}
+        onModifyPricing={() => {}}
+        onPreviewSummary={() => {
+          setShowSingleStoneModal(false);
+          const allEntries = [];
+          Object.values(groupedDataRef.current).forEach(cat => {
+            cat.types.forEach(type => {
+              const d = cat.byType[type];
+              if (d?.pricingResult) allEntries.push(d.pricingResult);
+            });
+          });
+          navigation.navigate('PricingPreview', {
+            pricingEntries: allEntries,
+            clientName: clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client',
+            metalKt,
+          });
+        }}
+        onRequestRecalculate={() => {
+          setShowSingleStoneModal(false);
+          const catKey = Object.keys(groupedDataRef.current).find(
+            k => groupedDataRef.current[k]?.label === singleStoneCatDataRef.current?.label
+          );
+          setTimeout(async () => {
+            if (handleRecalculateAllRef.current) {
+              await handleRecalculateAllRef.current();
+            }
+            await new Promise(r => setTimeout(r, 150));
+            const cat = catKey && groupedDataRef.current[catKey];
+            if (cat) {
+              setSingleStoneCatData(cat);
+              setSingleStoneModalKey(k => k + 1);
+              setShowSingleStoneModal(true);
+            }
+          }, 400);
+        }}
+      />
+
+      {/* <BrandedAlert {...alertConfig} onClose={hideAlert} /> */}
     </View>
   );
 }
@@ -2484,12 +1874,20 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.textPrimary,
   },
-  accordionTotal: {
-    fontSize: fonts.md,
-    fontFamily: fonts.bold,
-    color: colors.primary,
+  previewSummaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  accordionBody: { padding: 16 },
+  previewSummaryBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: '#fff',
+  },
   commonSectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2503,123 +1901,6 @@ const styles = StyleSheet.create({
     fontSize: fonts.sm,
     fontFamily: fonts.bold,
     color: colors.textPrimary,
-  },
-  stoneChargesHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: colors.primaryExtraLight,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    borderRadius: 6,
-    marginTop: 10,
-  },
-  stoneChargesTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  stoneChargesTitle: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.bold,
-    color: colors.primary,
-  },
-  stoneChargesExpanded: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    padding: 10,
-    marginTop: -4,
-    marginBottom: 8,
-  },
-  stoneChargesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  stoneChargeField: {
-    width: '46%',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    padding: 8,
-  },
-  stoneChargeLabel: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  stoneChargeInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    backgroundColor: colors.backgroundSecondary,
-  },
-  subSectionTitle: {
-    fontSize: fonts.md,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    marginTop: 16,
-    marginBottom: 10,
-  },
-
-  compactTableWrapper: {
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-    backgroundColor: colors.background,
-    marginVertical: 8,
-  },
-  compactTableHeader: {
-    flexDirection: 'row',
-    backgroundColor: colors.primary,
-    paddingVertical: 6,
-  },
-  compactTableHeaderText: {
-    fontSize: 9,
-    fontFamily: fonts.bold,
-    color: colors.textWhite,
-    textAlign: 'center',
-  },
-  compactTableBody: { maxHeight: 180 },
-  compactTableRow: {
-    flexDirection: 'row',
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || colors.border,
-    backgroundColor: colors.background,
-  },
-  compactTableCell: {
-    fontSize: 9,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    textAlign: 'center',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addStoneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 6,
-    marginTop: 4,
-  },
-  addStoneButtonText: {
-    color: colors.textWhite,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm,
   },
 
   chargesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
@@ -2642,105 +1923,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || colors.border,
-  },
-  summaryLabel: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-  },
-  summaryValue: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  totalRow: {
-    borderBottomWidth: 0,
-    marginTop: 4,
-    paddingVertical: 10,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-  },
-  totalLabel: {
-    fontSize: fonts.md,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  totalValue: {
-    fontSize: fonts.md,
-    fontFamily: fonts.bold,
-    color: colors.primary,
-  },
-
-  dutiesContainer: {
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 8,
-    padding: 12,
-    marginVertical: 8,
-  },
-  dutiesTitle: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  dutyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 4,
-    gap: 8,
-  },
-  dutyText: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-  },
-
-  clientChargesContainer: {
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 8,
-    padding: 12,
-    marginVertical: 8,
-  },
-  clientChargesTitle: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  chargeDetailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  chargeDetailLabel: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-  },
-  chargeDetailValue: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-
-  recalcButton: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 6,
-  },
-  recalcButtonDisabled: { backgroundColor: colors.textSecondary, opacity: 0.5 },
   validationWarning: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2868,7 +2050,6 @@ const styles = StyleSheet.create({
   editModalFields: { padding: 16 },
   editFieldRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   editFieldHalf: { flex: 1 },
-  editFieldFull: { flex: 1 },
   editFieldLabel: {
     fontSize: fonts.xs,
     fontFamily: fonts.medium,

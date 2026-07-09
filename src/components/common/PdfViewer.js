@@ -44,7 +44,7 @@ const PdfViewer = ({ url, html, style }) => {
             javaScriptEnabled={true}
             domStorageEnabled={true}
             startInLoadingState={false}
-            scalesPageToFit={true}
+            scalesPageToFit={false}
             originWhitelist={['*']}
           />
         )}
