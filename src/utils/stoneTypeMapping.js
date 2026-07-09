@@ -1,30 +1,23 @@
-const STONE_CATEGORY_MAP = {
-  NaturalRegular: 'Natural',
-  NaturalLower: 'Natural',
-  NaturalHigher: 'Natural',
-  Natural: 'Natural',
-  type1: 'Natural',
-  type2: 'Natural',
-  type3: 'Natural',
-  Diamond: 'Natural',
-  Moissanite: 'Natural',
-  Other: 'Natural',
-  CVDLabGrown: 'LabGrown',
-  HPHTLabGrown: 'LabGrown',
-  LabGrown: 'LabGrown',
-  CVD: 'LabGrown',
-};
 
 const LAB_PATTERNS = [/lab/i, /cvd/i, /hpht/i];
 
-export const getStoneCategory = (type) => {
-  if (!type) return 'Unknown';
-  const mapped = STONE_CATEGORY_MAP[type];
-  if (mapped) return mapped;
+const classifyType = (type) => {
   for (const pattern of LAB_PATTERNS) {
     if (pattern.test(type)) return 'LabGrown';
   }
   return 'Natural';
+};
+
+export const buildStoneCategoryMap = (applicableStoneTypes = []) =>
+  applicableStoneTypes.reduce((map, type) => {
+    map[type] = classifyType(type);
+    return map;
+  }, {});
+
+export const getStoneCategory = (type, categoryMap = {}) => {
+  if (!type) return 'Unknown';
+  if (categoryMap[type]) return categoryMap[type];
+  return classifyType(type);
 };
 
 export const getStoneCategoryLabel = (category) => {
@@ -33,4 +26,11 @@ export const getStoneCategoryLabel = (category) => {
     case 'LabGrown': return 'Lab Grown';
     default: return category;
   }
+};
+
+export const getClientStoneOptions = (stoneTypesData = [], selectedClient = null) => {
+  const applicable = selectedClient?.ApplicableStoneTypes || [];
+  return stoneTypesData
+    .filter(st => applicable.length === 0 || applicable.includes(st.value))
+    .map(st => ({ label: st.label, value: st.value }));
 };

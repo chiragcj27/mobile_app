@@ -30,6 +30,7 @@ import {
   splitGroupedDataForRecalc,
   regroupApiResults,
 } from '../../utils/stoneDataGrouper';
+import { getClientStoneOptions, buildStoneCategoryMap } from '../../utils/stoneTypeMapping';
 import {
   useGetStoneTypesQuery,
   useGetMetalPricesQuery,
@@ -116,6 +117,7 @@ export default function PricingCalci({ route, navigation }) {
     }
     setGroupedData({});
     setStoneRecalcStatus({});
+    setCommonMetal({ Weight: '', Rate: '' });
     setMetalKt('18K');
     setImageFile(null);
     setEditModalVisible(false);
@@ -376,7 +378,7 @@ export default function PricingCalci({ route, navigation }) {
 
   const handleRecalculateAll = async () => {
     dataChangedRef.current = false;
-    const selectedTypes = selectedStoneTypes.length > 0 ? selectedStoneTypes : [];
+    const selectedTypes = [...(selectedStoneTypes.length > 0 ? selectedStoneTypes : [])];
     Object.values(groupedData).forEach((catData) => {
       catData.types.forEach((type) => {
         if (!selectedTypes.includes(type)) selectedTypes.push(type);
@@ -440,7 +442,7 @@ export default function PricingCalci({ route, navigation }) {
     }
 
     const allTypeEntries = splitGroupedDataForRecalc(
-      groupStoneDataByCategory(rawMultiData),
+      groupStoneDataByCategory(rawMultiData, stoneCategoryMap),
     );
 
     const payloads = allTypeEntries.map(({ type, data }) => ({
@@ -473,7 +475,7 @@ export default function PricingCalci({ route, navigation }) {
     });
 
     if (succeededTypes.length > 0) {
-      const updatedGrouped = regroupApiResults(succeededTypes, groupedData);
+      const updatedGrouped = regroupApiResults(succeededTypes, groupedData, stoneCategoryMap);
       setGroupedData((prev) => {
         const next = { ...prev };
         Object.keys(updatedGrouped).forEach((cat) => {
@@ -630,7 +632,7 @@ export default function PricingCalci({ route, navigation }) {
             setGroupedData({});
             setStoneRecalcStatus({});
           } else {
-            const grouped = groupStoneDataByCategory(rawMultiData);
+            const grouped = groupStoneDataByCategory(rawMultiData, stoneCategoryMap);
             setGroupedData(grouped);
             const allTypes = [];
             Object.values(grouped).forEach((catData) => {
@@ -902,14 +904,8 @@ export default function PricingCalci({ route, navigation }) {
     label: c.name || 'Unknown',
     value: c.id || c._id,
   }));
-  const clientApplicableStones = selectedClient?.ApplicableStoneTypes || [];
-  const stoneOptions = stoneTypesData
-    .filter(
-      st =>
-        clientApplicableStones.length === 0 ||
-        clientApplicableStones.includes(st.value),
-    )
-    .map(st => ({ label: st.label, value: st.value }));
+  const stoneOptions = getClientStoneOptions(stoneTypesData, selectedClient);
+  const stoneCategoryMap = buildStoneCategoryMap(selectedClient?.ApplicableStoneTypes || []);
   const metalQualityOptions = [
     { label: '10K', value: '10K' },
     { label: '14K', value: '14K' },

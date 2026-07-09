@@ -1,11 +1,11 @@
 import { getStoneCategory, getStoneCategoryLabel } from './stoneTypeMapping';
 
-export const groupStoneDataByCategory = (rawMultiData) => {
+export const groupStoneDataByCategory = (rawMultiData, categoryMap = {}) => {
   const grouped = {};
 
   Object.entries(rawMultiData).forEach(([type, data]) => {
     if (!data) return;
-    const category = getStoneCategory(type);
+    const category = getStoneCategory(type, categoryMap);
 
     if (!grouped[category]) {
       grouped[category] = {
@@ -37,11 +37,11 @@ export const splitGroupedDataForRecalc = (groupedData) => {
   return individual;
 };
 
-export const regroupApiResults = (apiResults, existingGroupedData) => {
+export const regroupApiResults = (apiResults, existingGroupedData, categoryMap = {}) => {
   const grouped = {};
 
   apiResults.forEach(({ type, result }) => {
-    const category = getStoneCategory(type);
+    const category = getStoneCategory(type, categoryMap);
 
     if (!grouped[category]) {
       grouped[category] = {
