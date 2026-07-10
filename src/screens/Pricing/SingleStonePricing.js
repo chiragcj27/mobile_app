@@ -282,7 +282,7 @@ export default function SingleStonePricing({
   }, [localCharges]);
 
   const getApplicableFields = useCallback((type) => {
-    const applicable = localGrouped[type]?.applicable;
+    const applicable = localGrouped[type]?.pricingResult?.Applicable;
     return CHARGE_FIELDS.filter(f => {
       if (!f.applicableKey) return true;
       if (!applicable) return true;

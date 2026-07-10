@@ -31,6 +31,7 @@ import PricingCalci from '../screens/Pricing/PricingCalculator';
 import ClientHandlerDashboardScreen from '../screens/ClientHandler/ClientHandlerDashboardScreen';
 import Reports from '../screens/Reports/reports'
 import JwelleryEstimate from '../screens/Pricing/JwelleryEstimate';
+import PricingPreviewScreen from '../screens/Pricing/previewScreen';
 // TEST SCREENS - Commented out for production
 // Uncomment these lines if you need to test notifications in the future
 // import FontTest from '../components/FontTest';
@@ -197,6 +198,15 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           <Stack.Screen
           name="PricingCalci"
           component={PricingCalci}/>
+
+          <Stack.Screen
+          name="PricingPreview"
+          component={PricingPreviewScreen}
+          options={{
+            headerShown: false,
+            presentation: 'modal',
+            gestureEnabled: true,
+          }}/>
 
           <Stack.Screen
           name="EstimateJwellery"

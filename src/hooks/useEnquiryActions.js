@@ -5,10 +5,10 @@ import Share from 'react-native-share';
 import XLSX from 'xlsx';
 import {
   useUpdateEnquiryMutation,
-  useApproveDesignVersionMutation,
+  useUpdateAssetDataMutation,
   useLazyGetEnquiryByIdQuery,
 } from '../store/api';
-import { STATUS, SUBSTATUS } from '../constants/enquiry';
+import { SUBSTATUS } from '../constants/enquiry';
 
 
 const getEnquiryId = (enquiry) =>
@@ -18,8 +18,8 @@ const getClientId = (enquiry) =>
   enquiry?.ClientId || enquiry?.clientId;
 
 export const useEnquiryActions = () => {
-  const [updateEnquiry, { isLoading: isUpdating }] = useUpdateEnquiryMutation();
-  const [approveDesignVersion, { isLoading: isApproving }] = useApproveDesignVersionMutation();
+  const [updateEnquiry] = useUpdateEnquiryMutation();
+  const [updateAssetData, { isLoading: isUpdating }] = useUpdateAssetDataMutation();
   const [triggerGetEnquiryById] = useLazyGetEnquiryByIdQuery();
   const [enquiryData, setEnquiryData] = useState(null);
 
@@ -48,6 +48,16 @@ export const useEnquiryActions = () => {
 
     console.log('[handleAcceptApproval] enquiryId:', enquiryId, 'hasCoral:', hasCoral, 'hasCad:', hasCad, 'hasApprovedCoral:', hasApprovedCoral, 'hasApprovedCad:', hasApprovedCad, 'coralVersion:', coralVersion, 'cadVersion:', cadVersion);
 
+    if (hasApprovedCoral && hasCad) {
+      await updateAssetData({
+        enquiryId,
+        type: 'cad',
+        version: cadVersion,
+        data: { IsApprovedVersion: true },
+      }).unwrap();
+      return { success: true };
+    }
+
     if (hasApprovedCad) {
       await updateEnquiry({
         id: enquiryId,
@@ -58,78 +68,51 @@ export const useEnquiryActions = () => {
       return { success: true };
     }
 
-    if (hasApprovedCoral && hasCad) {
-      await approveDesignVersion({
-        enquiryId,
-        designType: 'cad',
-        version: cadVersion,
-        intent: 'approveDesign',
-      }).unwrap();
-      await updateEnquiry({
-        id: enquiryId,
-        CurrentStatus: 'Cad',
-        CurrentSubStatus: SUBSTATUS.FU,
-        ClientId: getClientId(enquiry),
-        ...(assignedTo ? { AssignedTo: assignedTo } : {}),
-      }).unwrap();
-      return { success: true };
-    }
-
     if (hasCoral) {
-      await approveDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: 'coral',
+        type: 'coral',
         version: coralVersion,
-        intent: 'approveDesign',
+        data: { IsApprovedVersion: true },
       }).unwrap();
       return { success: true };
     }
 
     if (hasCad) {
-      await approveDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: 'cad',
+        type: 'cad',
         version: cadVersion,
-        intent: 'approveDesign',
+        data: { IsApprovedVersion: true },
       }).unwrap();
       return { success: true };
     }
 
-    await approveDesignVersion({
+    await updateAssetData({
       enquiryId,
-      designType: 'coral',
+      type: 'coral',
       version: '1',
-      intent: 'approveDesign',
+      data: { IsApprovedVersion: true },
     }).unwrap();
     return { success: true };
-  }, [approveDesignVersion, updateEnquiry]);
-
-  const handleUploadFinalCad = useCallback(async (enquiry) => {
-    const enquiryId = getEnquiryId(enquiry);
-    const raw = enquiry?._originalData || enquiry;
-    const cadData = raw?.Cad || [];
-    const lastCadVersion = cadData.length > 0 ? String(cadData[cadData.length - 1]?.Version || cadData.length) : '1';
-
-    const result = await approveDesignVersion({
-      enquiryId,
-      designType: 'cad',
-      version: lastCadVersion,
-      intent: 'finalVersion',
-    }).unwrap();
-    return { success: true };
-  }, [approveDesignVersion]);
+  }, [updateAssetData, updateEnquiry]);
 
   const handleMoveToOrderPlacement = useCallback(async (enquiry) => {
     const enquiryId = getEnquiryId(enquiry);
-    const clientId = getClientId(enquiry);
-    const result = await updateEnquiry({
-      id: enquiryId,
-      Status: STATUS.ORDER_PLACEMENT,
-      SubStatus: null,
-      ClientId: clientId,
+    const raw = enquiry?._originalData || enquiry;
+    const cadData = Array.isArray(raw?.Cad) ? raw.Cad : [];
+    const latestCadVersion = cadData.length > 0
+      ? String(cadData[cadData.length - 1]?.Version || cadData.length)
+      : '1';
+
+    await updateAssetData({
+      enquiryId,
+      type: 'cad',
+      version: latestCadVersion,
+      data: { IsFinalVersion: true },
     }).unwrap();
     return { success: true };
-  }, [updateEnquiry]);
+  }, [updateAssetData]);
 
   const handleFinalExcelGeneration = useCallback(async (enquiry) => {
     try {
@@ -503,13 +486,12 @@ export const useEnquiryActions = () => {
 
   return {
     handleAcceptApproval,
-    handleUploadFinalCad,
     handleMoveToOrderPlacement,
     handleFinalExcelGeneration,
     generateAndShareExcel,
     generateExcelPdf,
     fetchEnquiryById,
     enquiryData,
-    isLoading: isUpdating || isApproving,
+    isLoading: isUpdating,
   };
 };
