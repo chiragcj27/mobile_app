@@ -9,7 +9,7 @@ import {
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { useUploadDesignMutation } from '../../store/api';
+import { useUploadDesignMutation, useUpdateAssetDataMutation } from '../../store/api';
 import BrandedAlert from '../../components/common/BrandedAlert';
 
 let DocumentPicker;
@@ -29,6 +29,7 @@ export default function UploadExcelScreen({ route, navigation }) {
   const [selectedExcel, setSelectedExcel] = useState(null);
   const [uploadType, setUploadType] = useState(null);
   const [uploadDesign, { isLoading: isUploading }] = useUploadDesignMutation();
+  const [updateAssetData] = useUpdateAssetDataMutation();
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   const showAlert = (title, message, type = 'info', buttons = []) =>
     setAlertConfig({ visible: true, title, message, type, buttons });
@@ -174,6 +175,23 @@ export default function UploadExcelScreen({ route, navigation }) {
       return;
     }
 
+    if (isFinalVersion) {
+      showAlert(
+        'Move to Order Placement',
+        'On submitting, the enquiry will be moved to Order Placement. Do you want to continue?',
+        'warning',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Confirm', onPress: () => proceedUpload(skipExcel) },
+        ],
+      );
+      return;
+    }
+
+    proceedUpload(skipExcel);
+  };
+
+  const proceedUpload = async (skipExcel) => {
     setUploadType(skipExcel ? 'without' : 'excel');
 
     try {
@@ -185,14 +203,30 @@ export default function UploadExcelScreen({ route, navigation }) {
         excel: skipExcel ? null : selectedExcel,
         designCode: designCode || '',
         cost: cost || 0,
-        isFinalVersion: isFinalVersion || false,
+        isFinalVersion: false,
       }).unwrap();
 
-      console.log('[uploadExcel] uploadDesign succeeded, isFinalVersion:', isFinalVersion, 'version:', version, 'result:', JSON.stringify(result));
+      console.log('[uploadExcel] uploadDesign succeeded, version:', version, 'result:', JSON.stringify(result));
+
+      if (isFinalVersion) {
+        try {
+          await updateAssetData({
+            enquiryId,
+            type: designType,
+            version: version,
+            data: { IsFinalVersion: true },
+          }).unwrap();
+          console.log('[uploadExcel] updateAssetData IsFinalVersion succeeded');
+        } catch (assetErr) {
+          console.error('[uploadExcel] updateAssetData failed:', assetErr);
+        }
+      }
 
       showAlert(
         'Success',
-        skipExcel ? 'Successfully uploaded design' : 'Successfully uploaded design with Excel file',
+        isFinalVersion
+          ? 'Design uploaded and enquiry moved to Order Placement.'
+          : (skipExcel ? 'Successfully uploaded design' : 'Successfully uploaded design with Excel file'),
         'success',
         [
           {

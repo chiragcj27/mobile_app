@@ -516,8 +516,10 @@ export const api = createApi({
           // Add data as JSON string
           formData.append('data', JSON.stringify(data));
 
-          // Add reference images
+          // Add reference images plus their comments, index-aligned with the
+          // file parts (a file part itself can only carry uri/type/name)
           if (referenceImages && referenceImages.length > 0) {
+            const descriptions = [];
             referenceImages.forEach((image, index) => {
               const defaultType = 'image/jpeg';
               const defaultName = `image_${index}_${Date.now()}.jpg`;
@@ -527,7 +529,10 @@ export const api = createApi({
                 type: image.type || defaultType,
                 name: image.name || defaultName,
               });
+              descriptions.push(String(image.Description || ''));
             });
+            console.log('[submitEnquiry] referenceImageDescriptions field:', JSON.stringify(descriptions));
+            formData.append('referenceImageDescriptions', JSON.stringify(descriptions));
           }
 
           const endpoint = '/api/enquiries';
@@ -3070,6 +3075,22 @@ export const api = createApi({
       },
     }),
 
+    // Generic asset data update (used by NewCard for approve/reject/sendForApproval)
+    updateAssetData: builder.mutation({
+      query: ({ enquiryId, type, version, data }) => {
+        const versionParam = version ? `?version=${encodeURIComponent(version)}` : '';
+        return {
+          url: `/api/enquiries/${enquiryId}/upload/${type}${versionParam}`,
+          method: 'PUT',
+          body: data,
+        };
+      },
+      invalidatesTags: (result, error, { enquiryId }) => [
+        { type: 'Enquiry', id: enquiryId },
+        'Enquiry',
+      ],
+    }),
+
     // Approve design version
     // intent: 'forApproval' (Cad QR → Design Approval Pending) | 'final' (Cad DAP → Order Placement)
     // Coral always uses IsApprovedVersion (transitions Coral → Cad).
@@ -3562,9 +3583,12 @@ export const api = createApi({
             });
           }
 
-          // Separate images and videos
+          // Separate images and videos; descriptions travel in parallel
+          // arrays since FormData file parts can only carry uri/type/name
           const imageFiles = [];
           const videoFiles = [];
+          const imageDescriptions = [];
+          const videoDescriptions = [];
 
           if (images && images.length > 0) {
             images.forEach((image, index) => {
@@ -3619,8 +3643,10 @@ export const api = createApi({
 
               if (isVideo) {
                 videoFiles.push(fileObject);
+                videoDescriptions.push(String(image.Description || ''));
               } else {
                 imageFiles.push(fileObject);
+                imageDescriptions.push(String(image.Description || ''));
               }
             });
           }
@@ -3686,6 +3712,15 @@ export const api = createApi({
               }
             });
           }
+
+          // Per-file comments as descriptions, index-aligned with the
+          // images field (then videos) appended above
+          const allDescriptions = [...imageDescriptions, ...videoDescriptions];
+          console.log('[uploadReferenceImages] referenceImageDescriptions field:', JSON.stringify(allDescriptions));
+          formData.append(
+            'referenceImageDescriptions',
+            JSON.stringify(allDescriptions),
+          );
 
           const endpoint = `/api/enquiries/${enquiryId}/upload/reference`;
           const fullUrl = `${API_BASE_URL}${endpoint}`;
@@ -5960,6 +5995,7 @@ export const {
   useUploadDesignMutation,
   useValidateImageUploadMutation,
   useUpdateAssetDescriptionMutation,
+  useUpdateAssetDataMutation,
   useApproveDesignVersionMutation,
   useRejectDesignVersionMutation,
   useUpdateShowToClientMutation,

@@ -386,11 +386,13 @@ export default function PricingCalci({ route, navigation }) {
     });
     if (selectedTypes.length === 0 || !clientId) return;
 
+    console.log('[Recalc] START — selectedTypes:', selectedTypes, '| clientId:', clientId);
     setIsRecalculating(true);
 
     const newTypes = selectedTypes.filter(
       type => !hasStoneTypeBeenRecalculated(type),
     );
+    console.log('[Recalc] newTypes (not yet extracted):', newTypes, '| alreadyDone:', selectedTypes.filter(t => hasStoneTypeBeenRecalculated(t)));
 
     const rawMultiData = {};
     Object.values(groupedData).forEach((catData) => {
@@ -402,42 +404,78 @@ export default function PricingCalci({ route, navigation }) {
     });
 
     if (newTypes.length > 0) {
-      if (!imageFile) {
-        showAlert(
-          'Image Required',
-          'Please use the already uploaded image to extract new stone types.',
-          'warning',
-        );
-        setIsRecalculating(false);
-        return;
-      }
-
-      const extractionResults = await Promise.allSettled(
-        newTypes.map(type => extractStoneTypeFromImage(type)),
+      // Extraction output is identical for every stone type except the Type
+      // label, so reuse an already-extracted type as the template and send the
+      // new types straight to their first price calculation.
+      const templateType = Object.keys(rawMultiData).find(
+        t =>
+          Array.isArray(rawMultiData[t]?.editableStones) &&
+          rawMultiData[t].editableStones.length > 0,
       );
+      const template = templateType ? rawMultiData[templateType] : null;
 
-      const failedExtractionTypes = [];
-      extractionResults.forEach((settled, i) => {
-        const type = newTypes[i];
-        if (settled.status === 'fulfilled' && settled.value?.data) {
-          const data = settled.value.data;
-          const extracted = buildStoneDataFromExtraction(type, data);
-          if (extracted) {
-            rawMultiData[type] = extracted;
-          }
-        } else {
-          failedExtractionTypes.push(type);
+      if (template) {
+        console.log('[Recalc] Template found from type:', templateType, '— cloning for newTypes:', newTypes);
+        newTypes.forEach((type) => {
+          rawMultiData[type] = {
+            ...template,
+            editableStones: template.editableStones.map(s => ({
+              ...s,
+              Type: type,
+            })),
+            editableMetal: { ...template.editableMetal },
+            editableCharges: { ...template.editableCharges },
+            dutyRates: { ...template.dutyRates },
+          };
+        });
+      } else {
+        if (!imageFile) {
+          showAlert(
+            'Image Required',
+            'Please use the already uploaded image to extract new stone types.',
+            'warning',
+          );
+          setIsRecalculating(false);
+          return;
         }
-      });
 
-      if (failedExtractionTypes.length > 0) {
-        showAlert(
-          'Extraction Failed',
-          `Failed to extract: ${failedExtractionTypes.join(', ')} from the uploaded image.`,
-          'warning',
-        );
-        setIsRecalculating(false);
-        return;
+        // Call the API once for the first new type, then clone for the rest
+        const firstNewType = newTypes[0];
+        console.log('[Recalc] No template — firing single Gemini extraction for:', firstNewType);
+        let singleExtraction = null;
+        try {
+          singleExtraction = await extractStoneTypeFromImage(firstNewType);
+        } catch (_) {}
+        console.log('[Recalc] Extraction result for', firstNewType, ':', singleExtraction?.data ? 'OK' : 'FAILED', singleExtraction?.data);
+
+        if (!singleExtraction?.data) {
+          showAlert(
+            'Extraction Failed',
+            `Failed to extract data from the uploaded image.`,
+            'warning',
+          );
+          setIsRecalculating(false);
+          return;
+        }
+
+        const baseExtracted = buildStoneDataFromExtraction(firstNewType, singleExtraction.data);
+        if (!baseExtracted) {
+          showAlert('Extraction Failed', 'Could not parse extracted data.', 'warning');
+          setIsRecalculating(false);
+          return;
+        }
+
+        rawMultiData[firstNewType] = baseExtracted;
+        console.log('[Recalc] Cloning extraction from', firstNewType, 'to remaining types:', newTypes.slice(1));
+        newTypes.slice(1).forEach((type) => {
+          rawMultiData[type] = {
+            ...baseExtracted,
+            editableStones: baseExtracted.editableStones.map(s => ({ ...s, Type: type })),
+            editableMetal: { ...baseExtracted.editableMetal },
+            editableCharges: { ...baseExtracted.editableCharges },
+            dutyRates: { ...baseExtracted.dutyRates },
+          };
+        });
       }
     }
 
@@ -453,9 +491,13 @@ export default function PricingCalci({ route, navigation }) {
         data,
         metalKt,
         selectedClient,
+        // New types go through their first calculation so the backend prices
+        // the stones for the selected type; existing types recalculate.
+        isRecalculate: !newTypes.includes(type),
       }),
     }));
 
+    console.log('[Recalc] Firing calculatePricing for types:', payloads.map(p => p.type));
     const results = await Promise.allSettled(
       payloads.map(({ type, payload }) =>
         calculatePricing(payload).unwrap().then(result => ({ type, result }))
@@ -464,14 +506,23 @@ export default function PricingCalci({ route, navigation }) {
 
     const failedTypes = [];
     const succeededTypes = [];
+    let hasRateLimit = false;
 
     results.forEach((settled, i) => {
       const type = payloads[i].type;
       if (settled.status === 'fulfilled') {
         succeededTypes.push({ type, result: settled.value.result });
       } else {
+        if (settled.reason?.status === 429 || settled.reason?.data?.statusCode === 429) {
+          hasRateLimit = true;
+        }
         failedTypes.push(type);
       }
+    });
+
+    console.log('[Recalc] Results — succeeded:', succeededTypes.map(s => s.type), '| failed:', failedTypes, '| rateLimit:', hasRateLimit);
+    succeededTypes.forEach(({ type, result }) => {
+      console.log(`[Recalc] ${type} → TotalPrice: ${result?.TotalPrice}, Metal: ${result?.Metal?.Weight}g @ ${result?.Metal?.Rate}/g`);
     });
 
     if (succeededTypes.length > 0) {
@@ -514,9 +565,13 @@ export default function PricingCalci({ route, navigation }) {
     setIsRecalculating(false);
 
     if (failedTypes.length > 0) {
-      showAlert('Partial Recalculation', `Failed: ${failedTypes.join(', ')}`, 'warning');
-    } else if (succeededTypes.length > 0) {
-      showAlert('Recalculated', 'All types recalculated successfully', 'success');
+      if (hasRateLimit) {
+        showAlert('Rate Limit', 'Too many requests. Please try again later.', 'error', [
+          { text: 'Try Again', onPress: () => handleRecalculateAll() },
+        ]);
+      } else {
+        showAlert('Partial Recalculation', `Failed: ${failedTypes.join(', ')}`, 'warning');
+      }
     }
   };
 
@@ -564,64 +619,60 @@ export default function PricingCalci({ route, navigation }) {
         setStoneRecalcStatus({});
 
         try {
-          const requests = selectedStoneTypes.map(type =>
-            GetimagepriceData({
-              image: newImageFile,
-              clientId: clientId,
-              stoneType: type,
-              metalQuality: metalKt,
-            })
-              .unwrap()
-              .then(res => ({ type, data: res })),
-          );
+          const firstType = selectedStoneTypes[0];
+          console.log('[ImagePick] Firing single Gemini extraction for firstType:', firstType, '| totalTypes:', selectedStoneTypes.length);
+          const extractionResponse = await GetimagepriceData({
+            image: newImageFile,
+            clientId: clientId,
+            stoneType: firstType,
+            metalQuality: metalKt,
+          }).unwrap();
 
-          const resultsArray = await Promise.all(requests);
           const rawMultiData = {};
+          const p = extractionResponse.pricing || extractionResponse.extractedData || extractionResponse;
 
-          resultsArray.forEach(({ type, data }) => {
-            const p = data.pricing || data.extractedData || data;
-            const extractedData = data.extractedData || {};
+          console.log('[ImagePick] Extraction response:', { stones: p.Stones?.length, metalWeight: p.Metal?.Weight, totalPieces: p.TotalPieces });
+          const hasData =
+            (p.Stones && p.Stones.length > 0) ||
+            (p.Metal && parseFloat(p.Metal.Weight) > 0) ||
+            p.TotalPieces > 0;
 
-            const hasData =
-              (p.Stones && p.Stones.length > 0) ||
-              (extractedData.Stones && extractedData.Stones.length > 0) ||
-              (p.Metal && parseFloat(p.Metal.Weight) > 0) ||
-              (extractedData.Metal &&
-                parseFloat(extractedData.Metal.Weight) > 0) ||
-              p.TotalPieces > 0 ||
-              extractedData.TotalPieces > 0;
+          if (hasData) {
+            const buildTypeData = (type) => ({
+              imageData: extractionResponse,
+              editableStones: (p.Stones || []).map(s => ({
+                Type: type,
+                ...s,
+              })),
+              editableMetal: {
+                Weight: p.Metal?.Weight || 0,
+                Quality: p.Metal?.Quality || metalKt,
+                Rate: p.Metal?.Rate || 0,
+              },
+              editableCharges: {
+                Loss: p.Client?.Loss ?? 10,
+                Labour: p.Client?.Labour ?? 7,
+                ExtraCharges: p.Client?.ExtraCharges ?? 0,
+                GoldDuties: p.Client?.GoldDuties ?? 0,
+                SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
+                LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
+              },
+              dutyRates: {
+                UndercutPrice: p.Client?.UndercutPrice ?? undefined,
+                UndercutPriceTouched: false,
+                NaturalDuties: p.Client?.NaturalDuties ?? 0,
+                LabDuties: p.Client?.LabDuties ?? 0,
+              },
+              pricingResult: p,
+            });
 
-            if (hasData) {
-              rawMultiData[type] = {
-                imageData: data,
-                editableStones: (p.Stones || []).map(s => ({
-                  Type: type,
-                  ...s,
-                })),
-                editableMetal: {
-                  Weight: p.Metal?.Weight || 0,
-                  Quality: p.Metal?.Quality || metalKt,
-                  Rate: p.Metal?.Rate || 0,
-                },
-                editableCharges: {
-                  Loss: p.Client?.Loss ?? 10,
-                  Labour: p.Client?.Labour ?? 7,
-                  ExtraCharges: p.Client?.ExtraCharges ?? 0,
-                  GoldDuties: p.Client?.GoldDuties ?? 0,
-                  SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
-                  LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
-                },
-                dutyRates: {
-                  UndercutPrice: p.Client?.UndercutPrice ?? undefined,
-                  UndercutPriceTouched: false,
-                  NaturalDuties: p.Client?.NaturalDuties ?? 0,
-                  LabDuties: p.Client?.LabDuties ?? 0,
-                },
-                pricingResult: p,
-              };
-            }
-          });
+            rawMultiData[firstType] = buildTypeData(firstType);
+            selectedStoneTypes.slice(1).forEach(type => {
+              rawMultiData[type] = buildTypeData(type);
+            });
+          }
 
+          console.log('[ImagePick] rawMultiData types built:', Object.keys(rawMultiData));
           if (Object.keys(rawMultiData).length === 0) {
             showAlert(
               'No Data Found',
@@ -660,11 +711,17 @@ export default function PricingCalci({ route, navigation }) {
             }
           }
       } catch (apiError) {
-        showAlert(
-          'Extraction Error',
-          'Failed to extract pricing data. Check configuration.',
-          'error',
-        );
+        if (apiError?.status === 429 || apiError?.data?.statusCode === 429) {
+          showAlert('Rate Limit', 'Too many requests. Please try again later.', 'error', [
+            { text: 'Try Again', onPress: () => handleImagePick() },
+          ]);
+        } else {
+          showAlert(
+            'Extraction Error',
+            'Failed to extract pricing data. Check configuration.',
+            'error',
+          );
+        }
         setImageFile(null);
         } finally {
           setIsExtracting(false);
@@ -1268,6 +1325,7 @@ export default function PricingCalci({ route, navigation }) {
               style={[
                 styles.card,
                 { marginTop: 16, padding: 0, overflow: 'hidden' },
+                
               ]}
             >
               {hasMissing && (
@@ -1288,7 +1346,7 @@ export default function PricingCalci({ route, navigation }) {
                   <Icon name="diamond" size={20} color={colors.primary} />
                   <Text style={styles.accordionTitle}>{catData.label} Pricing</Text>
                 </View>
-                <TouchableOpacity
+                {!hasMissing ? <TouchableOpacity
                   style={styles.previewSummaryBtn}
                   onPress={() => {
                     const entries = catData.types
@@ -1304,7 +1362,7 @@ export default function PricingCalci({ route, navigation }) {
                 >
                   <Icon name="visibility" size={16} color={colors.textWhite} />
                   <Text style={styles.previewSummaryBtnText}>Preview</Text>
-                </TouchableOpacity>
+                </TouchableOpacity> : <Text style={{color: colors.error}}>$0.00</Text>}
               </TouchableOpacity>
             </Card>
           );
@@ -1689,15 +1747,12 @@ export default function PricingCalci({ route, navigation }) {
         onModifyPricing={() => {}}
         onPreviewSummary={() => {
           setShowSingleStoneModal(false);
-          const allEntries = [];
-          Object.values(groupedDataRef.current).forEach(cat => {
-            cat.types.forEach(type => {
-              const d = cat.byType[type];
-              if (d?.pricingResult) allEntries.push(d.pricingResult);
-            });
-          });
+          const cat = singleStoneCatDataRef.current;
+          const entries = cat?.types
+            ?.map(type => cat.byType[type]?.pricingResult)
+            ?.filter(Boolean) || [];
           navigation.navigate('PricingPreview', {
-            pricingEntries: allEntries,
+            pricingEntries: entries,
             clientName: clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client',
             metalKt,
           });
@@ -1722,7 +1777,7 @@ export default function PricingCalci({ route, navigation }) {
         }}
       />
 
-      {/* <BrandedAlert {...alertConfig} onClose={hideAlert} /> */}
+      <BrandedAlert {...alertConfig} onClose={hideAlert} />
     </View>
   );
 }

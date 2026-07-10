@@ -57,8 +57,10 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
   const [parsedData, setParsedData] = useState(null);
   const [dynamicMissingFields, setDynamicMissingFields] = useState([]);
   const [missingFieldsData, setMissingFieldsData] = useState({});
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [ImagesCommentModal, setImagesCommentModal] = useState(false);
+  const [imageComments, setImageComments] = useState([]);
   const [createdEnquiryData, setCreatedEnquiryData] = useState(null);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   const showAlert = (title, message, type = 'info', buttons = []) =>
@@ -138,19 +140,30 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       setParsedData(null);
       setDynamicMissingFields([]);
       setMissingFieldsData({});
-      setShowConfirmModal(false);
       setShowPreviewModal(false);
       setCreatedEnquiryData(null);
+      setImageComments([]);
+      setIsCreating(false);
     }
   }, [visible]);
+
+  const handleRemoveImage = (i) => {
+    setImageComments(prev =>
+      referenceImages
+        .map((_, idx) => prev[idx] || '')
+        .filter((_, idx) => idx !== i),
+    );
+    setReferenceImages(prev => prev.filter((_, idx) => idx !== i));
+  };
 
   const handleImagePicker = async () => {
     const result = await launchImageLibrary({ mediaType: 'mixed', selectionLimit: 10 });
     if (result.assets) {
       setReferenceImages(prev => [
         ...prev,
-        ...result.assets.map(a => ({ uri: a.uri, name: a.fileName, type: a.type })),
+        ...result.assets.map(a => ({ uri: a.uri, name: a.fileName, type: a.type , })),
       ]);
+      setImagesCommentModal(true);
     }
   };
 
@@ -162,6 +175,7 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
         ...prev,
         { uri: a.uri, type: a.type || 'image/jpeg', name: a.fileName || `camera_${Date.now()}.jpg` },
       ]);
+      setImagesCommentModal(true);
     }
   };
 
@@ -332,20 +346,41 @@ const generateStyleNumber = (qty, category) => {
   };
 
   const handleConfirmCreate = async () => {
+    if (isCreating) return;
     const finalData = createdEnquiryData?.data;
     if (!finalData) return;
+    setIsCreating(true);
+
+    // Single request: create the enquiry with the images and their comments
+    // attached — the backend stores each comment as the image Description.
+    const imagesWithDescriptions = referenceImages.map((img, i) => ({
+      ...img,
+      Description: (imageComments[i] || '').trim(),
+    }));
+    console.log('[handleConfirmCreate] comments being sent:',
+      imagesWithDescriptions.map(img => ({ name: img.name, Description: img.Description })));
+
+    let enquiryId = null;
     try {
       const result = await submitEnquiry({
         data: finalData,
-        referenceImages: referenceImages,
+        referenceImages: imagesWithDescriptions,
       }).unwrap();
-      const enquiryId = result?.id || result?._id || result?.data?.id || result?.data?._id || result?.enquiry?.id || result?.enquiry?._id || result?.insertedId;
-      setShowPreviewModal(false);
-      onClose();
-      if (onEnquiryCreated) onEnquiryCreated(enquiryId, finalData);
+      // The create endpoint returns the bare enquiry id
+      enquiryId =
+        typeof result === 'string'
+          ? result
+          : result?.id || result?._id || result?.data?.id || result?.data?._id || result?.enquiry?.id || result?.enquiry?._id || result?.insertedId;
     } catch (error) {
+      setIsCreating(false);
       showAlert('Error', 'Failed to create enquiry. Please try again.', 'error');
+      return;
     }
+
+    setIsCreating(false);
+    setShowPreviewModal(false);
+    onClose();
+    if (onEnquiryCreated) onEnquiryCreated(enquiryId, finalData);
   };
 
   const renderPreviewDetails = (data, s) => {
@@ -490,7 +525,7 @@ const generateStyleNumber = (qty, category) => {
             {referenceImages.map((img, i) => (
               <View key={i} style={styles.previewItem}>
                 <Image source={{ uri: img.uri }} style={styles.previewThumb} />
-                <TouchableOpacity onPress={() => setReferenceImages(prev => prev.filter((_, idx) => idx !== i))}>
+                <TouchableOpacity onPress={() => handleRemoveImage(i)}>
                   <IconComponent name="close" size={16} color={colors.error} />
                 </TouchableOpacity>
               </View>
@@ -505,7 +540,7 @@ const generateStyleNumber = (qty, category) => {
           onChangeText={setEnquiryDescription}
           style={{ minHeight: 120, textAlignVertical: 'top' }}
         />
-        <TouchableOpacity onPress={() => setShowConfirmModal(true)} disabled={!isSubmitReady || isParsing}>
+        <TouchableOpacity onPress={handleTextSubmit} disabled={!isSubmitReady || isParsing}>
           <View style={[styles.submitBtn, (!isSubmitReady || isParsing) && styles.submitBtnDisabled]}>
             {isParsing ? (
               <ActivityIndicator size="small" color={colors.textWhite} />
@@ -649,39 +684,6 @@ const generateStyleNumber = (qty, category) => {
           </TouchableOpacity>
         </Modal>
 
-        <Modal visible={showConfirmModal} transparent animationType="fade" onRequestClose={() => setShowConfirmModal(false)}>
-          <View style={styles.confirmOverlay}>
-            <View style={styles.confirmBox}>
-              <Text style={styles.confirmTitle}>Test with AI?</Text>
-              <Text style={styles.confirmDesc}>Would you like to test this description with AI parsing?</Text>
-              <TouchableOpacity style={styles.confirmUploadBtn} onPress={handleImagePicker}>
-                <IconComponent name="cloud-upload" size={20} color={colors.primary} />
-                <Text style={styles.confirmUploadText}>Upload Screenshot</Text>
-              </TouchableOpacity>
-              {referenceImages.length > 0 && (
-                <View style={styles.previewRow}>
-                  {referenceImages.map((img, i) => (
-                    <View key={i} style={styles.previewItem}>
-                      <Image source={{ uri: img.uri }} style={styles.previewThumb} />
-                      <TouchableOpacity onPress={() => setReferenceImages(prev => prev.filter((_, idx) => idx !== i))}>
-                        <IconComponent name="close" size={16} color={colors.error} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-              <View style={styles.confirmActions}>
-                <TouchableOpacity style={styles.confirmBtnSecondary} onPress={() => setShowConfirmModal(false)}>
-                  <Text style={styles.confirmBtnSecondaryText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.confirmBtnPrimary} onPress={() => { setShowConfirmModal(false); handleTextSubmit(); }}>
-                  <Text style={styles.confirmBtnPrimaryText}>Yes, Parse</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
         <Modal visible={showPreviewModal} transparent animationType="slide" onRequestClose={() => {}}>
           <View style={styles.previewOverlay}>
             <View style={styles.previewBox}>
@@ -696,16 +698,16 @@ const generateStyleNumber = (qty, category) => {
                 <TouchableOpacity
                   style={[styles.previewBtn, styles.previewBtnSecondary]}
                   onPress={() => setShowPreviewModal(false)}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCreating}
                 >
                   <Text style={styles.previewBtnSecondaryText}>Close</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.previewBtn, styles.previewBtnPrimary, isSubmitting && { opacity: 0.5 }]}
+                  style={[styles.previewBtn, styles.previewBtnPrimary, (isSubmitting || isCreating) && { opacity: 0.5 }]}
                   onPress={handleConfirmCreate}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCreating}
                 >
-                  {isSubmitting ? (
+                  {isSubmitting || isCreating ? (
                     <ActivityIndicator size="small" color={colors.textWhite} />
                   ) : (
                     <Text style={styles.previewBtnPrimaryText}>Create Enquiry</Text>
@@ -715,6 +717,67 @@ const generateStyleNumber = (qty, category) => {
             </View>
           </View>
         </Modal>
+        
+        <Modal visible={ImagesCommentModal} transparent animationType="slide" onRequestClose={() => setImagesCommentModal(false)}>
+          <TouchableOpacity style={styles.imagesCommentOverlay} activeOpacity={1} onPress={() => setImagesCommentModal(false)}>
+            <TouchableOpacity activeOpacity={1} style={styles.imagesCommentContainer} onPress={e => e.stopPropagation()}>
+              <View style={styles.imagesCommentHandle} />
+              <View style={styles.imagesCommentHeader}>
+                <View style={styles.imagesCommentHeaderLeft}>
+                  <Text style={styles.imagesCommentTitle}>Image Comments</Text>
+                </View>
+                <View style={styles.imagesItemCountBox}>
+                  <Text style={styles.imagesItemCountText}>{referenceImages.length} items</Text>
+                </View>
+              </View>
+
+              <ScrollView style={styles.imagesCommentBody} showsVerticalScrollIndicator={false}>
+                {referenceImages.length === 0 ? (
+                  <View style={styles.imagesCommentEmpty}>
+                    <IconComponent name="image" size={48} color={colors.textLight} />
+                    <Text style={styles.imagesCommentEmptyText}>No images uploaded yet</Text>
+                  </View>
+                ) : (
+                  referenceImages.map((img, i) => (
+                    <View key={i} style={styles.imagesCommentItem}>
+                      <Image source={{ uri: img.uri }} style={styles.imagesCommentThumb} />
+                      <View style={styles.imagesCommentInputArea}>
+                        <Text style={styles.imagesCommentLabel}>Client Note</Text>
+                        <TextInput
+                          style={styles.imagesCommentInput}
+                          placeholder="Add a note..."
+                          placeholderTextColor={colors.textLight}
+                          value={imageComments[i] || ''}
+                          onChangeText={(text) => {
+                            const updated = [...imageComments];
+                            updated[i] = text;
+                            setImageComments(updated);
+                          }}
+                          multiline
+                          numberOfLines={3}
+                        />
+                      </View>
+                    </View>
+                  ))
+                )}
+                <TouchableOpacity style={styles.imagesCommentAddBtn} onPress={handleImagePicker}>
+                  <IconComponent name="add-photo-alternate" size={20} color={colors.primary} />
+                  <Text style={styles.imagesCommentAddBtnText}>Add Image</Text>
+                </TouchableOpacity>
+              </ScrollView>
+
+              {referenceImages.length > 0 && (
+                <View style={styles.imagesCommentFooter}>
+                  <TouchableOpacity style={styles.imagesCommentSaveBtn} onPress={() => setImagesCommentModal(false)}>
+                    <Text style={styles.imagesCommentSaveBtnText}>Save</Text>
+                    <IconComponent name="check" size={18} color={colors.textWhite} />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -1247,5 +1310,161 @@ const styles = StyleSheet.create({
     fontSize: fonts.base,
     fontFamily: fonts.medium,
     color: colors.textPrimary,
+  },
+
+
+  // Images Comment Modal
+  imagesCommentOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  imagesCommentContainer: {
+    backgroundColor: colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+  },
+  imagesCommentHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  imagesCommentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight || colors.border,
+  },
+  imagesCommentHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  imagesCommentTitle: {
+    fontSize: fonts.lg,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+  },
+  imagesItemCountBox: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
+    borderRadius: 12,
+  },
+  imagesItemCountText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+  },
+  imagesCommentBody: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    maxHeight: 400,
+  },
+  imagesCommentItem: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 12,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderLight || colors.border,
+    marginBottom: 10,
+  },
+  imagesCommentThumb: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: colors.backgroundSecondary,
+  },
+  imagesCommentInputArea: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  imagesCommentLabel: {
+    fontSize: fonts.xs,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  imagesCommentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+    textAlignVertical: 'top',
+    minHeight: 50,
+  },
+  imagesCommentFooter: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight || colors.border,
+  },
+  imagesCommentSaveBtn: {
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  imagesCommentSaveBtnText: {
+    fontSize: fonts.base,
+    fontFamily: fonts.medium,
+    color: colors.textWhite,
+  },
+  imagesCommentEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  imagesCommentEmptyText: {
+    fontSize: fonts.sm,
+    color: colors.textSecondary,
+    marginTop: 8,
+  },
+  imagesCommentAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
+    marginBottom: 12,
+  },
+  imagesCommentAddBtnText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.medium,
+    color: colors.primary,
   },
 });

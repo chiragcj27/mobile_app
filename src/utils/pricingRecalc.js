@@ -42,7 +42,7 @@ function resolveDutyRates(data, selectedClient, commonCharges = {}) {
   return result;
 }
 
-export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selectedClient, commonMetal = {}, commonCharges = {} }) => {
+export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selectedClient, commonMetal = {}, commonCharges = {}, isRecalculate = true }) => {
   const formattedStones = (Array.isArray(data?.editableStones) ? data.editableStones : [])
     .map(s => ({
       Type: s.Type || type,
@@ -81,7 +81,7 @@ export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selecte
       LossAndLabourDuties: previousDutyRates.LossAndLabourDuties,
     },
     clientId,
-    isRecalculate: true,
+    isRecalculate,
   };
 
   return payload;
