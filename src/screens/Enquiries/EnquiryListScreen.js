@@ -229,6 +229,7 @@ export default function EnquiryListScreen({ navigation }) {
   const [finalLookEnquiry, setFinalLookEnquiry] = useState(null);
   const [isExpandedAll, setIsExpandedAll] = useState(true);
   const [designerTab, setDesignerTab] = useState(DESIGNER_TAB.MINE);
+  const [unassignedSubFilter, setUnassignedSubFilter] = useState('unassigned');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [summaryEnquiryId, setSummaryEnquiryId] = useState(null);
   const { data: summaryData, isLoading: summaryLoading } = useGetEnquiryByIdQuery(summaryEnquiryId, { skip: !summaryEnquiryId });
@@ -289,7 +290,10 @@ export default function EnquiryListScreen({ navigation }) {
       ...(unassignedQ1.data?.data || []),
       ...(unassignedQ2.data?.data || []),
       ...(unassignedQ3.data?.data || []),
-    ]).filter(r => (r.status || r.Status || '').toLowerCase() !== 'order placement');
+    ]).filter(r => {
+      const s = String(r.CurrentStatus || r.status || r.Status || '').toLowerCase();
+      return s !== 'order placement';
+    });
     return merged;
   }, [unassignedQ1.data, unassignedQ2.data, unassignedQ3.data]);
 
@@ -357,14 +361,19 @@ export default function EnquiryListScreen({ navigation }) {
       };
     }
     if (isUnassignedOnly) {
-      const rows = enrich(unassignedRowsAll, clientNameMap);
+      let rows;
+      if (unassignedSubFilter === 'order_placed') {
+        rows = enrich(orderPlacementQ.data?.data || [], clientNameMap);
+      } else {
+        rows = enrich(unassignedRowsAll, clientNameMap);
+      }
       return {
         rows,
         total: rows.length,
-        isLoading: unassignedQ1.isLoading || unassignedQ2.isLoading || unassignedQ3.isLoading,
-        isFetching: unassignedQ1.isFetching || unassignedQ2.isFetching || unassignedQ3.isFetching,
+        isLoading: unassignedQ1.isLoading || unassignedQ2.isLoading || unassignedQ3.isLoading || orderPlacementQ.isLoading,
+        isFetching: unassignedQ1.isFetching || unassignedQ2.isFetching || unassignedQ3.isFetching || orderPlacementQ.isFetching,
         refetch: () => {
-          unassignedQ1.refetch();          unassignedQ2.refetch();          unassignedQ3.refetch();
+          unassignedQ1.refetch(); unassignedQ2.refetch(); unassignedQ3.refetch(); orderPlacementQ.refetch();
         },
       };
     }
@@ -395,7 +404,7 @@ export default function EnquiryListScreen({ navigation }) {
       isFetching: approvalQ.isFetching,
       refetch: approvalQ.refetch,
     };
-  }, [isAdminCh, isClient, isOrderPlacement, activeTab, isUnassignedOnly, unassignedQ1, unassignedQ2, wipQ, approvalQ, orderPlacementQ, designerMineQ, designerWipQ, designerTab, clientQ, clientNameMap]);
+  }, [isAdminCh, isClient, isOrderPlacement, activeTab, isUnassignedOnly, unassignedSubFilter, unassignedQ1, unassignedQ2, wipQ, approvalQ, orderPlacementQ, designerMineQ, designerWipQ, designerTab, clientQ, clientNameMap]);
 
   useEffect(() => {
     if (__DEV__ && activeQuery.rows.length > 0) {
@@ -712,6 +721,29 @@ export default function EnquiryListScreen({ navigation }) {
           </View>
         </View>
       </View>
+
+      {isUnassignedOnly && (
+        <View style={styles.unassignedFilterBar}>
+          <TouchableOpacity
+            style={[styles.unassignedFilterTab, unassignedSubFilter === 'unassigned' && styles.unassignedFilterTabActive]}
+            onPress={() => setUnassignedSubFilter('unassigned')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.unassignedFilterTabText, unassignedSubFilter === 'unassigned' && styles.unassignedFilterTabTextActive]}>
+              Unassigned
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.unassignedFilterTab, unassignedSubFilter === 'order_placed' && styles.unassignedFilterTabActive]}
+            onPress={() => setUnassignedSubFilter('order_placed')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.unassignedFilterTabText, unassignedSubFilter === 'order_placed' && styles.unassignedFilterTabTextActive]}>
+              Order Placed
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.infoBar}>
         <Icon name="sort" size={12} color={colors.textSecondary} />
@@ -1094,6 +1126,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 6,
     backgroundColor: colors.backgroundSecondary,
+  },
+  unassignedFilterBar: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 10,
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    overflow: 'hidden',
+  },
+  unassignedFilterTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unassignedFilterTabActive: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+  },
+  unassignedFilterTabText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+  },
+  unassignedFilterTabTextActive: {
+    color: colors.textWhite,
+    fontFamily: fonts.bold,
   },
   infoBarText: {
     fontSize: 11,

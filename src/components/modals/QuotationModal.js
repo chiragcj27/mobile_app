@@ -897,7 +897,27 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               {fullEnquiry?.Name ? <Text style={s.headerSub} numberOfLines={1}>{fullEnquiry.Name}</Text> : null}
             </View>
             {isFetchingEnquiry && <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />}
-            <TouchableOpacity style={s.closeBtn} onPress={showPdf ? () => setShowPdf(false) : onClose} activeOpacity={0.7}>
+            <TouchableOpacity style={s.closeBtn} onPress={showPdf ? () => {
+              showAlert(
+                'Save & Go Back',
+                'Do you want to save the updated quotation before going back?',
+                'warning',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'No Update Price',
+                    onPress: () => setShowPdf(false),
+                  },
+                  {
+                    text: 'Save & Go Back',
+                    onPress: async () => {
+                      await handleSaveQuotation();
+                      setShowPdf(false);
+                    },
+                  },
+                ]
+              );
+            } : onClose} activeOpacity={0.7}>
               <Icon name={showPdf ? 'arrow-back' : 'close'} size={22} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -906,9 +926,29 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             <View style={{ flex: 1 }}>
               <PdfViewer html={pdfHtml} style={{ flex: 1 }} />
               <View style={s.pdfBar}>
-                <TouchableOpacity style={s.pdfBarBtn} onPress={() => setShowPdf(false)} activeOpacity={0.8}>
+                <TouchableOpacity style={s.pdfBarBtn} onPress={() => {
+                  showAlert(
+                    'Save & Go Back',
+                    'Do you want to save the updated quotation before going back?',
+                    'warning',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'No Update Price',
+                        onPress: () => setShowPdf(false),
+                      },
+                      {
+                        text: 'Save & Go Back',
+                        onPress: async () => {
+                          await handleSaveQuotation();
+                          setShowPdf(false);
+                        },
+                      },
+                    ]
+                  );
+                }} activeOpacity={0.8}>
                   <Icon name="arrow-back" size={18} color="#fff" />
-                  <Text style={s.pdfBarBtnText}>Update Prices</Text>
+                  <Text style={s.pdfBarBtnText}>Go Back</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[s.pdfBarBtn, s.shareBtn]}

@@ -516,22 +516,16 @@ export const api = createApi({
           // Add data as JSON string
           formData.append('data', JSON.stringify(data));
 
-          // Add reference images plus their comments, index-aligned with the
-          // file parts (a file part itself can only carry uri/type/name)
           if (referenceImages && referenceImages.length > 0) {
             const descriptions = [];
             referenceImages.forEach((image, index) => {
-              const defaultType = 'image/jpeg';
-              const defaultName = `image_${index}_${Date.now()}.jpg`;
-
+              descriptions.push(image.Description || image.description || `Reference image ${index + 1}`);
               formData.append('referenceImages', {
                 uri: image.uri,
-                type: image.type || defaultType,
-                name: image.name || defaultName,
+                type: image.type || 'image/jpeg',
+                name: image.name || `image_${index}_${Date.now()}.jpg`,
               });
-              descriptions.push(String(image.Description || ''));
             });
-            console.log('[submitEnquiry] referenceImageDescriptions field:', JSON.stringify(descriptions));
             formData.append('referenceImageDescriptions', JSON.stringify(descriptions));
           }
 

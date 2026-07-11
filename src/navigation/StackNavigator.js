@@ -32,6 +32,7 @@ import ClientHandlerDashboardScreen from '../screens/ClientHandler/ClientHandler
 import Reports from '../screens/Reports/reports'
 import JwelleryEstimate from '../screens/Pricing/JwelleryEstimate';
 import PricingPreviewScreen from '../screens/Pricing/previewScreen';
+import ModifyPricingScreen from '../screens/Pricing/ModifyPricingScreen';
 // TEST SCREENS - Commented out for production
 // Uncomment these lines if you need to test notifications in the future
 // import FontTest from '../components/FontTest';
@@ -205,6 +206,14 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           options={{
             headerShown: false,
             presentation: 'modal',
+            gestureEnabled: true,
+          }}/>
+
+          <Stack.Screen
+          name="ModifyPricingScreen"
+          component={ModifyPricingScreen}
+          options={{
+            headerShown: false,
             gestureEnabled: true,
           }}/>
 

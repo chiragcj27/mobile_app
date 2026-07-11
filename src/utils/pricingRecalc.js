@@ -45,7 +45,7 @@ function resolveDutyRates(data, selectedClient, commonCharges = {}) {
 export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selectedClient, commonMetal = {}, commonCharges = {}, isRecalculate = true }) => {
   const formattedStones = (Array.isArray(data?.editableStones) ? data.editableStones : [])
     .map(s => ({
-      Type: s.Type || type,
+      Type: s.Type,
       Color: s.Color || '',
       Shape: s.Shape || '',
       MmSize: (s.MmSize || '0').toString(),

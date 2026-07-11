@@ -376,6 +376,34 @@ export default function PricingCalci({ route, navigation }) {
     };
   };
 
+  const handleMetalKtChange = (newKt) => {
+    setMetalKt(newKt);
+    setGroupedData((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((cat) => {
+        const newByType = { ...next[cat].byType };
+        Object.keys(newByType).forEach((type) => {
+          newByType[type] = {
+            ...newByType[type],
+            editableMetal: { ...newByType[type].editableMetal, Quality: newKt },
+          };
+        });
+        next[cat] = { ...next[cat], byType: newByType };
+      });
+      return next;
+    });
+    if (clientId && Object.keys(groupedData).length > 0) {
+      setTimeout(() => {
+        if (!isAutoRecalculatingRef.current) {
+          isAutoRecalculatingRef.current = true;
+          handleRecalculateAllRef.current?.().finally(() => {
+            isAutoRecalculatingRef.current = false;
+          });
+        }
+      }, 100);
+    }
+  };
+
   const updateCommonMetal = (field, value) => {
     dataChangedRef.current = true;
     const updated = { ...commonMetal, [field]: value };
@@ -1202,7 +1230,7 @@ export default function PricingCalci({ route, navigation }) {
             metalQualityOptions,
             showMetalModal,
             setShowMetalModal,
-            setMetalKt,
+            handleMetalKtChange,
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Text style={styles.extraText}>Today: {getTodayPrice()}</Text>
               <TouchableOpacity
@@ -1767,7 +1795,15 @@ export default function PricingCalci({ route, navigation }) {
         metalKt={metalKt}
         selectedClient={selectedClient}
         onRecalculated={handleSingleStoneRecalculated}
-        onModifyPricing={() => {}}
+        onModifyPricing={() => {
+          setShowSingleStoneModal(false);
+          navigation.navigate('ModifyPricingScreen', {
+            stonesData: groupedData,
+            clientId,
+            selectedClient,
+            metalKt,
+          });
+        }}
         onPreviewSummary={() => {
           setShowSingleStoneModal(false);
           const cat = singleStoneCatDataRef.current;
