@@ -86,6 +86,7 @@ export default function PricingCalci({ route, navigation }) {
   const [showSingleStoneModal, setShowSingleStoneModal] = useState(false);
   const [singleStoneCatData, setSingleStoneCatData] = useState(null);
   const [singleStoneModalKey, setSingleStoneModalKey] = useState(0);
+  const [extractPhase, setExtractPhase] = useState('');
 
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
@@ -94,6 +95,7 @@ export default function PricingCalci({ route, navigation }) {
   const singleStoneCatDataRef = useRef(singleStoneCatData);
   const groupedDataRef = useRef(groupedData);
   const handleRecalculateAllRef = useRef(null);
+  const needsAutoRecalcRef = useRef(false);
   useEffect(() => { singleStoneCatDataRef.current = singleStoneCatData; }, [singleStoneCatData]);
   useEffect(() => { groupedDataRef.current = groupedData; }, [groupedData]);
 
@@ -224,6 +226,25 @@ export default function PricingCalci({ route, navigation }) {
       setTimeout(() => metalWeightRef.current?.focus(), 400);
     }
   }, [groupedData]);
+
+  // Auto-recalc after image extraction: trigger calculatePricing for all types
+  useEffect(() => {
+    if (
+      needsAutoRecalcRef.current &&
+      Object.keys(groupedData).length > 0 &&
+      clientId
+    ) {
+      needsAutoRecalcRef.current = false;
+      const timer = setTimeout(async () => {
+        if (handleRecalculateAllRef.current) {
+          await handleRecalculateAllRef.current();
+        }
+        setIsExtracting(false);
+        setExtractPhase('');
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [groupedData, clientId]);
 
   const hasAnyMissingStoneData = useCallback(() => {
     const allTypes = [];
@@ -616,6 +637,7 @@ export default function PricingCalci({ route, navigation }) {
         };
         setImageFile(newImageFile);
         setIsExtracting(true);
+        setExtractPhase('extracting');
         setStoneRecalcStatus({});
 
         try {
@@ -689,12 +711,6 @@ export default function PricingCalci({ route, navigation }) {
             Object.values(grouped).forEach((catData) => {
               catData.types.forEach((type) => allTypes.push(type));
             });
-            setStoneRecalcStatus(
-              allTypes.reduce((acc, type) => {
-                acc[type] = true;
-                return acc;
-              }, {}),
-            );
             const firstType = allTypes[0];
             if (firstType) {
               let firstData = null;
@@ -709,6 +725,8 @@ export default function PricingCalci({ route, navigation }) {
                 });
               }
             }
+            setExtractPhase('calculating');
+            needsAutoRecalcRef.current = true;
           }
       } catch (apiError) {
         if (apiError?.status === 429 || apiError?.data?.statusCode === 429) {
@@ -723,13 +741,14 @@ export default function PricingCalci({ route, navigation }) {
           );
         }
         setImageFile(null);
-        } finally {
-          setIsExtracting(false);
+        setIsExtracting(false);
+        setExtractPhase('');
         }
       }
     } catch (error) {
       showAlert('Error', 'Failed to pick image.', 'error');
       setIsExtracting(false);
+      setExtractPhase('');
     }
   };
 
@@ -1206,7 +1225,10 @@ export default function PricingCalci({ route, navigation }) {
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator size="large" color={colors.primary} />
                   <Text style={styles.uploadText}>
-                    Extracting {selectedStoneTypes.length} profiles...
+                    {extractPhase === 'calculating'
+                      ? `Calculating prices for ${selectedStoneTypes.length} type${selectedStoneTypes.length > 1 ? 's' : ''}...`
+                      : `Extracting ${selectedStoneTypes.length} profile${selectedStoneTypes.length > 1 ? 's' : ''}...`
+                    }
                   </Text>
                 </View>
               ) : imageFile ? (
@@ -1324,8 +1346,7 @@ export default function PricingCalci({ route, navigation }) {
               key={category}
               style={[
                 styles.card,
-                { marginTop: 16, padding: 0, overflow: 'hidden' },
-                
+                styles.accordionCard,
               ]}
             >
               {hasMissing && (
@@ -1339,9 +1360,10 @@ export default function PricingCalci({ route, navigation }) {
               <TouchableOpacity
                 style={styles.accordionHeader}
                 onPress={() => openSingleStoneModal(catData)}
+                activeOpacity={0.7}
               >
                 <View
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}
                 >
                   <Icon name="diamond" size={20} color={colors.primary} />
                   <Text style={styles.accordionTitle}>{catData.label} Pricing</Text>
@@ -1363,6 +1385,7 @@ export default function PricingCalci({ route, navigation }) {
                   <Icon name="visibility" size={16} color={colors.textWhite} />
                   <Text style={styles.previewSummaryBtnText}>Preview</Text>
                 </TouchableOpacity> : <Text style={{color: colors.error}}>$0.00</Text>}
+                <Icon name="chevron-right" size={22} color={colors.textSecondary} style={{marginLeft: 8}}/>
               </TouchableOpacity>
             </Card>
           );
@@ -1787,6 +1810,16 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 100 },
   card: { padding: 20, borderRadius: 12, backgroundColor: '#fff' },
+  accordionCard: {
+    marginTop: 16,
+    padding: 0,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+  },
   title: {
     fontSize: fonts.xl,
     fontFamily: fonts.bold,

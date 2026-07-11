@@ -36,8 +36,7 @@ import {
   useGetStatusesQuery,
   useGetRolesQuery,
   useGetEnquiryByIdQuery,
-  useApproveDesignVersionMutation,
-  useRejectDesignVersionMutation,
+  useUpdateAssetDataMutation,
   useUpdateEnquiryMutation,
 } from '../../store/api';
 import { actionsFor, resolveRoleCode, ACTION, SUBSTATUS, STATUS, ROLE } from '../../constants/enquiry';
@@ -129,10 +128,9 @@ export default function NewEnquiryCard({
     [users],
   );
 
-  const [approveDesignVersion] = useApproveDesignVersionMutation();
-  const [rejectDesignVersion] = useRejectDesignVersionMutation();
+  const [updateAssetData] = useUpdateAssetDataMutation();
   const [updateEnquiryDirect] = useUpdateEnquiryMutation();
-  const { handleAcceptApproval, handleUploadFinalCad, handleMoveToOrderPlacement, generateAndShareExcel, generateExcelPdf, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
+  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel, generateExcelPdf, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
 
   const getVersionFromLast = useCallback((designType) => {
     const src = fullEnquiryData?._originalData || fullEnquiryData || item;
@@ -392,23 +390,15 @@ export default function NewEnquiryCard({
     setIsActionLoading(true);
     try {
       const numericVersion = getVersionFromLast(activeDesignType);
-      await rejectDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: activeDesignType,
+        type: activeDesignType,
         version: String(numericVersion),
-        reason: updateReason.trim(),
+        data: {
+          IsApprovedVersion: false,
+          ReasonForRejection: updateReason.trim(),
+        },
       }).unwrap();
-      
-      if (activeDesignType === 'cad') {
-        const currentAssignedTo = resolveAssignedId(item?.AssignedTo || item?.assignedTo || fullSrc?.AssignedTo || fullSrc?.assignedTo);
-        await updateEnquiryDirect({
-          id: enquiryId,
-          Status: 'CAD',
-          CurrentStatus: 'CAD',
-          ClientId: item?.ClientId || item?.clientId,
-          ...(currentAssignedTo ? { AssignedTo: currentAssignedTo } : {}),
-        }).unwrap();
-      }
       closeQuotationActions();
       showAlert('Update Requested', 'Your revision request has been sent. The design will be updated.', 'success', [{ text: 'OK' }]);
     } catch (e) {
@@ -423,22 +413,14 @@ export default function NewEnquiryCard({
     setIsActionLoading(true);
     try {
       const numericVersion = getVersionFromLast(activeDesignType);
-      await rejectDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: activeDesignType,
+        type: activeDesignType,
         version: String(numericVersion),
-        reason: updateReason.trim(),
-      }).unwrap();
-      
-      const currentAssignedTo = resolveAssignedId(item?.AssignedTo || item?.assignedTo || fullSrc?.AssignedTo || fullSrc?.assignedTo);
-      const rejectStatus = activeDesignType === 'cad' ? STATUS.CAD : STATUS.CORAL;
-      await updateEnquiryDirect({
-        id: enquiryId,
-        Status: rejectStatus,
-        CurrentStatus: rejectStatus,
-        CurrentSubStatus: SUBSTATUS.RR,
-        ClientId: item?.ClientId || item?.clientId,
-        ...(currentAssignedTo ? { AssignedTo: currentAssignedTo } : {}),
+        data: {
+          IsApprovedVersion: false,
+          ReasonForRejection: updateReason.trim(),
+        },
       }).unwrap();
       closeQuotationActions();
       setIsRejectingApproval(false);
@@ -455,22 +437,14 @@ export default function NewEnquiryCard({
     setIsActionLoading(true);
     try {
       const numericVersion = getVersionFromLast(activeDesignType);
-      await rejectDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: activeDesignType,
+        type: activeDesignType,
         version: String(numericVersion),
-        reason: updateReason.trim(),
-      }).unwrap();
-      
-      const currentStatus = item?.CurrentStatus || item?.currentStatus || '';
-      const currentAssignedTo = resolveAssignedId(item?.AssignedTo || item?.assignedTo || fullSrc?.AssignedTo || fullSrc?.assignedTo);
-      await updateEnquiryDirect({
-        id: enquiryId,
-        Status: currentStatus,
-        CurrentStatus: currentStatus,
-        CurrentSubStatus: SUBSTATUS.RR,
-        ClientId: item?.ClientId || item?.clientId,
-        ...(currentAssignedTo ? { AssignedTo: currentAssignedTo } : {}),
+        data: {
+          IsApprovedVersion: false,
+          ReasonForRejection: updateReason.trim(),
+        },
       }).unwrap();
       closeQuotationActions();
       showAlert('Rejected', 'Quotation rejected. Enquiry moved back for redo.', 'success', [{ text: 'OK' }]);
@@ -706,17 +680,7 @@ export default function NewEnquiryCard({
               <Icon name="chat" size={16} color={colors.primaryDark} />
               <Text style={styles.ChatButtonText}>Chat</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.QuickActionButton} onPress={async () => {
-              if (has(ACTION.UPLOAD_FINAL_CAD)) {
-                setIsActionLoading(true);
-                try {
-                  await handleUploadFinalCad(fullEnquiryData || item);
-                } catch (e) {
-                  console.log('[UploadFinalCAD] error setting IsFinalVersion:', e?.data?.message || e?.message);
-                } finally {
-                  setIsActionLoading(false);
-                }
-              }
+            <TouchableOpacity style={styles.QuickActionButton} onPress={() => {
               navigation.navigate('UploadDesign', { enquiryId: item?.id || item?._id, designType: 'cad', enquiry: item, isFinalVersion: has(ACTION.UPLOAD_FINAL_CAD) });
             }}>
               <Icon name="cloud-upload" size={16} color={colors.textWhite} />
@@ -772,11 +736,11 @@ export default function NewEnquiryCard({
                       setIsActionLoading(true);
                       try {
                         const numericVersion = getVersionFromLast(targetType);
-                        await approveDesignVersion({
+                        await updateAssetData({
                           enquiryId,
-                          designType: targetType,
+                          type: targetType,
                           version: String(numericVersion),
-                          intent: 'forApproval',
+                          data: { SendForApproval: true },
                         }).unwrap();
                         showAlert('Success', 'Enquiry moved to Approval Pending.', 'success', [{ text: 'OK' }]);
                       } catch (e) {
@@ -961,15 +925,7 @@ export default function NewEnquiryCard({
               <Icon name="chat" size={16} color={colors.primaryDark} />
               <Text style={styles.ChatButtonText}>Chat</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.QuickActionButton} onPress={async () => {
-              setIsActionLoading(true);
-              try {
-                await handleUploadFinalCad(fullEnquiryData || item);
-              } catch (e) {
-                console.log('[UploadFinalCAD] error setting IsFinalVersion:', e?.data?.message || e?.message);
-              } finally {
-                setIsActionLoading(false);
-              }
+            <TouchableOpacity style={styles.QuickActionButton} onPress={() => {
               navigation.navigate('UploadDesign', { enquiryId: item?.id || item?._id, designType: 'cad', enquiry: item, isFinalVersion: true });
             }}>
               <Icon name="cloud-upload" size={16} color={colors.textWhite} />
