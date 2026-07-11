@@ -213,6 +213,7 @@ export default function PreviewScreen({ route, navigation }) {
     pricingEntries = [],
     clientName = 'Client',
     metalKt = '18K',
+    showMessageFormat = true,
   } = route.params || {};
   const [copied, setCopied] = useState(false);
   const [isSharingPdf, setIsSharingPdf] = useState(false);
@@ -297,7 +298,7 @@ export default function PreviewScreen({ route, navigation }) {
         </View>
       </View>
 
-        {combinedMessage && combinedMessage.trim() ? (
+        {showMessageFormat && combinedMessage && combinedMessage.trim() ? (
           <View style={styles.clientMsgCard}>
             <View style={styles.clientMsgHeader}>
               <Text style={styles.clientMsgLabel}>

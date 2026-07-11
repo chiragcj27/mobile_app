@@ -28,7 +28,6 @@ import { fonts } from '../../constants/fonts';
 import { FILE_BASE_URL, API_BASE_URL } from '../../config/apiConfig';
 import Icon from '../common/Icon';
 import BrandedAlert from '../common/BrandedAlert';
-import PdfViewer from '../common/PdfViewer';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -112,8 +111,6 @@ export default function NewEnquiryCard({
   const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   
   const [activeDesignType, setActiveDesignType] = useState(null);
-  const [excelPdfHtml, setExcelPdfHtml] = useState(null);
-  const [showExcelPdf, setShowExcelPdf] = useState(false);
   
   const showAlert = useCallback((title, message, type = 'info', buttons = []) =>
     setAlertCfg({ visible: true, title, message, type, buttons }), []);
@@ -130,7 +127,7 @@ export default function NewEnquiryCard({
 
   const [updateAssetData] = useUpdateAssetDataMutation();
   const [updateEnquiryDirect] = useUpdateEnquiryMutation();
-  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel, generateExcelPdf, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
+  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
 
   const getVersionFromLast = useCallback((designType) => {
     const src = fullEnquiryData?._originalData || fullEnquiryData || item;
@@ -503,29 +500,39 @@ export default function NewEnquiryCard({
             ) : imagesData.length > 0 ? (
               <View style={styles.carouselContainer}>
                 <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
-                  {imagesData.map((media, index) => (
+                  {imagesData.map((media, index) => {
+                    const imgDesc = referenceImages[index]?.Description || '';
+                    return (
                     <TouchableOpacity key={`media-${index}`} activeOpacity={0.9} onPress={() => handleImagePress(index)}>
-                      <View style={styles.carouselImage}>
-                        {media.isVideo ? (
-                          <Video
-                            source={{ uri: media.uri }}
-                            style={StyleSheet.absoluteFill}
-                            resizeMode="cover"
-                            paused
-                            muted
-                            repeat={false}
-                          />
-                        ) : (
-                          <ImageBackground source={{ uri: media.uri }} style={StyleSheet.absoluteFill} />
-                        )}
-                        {media.isVideo && (
-                          <View style={styles.carouselPlayOverlay}>
-                            <Icon name="play-circle-filled" size={44} color="rgba(255,255,255,0.9)" />
+                      <View style={styles.carouselImageWrap}>
+                        <View style={styles.carouselImage}>
+                          {media.isVideo ? (
+                            <Video
+                              source={{ uri: media.uri }}
+                              style={StyleSheet.absoluteFill}
+                              resizeMode="cover"
+                              paused
+                              muted
+                              repeat={false}
+                            />
+                          ) : (
+                            <ImageBackground source={{ uri: media.uri }} style={StyleSheet.absoluteFill} />
+                          )}
+                          {media.isVideo && (
+                            <View style={styles.carouselPlayOverlay}>
+                              <Icon name="play-circle-filled" size={44} color="rgba(255,255,255,0.9)" />
+                            </View>
+                          )}
+                        </View>
+                        {!!imgDesc && (
+                          <View style={styles.imageDescBadge}>
+                            <Text style={styles.imageDescText} numberOfLines={2} ellipsizeMode="tail">{imgDesc}</Text>
                           </View>
                         )}
                       </View>
                     </TouchableOpacity>
-                  ))}
+                    );
+                  })}
                 </ScrollView>
                 {imagesData.length > 1 && (
                   <View style={styles.paginationContainer}>
@@ -873,30 +880,6 @@ export default function NewEnquiryCard({
           </View>
         ) : isPlacementStage ? (
           <View style={styles.QuickButtonContainer}>
-            <TouchableOpacity
-              style={styles.ChatButton}
-              disabled={isActionLoading}
-              onPress={async () => {
-                setIsActionLoading(true);
-                try {
-                  const result = await generateExcelPdf(fullEnquiryData || item);
-                  if (result.success && result.html) {
-                    setExcelPdfHtml(result.html);
-                    setShowExcelPdf(true);
-                  } else {
-                    showAlert('Info', 'No data to display.', 'warning', [{ text: 'OK' }]);
-                  }
-                } catch (e) {
-                  showAlert('Failed', e?.message || 'Could not generate PDF.', 'error', [{ text: 'OK' }]);
-                } finally {
-                  setIsActionLoading(false);
-                }
-              }}
-            >
-              {isActionLoading
-                ? <ActivityIndicator size="small" color={colors.primaryDark} />
-                : <><Icon name="picture-as-pdf" size={16} color={colors.primaryDark} /><Text style={styles.ChatButtonText}>View PDF</Text></>}
-            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
               disabled={isActionLoading}
@@ -1330,23 +1313,6 @@ export default function NewEnquiryCard({
         </TouchableOpacity>
       </Modal>
 
-      <Modal
-        visible={showExcelPdf}
-        transparent
-        animationType="slide"
-        onRequestClose={() => { setShowExcelPdf(false); setExcelPdfHtml(null); }}
-      >
-        <View style={{ flex: 1, backgroundColor: '#fff' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-            <Text style={{ fontFamily: fonts.semiBold, fontSize: 15, color: colors.textPrimary }}>Order Data</Text>
-            <TouchableOpacity onPress={() => { setShowExcelPdf(false); setExcelPdfHtml(null); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Icon name="close" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-          {excelPdfHtml && <PdfViewer html={excelPdfHtml} style={{ flex: 1 }} />}
-        </View>
-      </Modal>
-
       <BrandedAlert
         visible={alertCfg.visible}
         title={alertCfg.title}
@@ -1545,8 +1511,26 @@ const styles = StyleSheet.create({
   loadingContainer: { width: '100%', height: 200, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.backgroundSecondary },
   placeholderContainer: { width: '100%', height: 200, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.backgroundSecondary },
   placeholderText: { fontSize: 14, color: colors.textLight, fontFamily: fonts.regular, paddingHorizontal: 10 },
-  carouselContainer: { width: '100%', height: 200, position: 'relative' },
+  carouselContainer: { width: '100%', height: 224, position: 'relative' },
+  carouselImageWrap: { position: 'relative' },
   carouselImage: { width: Dimensions.get('window').width - 60, height: 200, marginRight: 3, overflow: 'hidden', backgroundColor: '#000' },
+  imageDescBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(220,38,38,0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    maxWidth: '70%',
+  },
+  imageDescText: {
+    color: '#fff',
+    fontSize: 11,
+    fontFamily: fonts.medium,
+    lineHeight: 15,
+  },
   carouselPlayOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
   paginationContainer: { position: 'absolute', bottom: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
   paginationText: { fontSize: 12, color: colors.textWhite, fontFamily: fonts.medium },

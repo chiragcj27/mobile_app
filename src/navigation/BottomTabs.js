@@ -117,7 +117,7 @@ const BottomTabs = () => {
   else if (user?.role === 'client_handler') {
     return (
       <Tab.Navigator
-        tabBar={(props) => <CustomTabBar {...props} currentApp="custom" />}
+        tabBar={(props) => <CustomTabBar {...props} />}
         screenOptions={{ headerShown: false }}>
         <Tab.Screen
           name="Dashboard"
@@ -125,14 +125,6 @@ const BottomTabs = () => {
           options={{
             title: 'My Clients',
             tabBarIcon: ({ color, size }) => <Icon name="account" size={size || 24} color={color} />,
-          }}
-        />
-        <Tab.Screen
-          name="Enquiries"
-          component={EnquiryListScreen}
-          options={{
-            title: 'Enquiries',
-            tabBarIcon: ({ color, size }) => <Icon name="assignment" size={size || 24} color={color} />,
           }}
         />
         <Tab.Screen
