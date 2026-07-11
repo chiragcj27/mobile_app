@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Animated,
   Keyboard,
+  ActivityIndicator,
 } from 'react-native';
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
@@ -43,6 +44,7 @@ export default function SingleStonePricing({
 }) {
   const [localGrouped, setLocalGrouped] = useState({});
   const [localCharges, setLocalCharges] = useState({});
+  const [isCalculating, setIsCalculating] = useState(false);
 
   const [inlineEditIndex, setInlineEditIndex] = useState(null);
   const [inlineEditPrice, setInlineEditPrice] = useState('');
@@ -60,6 +62,11 @@ export default function SingleStonePricing({
   useEffect(() => { localChargesRef.current = localCharges; }, [localCharges]);
   useEffect(() => { localGroupedRef.current = localGrouped; }, [localGrouped]);
   useEffect(() => { onRecalculatedRef.current = onRecalculated; }, [onRecalculated]);
+
+  // Detect when parent finishes recalculation (catData prop updates)
+  useEffect(() => {
+    if (isCalculating) setIsCalculating(false);
+  }, [catData]);
 
   useEffect(() => {
     if (visible && catData) {
@@ -233,7 +240,6 @@ export default function SingleStonePricing({
     }
   }, [hasAnyMissing, inlineEditIndex, localGrouped, getTypeMissingIndices, startInlineEdit]);
 
-  const recalcDebounceRef = useRef(null);
   const onRequestRecalculateRef = useRef(onRequestRecalculate);
   useEffect(() => { onRequestRecalculateRef.current = onRequestRecalculate; }, [onRequestRecalculate]);
 
@@ -244,7 +250,7 @@ export default function SingleStonePricing({
     }));
   }, []);
 
-  // Push charge changes to parent and auto-recalculate after debounce
+  // Push charge changes to parent on every edit (local state sync)
   useEffect(() => {
     if (!onRecalculatedRef.current) return;
     const types = Object.keys(localCharges);
@@ -272,14 +278,18 @@ export default function SingleStonePricing({
       };
       onRecalculatedRef.current(type, mergedData);
     });
-
-    if (recalcDebounceRef.current) clearTimeout(recalcDebounceRef.current);
-    recalcDebounceRef.current = setTimeout(() => {
-      onRequestRecalculateRef.current?.();
-    }, 600);
-
-    return () => { if (recalcDebounceRef.current) clearTimeout(recalcDebounceRef.current); };
   }, [localCharges]);
+
+  // Trigger recalculation when keyboard closes after editing duties
+  useEffect(() => {
+    const subscription = Keyboard.addListener('keyboardDidHide', () => {
+      const charges = localChargesRef.current;
+      if (Object.keys(charges).length === 0) return;
+      setIsCalculating(true);
+      onRequestRecalculateRef.current?.();
+    });
+    return () => subscription?.remove();
+  }, []);
 
   const getApplicableFields = useCallback((type) => {
     const applicable = localGrouped[type]?.pricingResult?.Applicable;
@@ -445,29 +455,36 @@ export default function SingleStonePricing({
           </View>
         </View>
 
-        <View style={s.typeCard}>
+        <View style={[s.typeCard, isCalculating && s.typeCardCalculating]}>
           <View style={s.typeCardHeader}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={s.typeCardName}>{type}</Text>
               <Text style={s.typeCardStats}>
                 {stones.length} stone lines • {stones.reduce((sum, st) => sum + num(st.Pcs), 0)} pcs • {stones.reduce((sum, st) => sum + num(st.CtWeight), 0).toFixed(1)} ct
               </Text>
             </View>
+            {isCalculating && <ActivityIndicator size="small" color={colors.primary} />}
           </View>
-          <View style={s.typeCardBody}>
-            <View style={s.typeCardRow}>
-              <Text style={s.typeCardLabel}>Metal Value</Text>
-              <Text style={s.typeCardValue}>${num(result?.MetalPrice).toFixed(2)}</Text>
+          {!isCalculating && (
+            <View style={s.typeCardBody}>
+              <View style={s.typeCardRow}>
+                <Text style={s.typeCardLabel}>Metal Value</Text>
+                <Text style={s.typeCardValue}>${num(result?.MetalPrice).toFixed(2)}</Text>
+              </View>
+              <View style={s.typeCardRow}>
+                <Text style={s.typeCardLabel}>Diamonds</Text>
+                <Text style={s.typeCardValue}>${num(result?.DiamondsPrice).toFixed(2)}</Text>
+              </View>
+              <View style={s.typeCardRow}>
+                <Text style={s.typeCardLabel}>Labour & Duties</Text>
+                <Text style={s.typeCardValue}>${num(result?.DutiesAmount).toFixed(2)}</Text>
+              </View>
+              <View style={[s.typeCardRow, { borderBottomWidth: 0 }]}>
+                <Text style={s.typeCardLabelTotal}>Total Price</Text>
+                <Text style={s.typeCardValueTotal}>${num(result?.TotalPrice).toFixed(2)}</Text>
+              </View>
             </View>
-            <View style={s.typeCardRow}>
-              <Text style={s.typeCardLabel}>Diamonds</Text>
-              <Text style={s.typeCardValue}>${num(result?.DiamondsPrice).toFixed(2)}</Text>
-            </View>
-            <View style={[s.typeCardRow, { borderBottomWidth: 0 }]}>
-              <Text style={s.typeCardLabel}>Labour & Duties</Text>
-              <Text style={s.typeCardValue}>${num(result?.DutiesAmount).toFixed(2)}</Text>
-            </View>
-          </View>
+          )}
         </View>
 
         {renderChargesSection(type)}
@@ -809,6 +826,19 @@ const s = StyleSheet.create({
   typeCardValue: {
     fontFamily: fonts.bold,
     fontSize: fonts.sm || 13,
+    color: colors.primary,
+  },
+  typeCardCalculating: {
+    backgroundColor: colors.backgroundSecondary || '#F8F9FB',
+  },
+  typeCardLabelTotal: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.base || 15,
+    color: colors.textPrimary,
+  },
+  typeCardValueTotal: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.base || 15,
     color: colors.primary,
   },
 

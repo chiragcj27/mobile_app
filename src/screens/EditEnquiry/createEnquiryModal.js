@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -66,6 +66,9 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
   const showAlert = (title, message, type = 'info', buttons = []) =>
     setAlertConfig({ visible: true, title, message, type, buttons });
   const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+
+  const descriptionRef = useRef(null);
+  const [descriptionRequired, setDescriptionRequired] = useState(false);
 
   // Auto-derive status from parsed data
   const autoStatus = String(parsedData?.Status || 'Enquiry Created');
@@ -144,6 +147,7 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       setCreatedEnquiryData(null);
       setImageComments([]);
       setIsCreating(false);
+      setDescriptionRequired(false);
     }
   }, [visible]);
 
@@ -532,13 +536,19 @@ const generateStyleNumber = (qty, category) => {
             ))}
           </View>
         )}
-        <Input
-          placeholder="Describe your custom jewelry piece"
+        <TextInput
+          ref={descriptionRef}
+          placeholder={descriptionRequired && !enquiryDescription.trim() ? 'Please fill the description to proceed' : 'Describe your custom jewelry piece'}
+          placeholderTextColor={descriptionRequired && !enquiryDescription.trim() ? (colors.warning || '#ffbb34') : colors.textLight}
           multiline
           numberOfLines={6}
           value={enquiryDescription}
-          onChangeText={setEnquiryDescription}
-          style={{ minHeight: 120, textAlignVertical: 'top' }}
+          onChangeText={(text) => {
+            setEnquiryDescription(text);
+            if (text.trim()) setDescriptionRequired(false);
+          }}
+          onFocus={() => { if (descriptionRequired && !enquiryDescription.trim()) setDescriptionRequired(false); }}
+          style={[styles.descriptionInput, descriptionRequired && !enquiryDescription.trim() && styles.descriptionRequiredBorder]}
         />
         <TouchableOpacity onPress={handleTextSubmit} disabled={!isSubmitReady || isParsing}>
           <View style={[styles.submitBtn, (!isSubmitReady || isParsing) && styles.submitBtnDisabled]}>
@@ -718,64 +728,85 @@ const generateStyleNumber = (qty, category) => {
           </View>
         </Modal>
         
-        <Modal visible={ImagesCommentModal} transparent animationType="slide" onRequestClose={() => setImagesCommentModal(false)}>
-          <TouchableOpacity style={styles.imagesCommentOverlay} activeOpacity={1} onPress={() => setImagesCommentModal(false)}>
-            <TouchableOpacity activeOpacity={1} style={styles.imagesCommentContainer} onPress={e => e.stopPropagation()}>
-              <View style={styles.imagesCommentHandle} />
-              <View style={styles.imagesCommentHeader}>
-                <View style={styles.imagesCommentHeaderLeft}>
-                  <Text style={styles.imagesCommentTitle}>Image Comments</Text>
-                </View>
-                <View style={styles.imagesItemCountBox}>
-                  <Text style={styles.imagesItemCountText}>{referenceImages.length} items</Text>
-                </View>
+        <Modal visible={ImagesCommentModal} transparent animationType="slide" onRequestClose={() => {
+          setImagesCommentModal(false);
+          if (!enquiryDescription.trim()) {
+            setDescriptionRequired(true);
+            setTimeout(() => descriptionRef.current?.focus(), 300);
+          }
+        }}>
+          <View style={styles.imgCommentOverlay}>
+            <View style={styles.imgCommentModal}>
+              <View style={styles.imgCommentHeader}>
+                <TouchableOpacity onPress={() => {
+                  setImagesCommentModal(false);
+                  if (!enquiryDescription.trim()) {
+                    setDescriptionRequired(true);
+                    setTimeout(() => descriptionRef.current?.focus(), 300);
+                  }
+                }} style={styles.imgCommentCloseBtn}>
+                  <IconComponent name="close" size={22} color={colors.textSecondary} />
+                </TouchableOpacity>
+                <Text style={styles.imgCommentHeaderTitle}>Image Comments</Text>
+                <View style={styles.imgCommentHeaderSpacer} />
               </View>
 
-              <ScrollView style={styles.imagesCommentBody} showsVerticalScrollIndicator={false}>
+              <ScrollView style={styles.imgCommentBody} showsVerticalScrollIndicator={false} contentContainerStyle={styles.imgCommentBodyContent}>
                 {referenceImages.length === 0 ? (
-                  <View style={styles.imagesCommentEmpty}>
+                  <View style={styles.imgCommentEmpty}>
                     <IconComponent name="image" size={48} color={colors.textLight} />
-                    <Text style={styles.imagesCommentEmptyText}>No images uploaded yet</Text>
+                    <Text style={styles.imgCommentEmptyText}>No images uploaded yet</Text>
                   </View>
                 ) : (
-                  referenceImages.map((img, i) => (
-                    <View key={i} style={styles.imagesCommentItem}>
-                      <Image source={{ uri: img.uri }} style={styles.imagesCommentThumb} />
-                      <View style={styles.imagesCommentInputArea}>
-                        <Text style={styles.imagesCommentLabel}>Client Note</Text>
-                        <TextInput
-                          style={styles.imagesCommentInput}
-                          placeholder="Add a note..."
-                          placeholderTextColor={colors.textLight}
-                          value={imageComments[i] || ''}
-                          onChangeText={(text) => {
-                            const updated = [...imageComments];
-                            updated[i] = text;
-                            setImageComments(updated);
-                          }}
-                          multiline
-                          numberOfLines={3}
-                        />
+                  <View style={styles.imgCommentGrid}>
+                    {referenceImages.map((img, i) => (
+                      <View key={i} style={styles.imgCommentCard}>
+                        <View style={styles.imgCommentCardImageWrap}>
+                          <Image source={{ uri: img.uri }} style={styles.imgCommentCardImage} resizeMode="cover" />
+                        </View>
+                        <View style={styles.imgCommentCardBody}>
+                          <Text style={styles.imgCommentCardLabel}>Client Note</Text>
+                          <TextInput
+                            style={styles.imgCommentCardInput}
+                            placeholder="Add a note..."
+                            placeholderTextColor={colors.textLight}
+                            value={imageComments[i] || ''}
+                            onChangeText={(text) => {
+                              const updated = [...imageComments];
+                              updated[i] = text;
+                              setImageComments(updated);
+                            }}
+                            multiline
+                            numberOfLines={2}
+                          />
+                        </View>
                       </View>
-                    </View>
-                  ))
+                    ))}
+                  </View>
                 )}
-                <TouchableOpacity style={styles.imagesCommentAddBtn} onPress={handleImagePicker}>
+
+                <TouchableOpacity style={styles.imgCommentAddBtn} onPress={handleImagePicker}>
                   <IconComponent name="add-photo-alternate" size={20} color={colors.primary} />
-                  <Text style={styles.imagesCommentAddBtnText}>Add Image</Text>
+                  <Text style={styles.imgCommentAddBtnText}>Add Image</Text>
                 </TouchableOpacity>
               </ScrollView>
 
               {referenceImages.length > 0 && (
-                <View style={styles.imagesCommentFooter}>
-                  <TouchableOpacity style={styles.imagesCommentSaveBtn} onPress={() => setImagesCommentModal(false)}>
-                    <Text style={styles.imagesCommentSaveBtnText}>Save</Text>
+                <View style={styles.imgCommentFooter}>
+                  <TouchableOpacity style={styles.imgCommentSaveBtn} onPress={() => {
+                    setImagesCommentModal(false);
+                    if (!enquiryDescription.trim()) {
+                      setDescriptionRequired(true);
+                      setTimeout(() => descriptionRef.current?.focus(), 300);
+                    }
+                  }}>
+                    <Text style={styles.imgCommentSaveBtnText}>Save</Text>
                     <IconComponent name="check" size={18} color={colors.textWhite} />
                   </TouchableOpacity>
                 </View>
               )}
-            </TouchableOpacity>
-          </TouchableOpacity>
+            </View>
+          </View>
         </Modal>
 
       </KeyboardAvoidingView>
@@ -904,6 +935,19 @@ const styles = StyleSheet.create({
     fontSize: fonts.sm,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  descriptionInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+    minHeight: 120,
+    textAlignVertical: 'top',
   },
   previewRow: {
     flexDirection: 'row',
@@ -1313,91 +1357,97 @@ const styles = StyleSheet.create({
   },
 
 
-  // Images Comment Modal
-  imagesCommentOverlay: {
+  // Images Comment Modal — New Grid Design
+  imgCommentOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
   },
-  imagesCommentContainer: {
+  imgCommentModal: {
     backgroundColor: colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '85%',
     elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
+    shadowColor: '#0D3B3F',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(192,200,201,0.3)',
+    overflow: 'hidden',
   },
-  imagesCommentHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  imagesCommentHeader: {
+  imgCommentHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderLight || colors.border,
   },
-  imagesCommentHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  imagesCommentTitle: {
-    fontSize: fonts.lg,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  imagesItemCountBox: {
-    flexDirection: 'row',
+  imgCommentCloseBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
-    borderRadius: 12,
-  },
-  imagesItemCountText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.bold,
-    color: colors.primary,
-  },
-  imagesCommentBody: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    maxHeight: 400,
-  },
-  imagesCommentItem: {
-    flexDirection: 'row',
-    gap: 12,
-    padding: 12,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderLight || colors.border,
-    marginBottom: 10,
-  },
-  imagesCommentThumb: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
     backgroundColor: colors.backgroundSecondary,
   },
-  imagesCommentInputArea: {
-    flex: 1,
+  imgCommentHeaderTitle: {
+    fontSize: fonts.lg,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    textAlign: 'center',
+  },
+  imgCommentHeaderSpacer: {
+    width: 38,
+  },
+  imgCommentBody: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    maxHeight: 500,
+  },
+  imgCommentBodyContent: {
+    paddingBottom: 16,
+  },
+  imgCommentGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
   },
-  imagesCommentLabel: {
+  imgCommentCard: {
+    width: '48%',
+    backgroundColor: colors.background,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(192,200,201,0.25)',
+    marginBottom: 14,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#0D3B3F',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+  },
+  imgCommentCardImageWrap: {
+    width: '100%',
+    height: 160,
+    overflow: 'hidden',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
+  imgCommentCardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imgCommentCardBody: {
+    padding: 12,
+  },
+  imgCommentCardLabel: {
     fontSize: fonts.xs,
     fontFamily: fonts.medium,
     color: colors.textSecondary,
@@ -1405,66 +1455,71 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 6,
   },
-  imagesCommentInput: {
-    flex: 1,
+  imgCommentCardInput: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 8,
+    borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: fonts.sm,
     fontFamily: fonts.regular,
     color: colors.textPrimary,
-    backgroundColor: colors.background,
+    backgroundColor: colors.backgroundSecondary,
     textAlignVertical: 'top',
-    minHeight: 50,
+    minHeight: 48,
   },
-  imagesCommentFooter: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight || colors.border,
-  },
-  imagesCommentSaveBtn: {
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: 12,
-    flexDirection: 'row',
+  imgCommentEmpty: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    paddingVertical: 48,
   },
-  imagesCommentSaveBtnText: {
-    fontSize: fonts.base,
-    fontFamily: fonts.medium,
-    color: colors.textWhite,
-  },
-  imagesCommentEmpty: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 40,
-  },
-  imagesCommentEmptyText: {
+  imgCommentEmptyText: {
     fontSize: fonts.sm,
     color: colors.textSecondary,
     marginTop: 8,
+    fontFamily: fonts.regular,
   },
-  imagesCommentAddBtn: {
+  imgCommentAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1.5,
     borderStyle: 'dashed',
     borderColor: colors.primary,
     backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
-    marginBottom: 12,
+    marginTop: 4,
   },
-  imagesCommentAddBtnText: {
+  imgCommentAddBtnText: {
     fontSize: fonts.sm,
     fontFamily: fonts.medium,
     color: colors.primary,
+  },
+  imgCommentFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight || colors.border,
+  },
+  imgCommentSaveBtn: {
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  imgCommentSaveBtnText: {
+    fontSize: fonts.base,
+    fontFamily: fonts.medium,
+    color: colors.textWhite,
+  },
+
+  // Description required placeholder
+  descriptionRequiredBorder: {
+    borderColor: colors.warning || '#ffbb34',
   },
 });
