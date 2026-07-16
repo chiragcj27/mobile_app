@@ -581,7 +581,7 @@ export default function EnquiryListScreen({ navigation }) {
             <Icon name="arrow-back" size={22} color={colors.textWhite} />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
-            <Text style={styles.clientHeaderLabel}>Unassigned Enquiries</Text>
+            <Text style={styles.clientHeaderLabel}>Unassigned Enquiries & Orders Placed</Text>
             <Text style={styles.clientHeaderName}>All clients</Text>
           </View>
         </View>

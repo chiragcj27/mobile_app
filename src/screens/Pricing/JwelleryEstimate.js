@@ -25,6 +25,7 @@ import {
   useGetStoneTypesQuery,
 } from '../../store/api';
 import PdfViewer from '../../components/common/PdfViewer';
+import { buildCombinedHtml } from './previewScreen';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -104,19 +105,7 @@ export default function JwelleryEstimate() {
     m => m.metalQuality === metalKt && m.stoneType === stoneType,
   );
 
-  // Format the client pricing message from the PricingMessageFormat template
-  const formatClientMessage = () => {
-    if (!selectedMatrixMatch?.pricing?.Client?.PricingMessageFormat) return '';
-    const p = selectedMatrixMatch.pricing;
-    const totalPrice = (p.MetalPrice + p.DiamondsPrice + p.DutiesAmount).toFixed(2);
-    return p.Client.PricingMessageFormat
-      .replace('{TotalPrice}', totalPrice)
-      .replace('{GoldWeight}', p.Metal?.Weight || selectedMatrixMatch.metalWeightGrams || 0)
-      .replace('{metalQuality}', metalKt)
-      .replace('{DiamondWeight}', p.DiamondWeight || 0)
-      .replace('{MetalPrice}', (p.MetalPrice || 0).toFixed(2))
-      .replace('{DiamondsPrice}', (p.DiamondsPrice || 0).toFixed(2));
-  };
+
 
   const estimatedPrice = selectedMatrixMatch
     ? (
@@ -129,250 +118,8 @@ export default function JwelleryEstimate() {
   // Generate HTML for the selected matrix match using brand colors
   const buildPricingHtml = useCallback(() => {
     if (!selectedMatrixMatch) return '';
-    const p = selectedMatrixMatch.pricing;
-
-    const stonesHtml = (p.Stones || [])
-      .map(
-        (s, idx) => `
-      <tr style="${
-        idx % 2 === 0 ? `background:${colors.backgroundSecondary}` : ''
-      }">
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:center">${s.MmSize || '-'}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:center">${s.Color || '-'}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:center">${s.Shape || '-'}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:center">${s.SieveSize || '-'}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:right">${s.Weight || 0}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:center">${s.Pcs || 0}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:right">${s.CtWeight || 0}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:right">${s.Markup || 0}</td>
-        <td style="padding:8px;border:1px solid ${
-          colors.border
-        };text-align:right">$${s.Price || 0}</td>
-      </tr>
-    `,
-      )
-      .join('');
-
-    const applicableDuties = p.Applicable
-      ? Object.entries(p.Applicable)
-          .filter(([_, value]) => value)
-          .map(([key]) => key.replace(/([A-Z])/g, ' $1').trim())
-          .join(', ')
-      : 'None';
-
-    const currentDate = new Date().toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { font-family: Arial, sans-serif; padding: 30px; color: ${
-            colors.textPrimary
-          }; background-color: ${colors.background}; }
-          .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid ${
-            colors.accent
-          }; padding-bottom: 20px; }
-          .header h1 { color: ${colors.primary}; margin: 0; font-size: 28px; }
-          .header p { color: ${
-            colors.textSecondary
-          }; margin: 5px 0; font-size: 14px; }
-          .section { margin: 25px 0; }
-          .section-title { background: ${colors.primary}; color: ${
-      colors.textWhite
-    }; padding: 10px 15px; font-size: 16px; font-weight: bold; margin-bottom: 15px; border-radius: 4px; }
-          .info-grid { display: table; width: 100%; margin-bottom: 15px; }
-          .info-row { display: table-row; }
-          .info-label { display: table-cell; padding: 8px; font-weight: bold; color: ${
-            colors.textSecondary
-          }; width: 40%; border-bottom: 1px solid ${colors.borderLight}; }
-          .info-value { display: table-cell; padding: 8px; color: ${
-            colors.textPrimary
-          }; border-bottom: 1px solid ${colors.borderLight}; }
-          table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-          th { background: ${colors.primaryLight}; color: ${
-      colors.textWhite
-    }; padding: 10px; text-align: center; font-size: 13px; border: 1px solid ${
-      colors.border
-    }; }
-          td { padding: 8px; border: 1px solid ${
-            colors.border
-          }; font-size: 12px; }
-          .total-section { background: ${
-            colors.backgroundSecondary
-          }; padding: 20px; border-radius: 8px; margin-top: 20px; border: 1px solid ${
-      colors.border
-    }; }
-          .total-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid ${
-            colors.borderLight
-          }; }
-          .total-label { font-weight: bold; color: ${colors.textSecondary}; }
-          .total-value { color: ${colors.textPrimary}; font-weight: bold; }
-          .grand-total { font-size: 20px; color: ${
-            colors.primary
-          }; margin-top: 15px; padding-top: 15px; border-top: 2px solid ${
-      colors.accent
-    }; }
-          .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 2px solid ${
-            colors.borderLight
-          }; color: ${colors.textLight}; font-size: 11px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>Chandra Jewels</h1>
-          <p>Pricing Breakdown Estimate</p>
-          <p>${currentDate}</p>
-        </div>
-
-        <div class="section">
-          <div class="section-title">Estimate Information</div>
-          <div class="info-grid">
-            <div class="info-row">
-              <div class="info-label">Client Name:</div>
-              <div class="info-value">${selectedClientName}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Selected Stone Type:</div>
-              <div class="info-value">${stoneType}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Total Pieces:</div>
-              <div class="info-value">${p.TotalPieces || 0}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Diamond Weight:</div>
-              <div class="info-value">${p.DiamondWeight || 0} ct</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-title">Selected Metal Details</div>
-          <div class="info-grid">
-            <div class="info-row">
-              <div class="info-label">Quality:</div>
-              <div class="info-value">${metalKt}</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Weight:</div>
-              <div class="info-value">${
-                p.Metal?.Weight || selectedMatrixMatch.metalWeightGrams || 0
-              } g</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Rate:</div>
-              <div class="info-value">$${p.Metal?.Rate || 0}/g</div>
-            </div>
-          </div>
-        </div>
-
-        ${
-          p.Stones && p.Stones.length > 0
-            ? `
-        <div class="section">
-          <div class="section-title">Stones Breakdown (${p.Stones.length} items)</div>
-          <table>
-            <thead>
-              <tr>
-                <th>MM</th>
-                <th>Color</th>
-                <th>Shape</th>
-                <th>Sieve</th>
-                <th>Avg Wt</th>
-                <th>Pcs</th>
-                <th>Ct Wt</th>
-                <th>Markup</th>
-                <th>$/Ct</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${stonesHtml}
-            </tbody>
-          </table>
-        </div>`
-            : ''
-        }
-
-        <div class="section">
-          <div class="section-title">Client Charges & Duties</div>
-          <div class="info-grid">
-            <div class="info-row">
-              <div class="info-label">Loss:</div>
-              <div class="info-value">${p.Client?.Loss || 0}%</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Labour:</div>
-              <div class="info-value">$${p.Client?.Labour || 0}/g</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Extra Charges:</div>
-              <div class="info-value">${p.Client?.ExtraCharges || 0}%</div>
-            </div>
-            <div class="info-row">
-              <div class="info-label">Applied Duties:</div>
-              <div class="info-value">${applicableDuties}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="total-section">
-          <div class="total-row">
-            <span class="total-label">Metal Price:</span>
-            <span class="total-value">$${(p.MetalPrice || 0).toFixed(2)}</span>
-          </div>
-          <div class="total-row">
-            <span class="total-label">Diamonds Price:</span>
-            <span class="total-value">$${(p.DiamondsPrice || 0).toFixed(
-              2,
-            )}</span>
-          </div>
-          <div class="total-row">
-            <span class="total-label">Duties Amount:</span>
-            <span class="total-value">$${(p.DutiesAmount || 0).toFixed(
-              2,
-            )}</span>
-          </div>
-          <div class="total-row grand-total">
-            <span class="total-label">TOTAL ESTIMATE:</span>
-            <span class="total-value">$${estimatedPrice}</span>
-          </div>
-        </div>
-
-        <div class="footer">
-          <p>Generated by App Estimate Viewer</p>
-          <p>This is a computer-generated estimate based on AI extraction and selected combinations.</p>
-        </div>
-      </body>
-      </html>`;
-  }, [
-    selectedMatrixMatch,
-    selectedClientName,
-    stoneType,
-    metalKt,
-    estimatedPrice,
-  ]);
+    return buildCombinedHtml([selectedMatrixMatch.pricing], selectedClientName, metalKt);
+  }, [selectedMatrixMatch, selectedClientName, metalKt]);
 
   const handleImagePick = setImageFn => {
     launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, response => {
@@ -674,7 +421,7 @@ export default function JwelleryEstimate() {
                   </Text>
                   <TouchableOpacity
                     style={styles.copyBtn}
-                    onPress={() => handleCopyMsg(formatClientMessage())}
+                    onPress={() => handleCopyMsg(selectedMatrixMatch?.pricing?.ClientPricingMessage || '')}
                     activeOpacity={0.8}
                   >
                     <Icon
@@ -693,7 +440,7 @@ export default function JwelleryEstimate() {
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.clientMsgInput}>
-                  {formatClientMessage() || 'No pricing message available'}
+                  {selectedMatrixMatch?.pricing?.ClientPricingMessage || 'No pricing message available'}
                 </Text>
               </View>
             )}

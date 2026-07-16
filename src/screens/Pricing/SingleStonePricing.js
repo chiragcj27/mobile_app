@@ -26,7 +26,7 @@ const CHARGE_FIELDS = [
   { key: 'LabDuties', label: 'Lab Duty', suffix: '%', source: 'duty', applicableKey: 'LabDuties' },
   { key: 'NaturalDuties', label: 'Natural Duty', suffix: '%', source: 'duty', applicableKey: 'NaturalDuties' },
   { key: 'SilverAndLabsDuties', label: 'Silver+Lab Duty', suffix: '%', source: 'charges', applicableKey: 'SilverAndLabsDuties' },
-  { key: 'LossAndLabourDuties', label: 'Loss+Lab Duty', suffix: '%', source: 'charges', applicableKey: 'LossAndLabourDuties' },
+  { key: 'LossAndLabourDuties', label: 'Loss+labour Duty', suffix: '%', source: 'charges', applicableKey: 'LossAndLabourDuties' },
 ];
 
 export default function SingleStonePricing({
@@ -44,6 +44,8 @@ export default function SingleStonePricing({
 }) {
   const [localGrouped, setLocalGrouped] = useState({});
   const [localCharges, setLocalCharges] = useState({});
+  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '' });
+  const metalTouchedRef = useRef(false);
   const [isCalculating, setIsCalculating] = useState(false);
 
   const [inlineEditIndex, setInlineEditIndex] = useState(null);
@@ -80,6 +82,14 @@ export default function SingleStonePricing({
       setEditedPrices({});
       setInlineEditIndex(null);
       setInlineEditPrice('');
+      // Seed the common Metal Weight & Rate from the first type (same idea as PricingCalculator)
+      const firstType = Object.keys(grouped)[0];
+      const m = firstType ? grouped[firstType]?.editableMetal : null;
+      setCommonMetal({
+        Weight: m?.Weight != null && m.Weight !== '' ? String(m.Weight) : '',
+        Rate: m?.Rate != null && m.Rate !== '' ? String(m.Rate) : '',
+      });
+      metalTouchedRef.current = false;
     }
 
     return () => {
@@ -250,6 +260,41 @@ export default function SingleStonePricing({
     }));
   }, []);
 
+  // Common Metal Weight & Rate — one value applied to every stone type (same as PricingCalculator).
+  const updateCommonMetal = useCallback((field, value) => {
+    metalTouchedRef.current = true;
+    setCommonMetal(prev => ({ ...prev, [field]: value }));
+    setLocalGrouped(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(type => {
+        next[type] = {
+          ...next[type],
+          editableMetal: { ...next[type].editableMetal, [field]: value },
+        };
+      });
+      return next;
+    });
+  }, []);
+
+  // Push metal changes to the parent on every edit (recalc happens on keyboard dismiss).
+  useEffect(() => {
+    if (!metalTouchedRef.current || !onRecalculatedRef.current) return;
+    const grouped = localGroupedRef.current;
+    Object.keys(grouped).forEach(type => {
+      const data = grouped[type];
+      if (!data) return;
+      const mergedData = {
+        ...data,
+        editableMetal: {
+          ...data.editableMetal,
+          Weight: commonMetal.Weight !== '' ? commonMetal.Weight : data.editableMetal?.Weight,
+          Rate: commonMetal.Rate !== '' ? commonMetal.Rate : data.editableMetal?.Rate,
+        },
+      };
+      onRecalculatedRef.current(type, mergedData);
+    });
+  }, [commonMetal]);
+
   // Push charge changes to parent on every edit (local state sync)
   useEffect(() => {
     if (!onRecalculatedRef.current) return;
@@ -284,7 +329,8 @@ export default function SingleStonePricing({
   useEffect(() => {
     const subscription = Keyboard.addListener('keyboardDidHide', () => {
       const charges = localChargesRef.current;
-      if (Object.keys(charges).length === 0) return;
+      // Recalculate when charges or the common metal weight/rate changed.
+      if (Object.keys(charges).length === 0 && !metalTouchedRef.current) return;
       setIsCalculating(true);
       onRequestRecalculateRef.current?.();
     });
@@ -294,6 +340,7 @@ export default function SingleStonePricing({
   const getApplicableFields = useCallback((type) => {
     const applicable = localGrouped[type]?.pricingResult?.Applicable;
     return CHARGE_FIELDS.filter(f => {
+      if (f.key === 'SilverAndLabsDuties' && metalKt?.includes('Silver')) return true;
       if (!f.applicableKey) return true;
       if (!applicable) return true;
       return applicable[f.applicableKey] === true;
@@ -303,6 +350,7 @@ export default function SingleStonePricing({
   const renderChargesSection = (type) => {
     const fields = getApplicableFields(type);
     const ch = localCharges[type] || {};
+    const hasLabStone = /lab/i.test(type);
 
     return (
       <View style={s.chargesSection}>
@@ -313,9 +361,14 @@ export default function SingleStonePricing({
             const placeholder = localGrouped[type]?.editableCharges?.[field.key]
               ?? localGrouped[type]?.dutyRates?.[field.key]
               ?? '0';
+            const label = field.key === 'SilverAndLabsDuties'
+              ? (hasLabStone ? 'Silver+Lab Duty' : 'Silver')
+              : field.key === 'GoldDuties'
+                ? (metalKt?.includes('Silver') ? 'Silver Duty' : metalKt?.includes('Platinum') ? 'Platinum Duty' : 'Gold Duty')
+                : field.label;
             return (
               <View key={field.key} style={s.chargeField}>
-                <Text style={s.chargeLabel}>{field.label}</Text>
+                <Text style={s.chargeLabel}>{label}</Text>
                 <View style={s.chargeInputWrap}>
                   <TextInput
                     style={s.chargeInput}
@@ -361,12 +414,13 @@ export default function SingleStonePricing({
           </View>
           <View style={s.stoneTable}>
             <View style={s.stoneTableHeader}>
-              <Text style={[s.stoneCol, s.stoneColType, s.stoneTh]}>Type</Text>
-              <Text style={[s.stoneCol, s.stoneColShape, s.stoneTh]}>Shape</Text>
-              <Text style={[s.stoneCol, s.stoneColNum, s.stoneTh]}>Ct</Text>
-              <Text style={[s.stoneCol, s.stoneColNum, s.stoneTh]}>Pcs</Text>
-              <Text style={[s.stoneCol, s.stoneColPrice, s.stoneTh]}>$/Ct</Text>
-              <View style={s.stoneColActions} />
+              <Text style={[s.stoneCol, s.stoneTh]}>MM</Text>
+              <Text style={[s.stoneCol, s.stoneTh]}>Shape</Text>
+              <Text style={[s.stoneCol, s.stoneTh]}>Avg Wt</Text>
+              <Text style={[s.stoneCol, s.stoneTh]}>Ct wt</Text>
+              <Text style={[s.stoneCol, s.stoneTh]}>Pcs</Text>
+              <Text style={[s.stoneCol, s.stoneTh]}>$/Ct</Text>
+              <View style={s.stoneCol} />
             </View>
             {missingStones.map(({ s: stone, i }, rowIdx) => {
               const effectivePrice = getEffectivePrice(type, i);
@@ -382,23 +436,27 @@ export default function SingleStonePricing({
                     !isEdited && { transform: [{ translateX: shakeAnim }, { scale: scaleAnim }] },
                   ]}
                 >
-                  <Text style={[s.stoneCol, s.stoneColType, s.stoneTd]} numberOfLines={1}>
-                    {stone.Type || '—'}
+
+                  <Text style={[s.stoneCol, s.stoneTd]}>
+                    {stone.MmSize || '—'}
                   </Text>
-                  <Text style={[s.stoneCol, s.stoneColShape, s.stoneTd]} numberOfLines={1}>
+                  <Text style={[s.stoneCol, s.stoneTd]} numberOfLines={1}>
                     {stone.Shape || '—'}
                   </Text>
-                  <Text style={[s.stoneCol, s.stoneColNum, s.stoneTd]}>
-                    {num(stone.CtWeight).toFixed(2)}
+                  <Text style={[s.stoneCol, s.stoneTd]}>
+                    {stone.Weight || '—'}
                   </Text>
-                  <Text style={[s.stoneCol, s.stoneColNum, s.stoneTd]}>
-                    {num(stone.Pcs)}
+                  <Text style={[s.stoneCol, s.stoneTd]}>
+                    {stone.CtWeight || '—'}
+                  </Text>
+                  <Text style={[s.stoneCol, s.stoneTd]}>
+                    {stone.Pcs || '—'}
                   </Text>
 
                   {isEditing ? (
                     <TextInput
                       ref={inlinePriceRef}
-                      style={[s.stoneCol, s.stoneColPrice, s.inlinePriceInput]}
+                      style={[s.stoneCol, s.inlinePriceInput]}
                       value={inlineEditPrice}
                       onChangeText={setInlineEditPrice}
                       keyboardType="decimal-pad"
@@ -410,31 +468,16 @@ export default function SingleStonePricing({
                   ) : (
                     <Text
                       style={[
-                        s.stoneCol, s.stoneColPrice, s.stoneTd,
+                        s.stoneCol, s.stoneTd,
                         !isEdited && s.stonePriceMissing,
                       ]}
                     >
-                      {effectivePrice > 0 ? `$${effectivePrice.toFixed(2)}` : '—'}
+                      {effectivePrice > 0 ? `$${effectivePrice}` : '—'}
                     </Text>
                   )}
 
-                  <View style={s.stoneColActions}>
-                    {!isEdited && (
-                      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-                        <Icon name="warning" size={16} color={colors.error} />
-                      </Animated.View>
-                    )}
-                    {!isEditing && (
-                      <TouchableOpacity
-                        onPress={() => startInlineEdit(type, i, stone)}
-                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }}
-                        style={[s.inlineActionBtn, { borderColor: colors.primary }]}
-                      >
-                        <Icon name="edit" size={14} color={colors.primary} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </Animated.View>
+                  <View style={s.stoneCol} />
+                  </Animated.View>
               );
             })}
           </View>
@@ -460,7 +503,7 @@ export default function SingleStonePricing({
             <View style={{ flex: 1 }}>
               <Text style={s.typeCardName}>{type}</Text>
               <Text style={s.typeCardStats}>
-                {stones.length} stone lines • {stones.reduce((sum, st) => sum + num(st.Pcs), 0)} pcs • {stones.reduce((sum, st) => sum + num(st.CtWeight), 0).toFixed(1)} ct
+                {stones.length} stone lines • {result?.TotalPieces ?? 0} pcs • {result?.DiamondWeight ?? 0} ct
               </Text>
             </View>
             {isCalculating && <ActivityIndicator size="small" color={colors.primary} />}
@@ -468,20 +511,20 @@ export default function SingleStonePricing({
           {!isCalculating && (
             <View style={s.typeCardBody}>
               <View style={s.typeCardRow}>
-                <Text style={s.typeCardLabel}>Metal Value</Text>
-                <Text style={s.typeCardValue}>${num(result?.MetalPrice).toFixed(2)}</Text>
+                <Text style={s.typeCardLabel}>Metal Price</Text>
+                <Text style={s.typeCardValue}>${num(result?.MetalPrice)}</Text>
               </View>
               <View style={s.typeCardRow}>
                 <Text style={s.typeCardLabel}>Diamonds</Text>
-                <Text style={s.typeCardValue}>${num(result?.DiamondsPrice).toFixed(2)}</Text>
+                <Text style={s.typeCardValue}>${num(result?.DiamondsPrice)}</Text>
               </View>
               <View style={s.typeCardRow}>
                 <Text style={s.typeCardLabel}>Labour & Duties</Text>
-                <Text style={s.typeCardValue}>${num(result?.DutiesAmount).toFixed(2)}</Text>
+                <Text style={s.typeCardValue}>${num(result?.DutiesAmount)}</Text>
               </View>
               <View style={[s.typeCardRow, { borderBottomWidth: 0 }]}>
                 <Text style={s.typeCardLabelTotal}>Total Price</Text>
-                <Text style={s.typeCardValueTotal}>${num(result?.TotalPrice).toFixed(2)}</Text>
+                <Text style={s.typeCardValueTotal}>${num(result?.TotalPrice)}</Text>
               </View>
             </View>
           )}
@@ -526,6 +569,41 @@ export default function SingleStonePricing({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            {/* Common Metal Weight & Rate — kept at the top, applies to all types */}
+            <View style={s.chargesSection}>
+              <Text style={s.chargesTitle}>Metal Weight & Rate</Text>
+              <View style={s.chargesGrid}>
+                <View style={s.chargeField}>
+                  <Text style={s.chargeLabel}>Weight (g)</Text>
+                  <View style={s.chargeInputWrap}>
+                    <TextInput
+                      style={s.chargeInput}
+                      value={String(commonMetal.Weight || '')}
+                      onChangeText={(v) => updateCommonMetal('Weight', v)}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textLight}
+                    />
+                    <Text style={s.chargeSuffix}>g</Text>
+                  </View>
+                </View>
+                <View style={s.chargeField}>
+                  <Text style={s.chargeLabel}>Rate ($/g)</Text>
+                  <View style={s.chargeInputWrap}>
+                    <TextInput
+                      style={s.chargeInput}
+                      value={String(commonMetal.Rate || '')}
+                      onChangeText={(v) => updateCommonMetal('Rate', v)}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textLight}
+                    />
+                    <Text style={s.chargeSuffix}>$/g</Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
             {hasAnyMissing && (
               <View style={s.globalWarningBanner}>
                 <Icon name="warning" size={15} color={colors.secondary} />
@@ -679,6 +757,7 @@ const s = StyleSheet.create({
   stoneTableHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: colors.primary,
     paddingVertical: 10,
     paddingHorizontal: 12,
@@ -686,6 +765,7 @@ const s = StyleSheet.create({
   stoneRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingVertical: 12,
     paddingHorizontal: 12,
     borderTopWidth: 1,
@@ -694,12 +774,7 @@ const s = StyleSheet.create({
   stoneRowAlt: { backgroundColor: colors.backgroundSecondary || '#F8F8F8' },
   stoneRowMissing: { borderWidth: 1.5, borderColor: colors.error, backgroundColor: colors.error + '10' },
 
-  stoneCol: { textAlign: 'center' },
-  stoneColType: { flex: 2.5, textAlign: 'left' },
-  stoneColShape: { flex: 2, textAlign: 'left' },
-  stoneColNum: { flex: 1.2 },
-  stoneColPrice: { flex: 1.8 },
-  stoneColActions: { width: 60, flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
+  stoneCol: { textAlign: 'center', position: 'relative' },
 
   stoneTh: { fontFamily: fonts.bold, fontSize: 11, color: '#fff' },
   stoneTd: { fontFamily: fonts.regular, fontSize: 12, color: colors.textPrimary },
@@ -710,22 +785,12 @@ const s = StyleSheet.create({
     borderColor: colors.error,
     borderRadius: 8,
     backgroundColor: colors.error + '10',
-    paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 14,
     fontFamily: fonts.bold,
     color: colors.textPrimary,
-    textAlign: 'left',
+    textAlign: 'center',
   },
-  inlineActionBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
   chargesSection: {
     marginTop: 4,
     marginBottom: 8,

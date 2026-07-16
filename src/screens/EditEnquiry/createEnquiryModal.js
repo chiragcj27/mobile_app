@@ -267,6 +267,8 @@ const generateStyleNumber = (qty, category) => {
       const isAIParsingFlow = textSubmitted && parsedData !== null;
       let finalData;
 
+      console.log('[createEnquiry] dynamicMissingFields:', JSON.stringify(dynamicMissingFields.map(f => ({ field: f.field, label: f.label, options: f.options }))));
+      console.log('[createEnquiry] missingFieldsData keys:', Object.keys(missingFieldsData), 'MetalColor:', missingFieldsData.MetalColor, 'MetalQuality:', missingFieldsData.MetalQuality, 'parsedData.Metal:', JSON.stringify(parsedData?.Metal));
       if (isAIParsingFlow) {
         finalData = {
           Name: missingFieldsData.Name || parsedData?.Name || '',
@@ -276,8 +278,8 @@ const generateStyleNumber = (qty, category) => {
           Priority: missingFieldsData.Priority || parsedData?.Priority || 'Normal',
           Quantity: missingFieldsData.Quantity || parsedData?.Quantity || 1,
           Metal: {
-            Color: missingFieldsData.MetalColor || parsedData?.Metal?.Color || null,
-            Quality: missingFieldsData.MetalQuality || parsedData?.Metal?.Quality || '10K',
+            Color: missingFieldsData["Metal.Color"] || parsedData?.Metal?.Color || null,
+            Quality: missingFieldsData["Metal.Quality"] || parsedData?.Metal?.Quality || '10K',
           },
           StoneType: missingFieldsData.StoneType || parsedData?.StoneType || null,
           Stamping: missingFieldsData.Stamping || parsedData?.Stamping || null,
@@ -460,14 +462,17 @@ const generateStyleNumber = (qty, category) => {
                   {item.options.map(option => {
                     const selected = missingFieldsData[item.field] === option.value;
                     return (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[styles.choiceChip, selected && styles.choiceChipActive]}
-                        activeOpacity={0.85}
-                        onPress={() => setMissingFieldsData(prev => ({ ...prev, [item.field]: option.value }))}
-                      >
-                        <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{option.label}</Text>
-                      </TouchableOpacity>
+                        <TouchableOpacity
+                          key={option.value}
+                          style={[styles.choiceChip, selected && styles.choiceChipActive]}
+                          activeOpacity={0.85}
+                          onPress={() => {
+                            console.log('[createEnquiry] chip pressed field:', item.field, 'value:', option.value, 'label:', option.label);
+                            setMissingFieldsData(prev => ({ ...prev, [item.field]: option.value }));
+                          }}
+                        >
+                          <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{option.label}</Text>
+                        </TouchableOpacity>
                     );
                   })}
                 </View>
