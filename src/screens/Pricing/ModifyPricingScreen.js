@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   FlatList,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from '../../components/common/Icon';
@@ -26,6 +27,7 @@ const DUTY_CONFIG = {
   UndercutPrice: { label: 'Undercut ($/ct)' },
   NaturalDuties: { label: 'Natural Duty (%)' },
   LabDuties: { label: 'Lab Duty (%)' },
+  SilverAndLabsDuties: { label: 'Silver + Lab Duty (%)' },
 };
 
 export default function ModifyPricingScreen({ route, navigation }) {
@@ -56,18 +58,29 @@ export default function ModifyPricingScreen({ route, navigation }) {
   const [stoneEdits, setStoneEdits] = useState({});
   const [dutyEdits, setDutyEdits] = useState({});
   const [metalData, setMetalData] = useState({ Weight: '', Rate: '', Quality: metalKt });
-  const [chargesData, setChargesData] = useState({ Loss: '', Labour: '', ExtraCharges: '', GoldDuties: '' });
+  const [chargesData, setChargesData] = useState({ Loss: '', Labour: '', ExtraCharges: '', GoldDuties: '', SilverAndLabsDuties: '', LossAndLabourDuties: '' });
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
-  const [bottomExpanded, setBottomExpanded] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [topTypeModalVisible, setTopTypeModalVisible] = useState(false);
   const [perStoneTypeModalIndex, setPerStoneTypeModalIndex] = useState(null);
   const [perStoneShapeModalIndex, setPerStoneShapeModalIndex] = useState(null);
+  const [shapeOptions, setShapeOptions] = useState(SHAPES);
+  const [newShapeText, setNewShapeText] = useState('');
   const [stoneTypeOverrides, setStoneTypeOverrides] = useState({});
+  const [shapeVersion, setShapeVersion] = useState(0);
+
+  const flatStonesRef = useRef(flatStones);
+  useEffect(() => { flatStonesRef.current = flatStones; }, [flatStones]);
+  const metalDataRef = useRef(metalData);
+  useEffect(() => { metalDataRef.current = metalData; }, [metalData]);
+  const chargesDataRef = useRef(chargesData);
+  useEffect(() => { chargesDataRef.current = chargesData; }, [chargesData]);
 
   const originalTypeRef = useRef({});
   const dataChangedRef = useRef(false);
+  // true when a change other than the Price field happened → refetch price (first calc)
+  const nonPriceChangedRef = useRef(false);
   const isAutoRecalculatingRef = useRef(false);
   const [pricingResults, setPricingResults] = useState({});
 
@@ -97,6 +110,8 @@ export default function ModifyPricingScreen({ route, navigation }) {
       Labour: typeData.editableCharges?.Labour?.toString() ?? '',
       ExtraCharges: typeData.editableCharges?.ExtraCharges?.toString() ?? '',
       GoldDuties: typeData.editableCharges?.GoldDuties?.toString() ?? '',
+      SilverAndLabsDuties: typeData.editableCharges?.SilverAndLabsDuties?.toString() ?? typeData.dutyRates?.SilverAndLabsDuties?.toString() ?? '',
+      LossAndLabourDuties: typeData.editableCharges?.LossAndLabourDuties?.toString() ?? typeData.dutyRates?.LossAndLabourDuties?.toString() ?? '',
     });
     const originals = {};
     stones.forEach((s, i) => { originals[i] = s.Type || selectedType; });
@@ -104,18 +119,19 @@ export default function ModifyPricingScreen({ route, navigation }) {
   }, [selectedType, metalKt]);
 
   useEffect(() => {
-    if (!dataChangedRef.current || !clientId || flatStones.length === 0) return;
+    if (!dataChangedRef.current || !clientId || flatStonesRef.current.length === 0) return;
     dataChangedRef.current = false;
+    nonPriceChangedRef.current = false;
     const timer = setTimeout(() => {
       if (!isAutoRecalculatingRef.current) {
         isAutoRecalculatingRef.current = true;
-        handleRecalculate().finally(() => {
+        runCalculation(false).finally(() => {
           isAutoRecalculatingRef.current = false;
         });
       }
     }, 800);
     return () => clearTimeout(timer);
-  }, [stoneEdits, stoneTypeOverrides]);
+  }, [stoneTypeOverrides, shapeVersion]);
 
   const getEffectiveStone = useCallback((idx) => {
     const base = flatStones[idx]?.stone || {};
@@ -125,18 +141,32 @@ export default function ModifyPricingScreen({ route, navigation }) {
 
   const updateStoneField = useCallback((idx, field, value) => {
     dataChangedRef.current = true;
+    // Any field except Price refetches the price on recalc (first calculation).
+    if (field !== 'Price') nonPriceChangedRef.current = true;
     setStoneEdits(prev => ({ ...prev, [idx]: { ...(prev[idx] || {}), [field]: value } }));
+  }, []);
+
+  const updateDuty = useCallback((field, v) => {
+    dataChangedRef.current = true;
+    nonPriceChangedRef.current = true;
+    setDutyEdits(prev => ({ ...prev, [field]: v }));
   }, []);
 
   const getEffectiveType = useCallback((idx) => {
     return stoneTypeOverrides[idx] || selectedType;
   }, [stoneTypeOverrides, selectedType]);
 
-  const handleRecalculate = useCallback(async () => {
-    if (!selectedType || flatStones.length === 0) return;
+  const runCalculationRef = useRef(null);
+
+  const runCalculation = useCallback(async (isRecalculate) => {
+    const currentFlatStones = flatStonesRef.current;
+    const currentMetal = metalDataRef.current;
+    const currentCharges = chargesDataRef.current;
+
+    if (!selectedType || currentFlatStones.length === 0) return;
     setIsCalculating(true);
 
-    const editableStones = flatStones.map((item, idx) => {
+    const editableStones = currentFlatStones.map((item, idx) => {
       const eff = getEffectiveStone(idx);
       return {
         Type: getEffectiveType(idx),
@@ -147,7 +177,9 @@ export default function ModifyPricingScreen({ route, navigation }) {
         CtWeight: num(eff.CtWeight),
         Weight: num(eff.Weight),
         Pcs: num(eff.Pcs),
-        Price: 0,
+        // First calculation: let the backend fill prices (0). Recalculation:
+        // keep the price already entered on the row/modal.
+        Price: isRecalculate ? num(eff.Price) : 0,
         Markup: num(eff.Markup),
       };
     });
@@ -162,15 +194,17 @@ export default function ModifyPricingScreen({ route, navigation }) {
       data: {
         editableStones,
         editableMetal: {
-          Weight: num(metalData.Weight),
-          Quality: metalData.Quality || metalKt,
-          Rate: num(metalData.Rate),
+          Weight: num(currentMetal.Weight),
+          Quality: currentMetal.Quality || metalKt,
+          Rate: num(currentMetal.Rate),
         },
         editableCharges: {
-          Loss: num(chargesData.Loss),
-          Labour: num(chargesData.Labour),
-          ExtraCharges: num(chargesData.ExtraCharges),
-          GoldDuties: num(chargesData.GoldDuties),
+          Loss: num(currentCharges.Loss),
+          Labour: num(currentCharges.Labour),
+          ExtraCharges: num(currentCharges.ExtraCharges),
+          GoldDuties: num(currentCharges.GoldDuties),
+          SilverAndLabsDuties: num(currentCharges.SilverAndLabsDuties),
+          LossAndLabourDuties: num(currentCharges.LossAndLabourDuties),
         },
         dutyRates: {
           UndercutPrice: dutyEdits.UndercutPrice !== '' ? num(dutyEdits.UndercutPrice) : undefined,
@@ -183,7 +217,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
       },
       metalKt,
       selectedClient,
-      isRecalculate: false,
+      isRecalculate,
     });
 
     console.log('[ModifyPricing] ▶ FULL PAYLOAD:', JSON.stringify({ details: payload.details, clientId: payload.clientId, isRecalculate: payload.isRecalculate }, null, 2));
@@ -208,6 +242,19 @@ export default function ModifyPricingScreen({ route, navigation }) {
             },
           })));
         }
+        setMetalData(prev => ({
+          ...prev,
+          Rate: result.GoldRateKT?.toString() ?? prev.Rate,
+          Quality: result.MetalKT || prev.Quality,
+        }));
+        setChargesData({
+          Loss: result.LossPercent?.toString() ?? '',
+          Labour: result.LabourPercent?.toString() ?? '',
+          ExtraCharges: result.ExtraChargesPercent?.toString() ?? '',
+          GoldDuties: result.Duties?.Gold?.Rate?.toString() ?? '',
+          SilverAndLabsDuties: result.Duties?.SilverAndLabs?.Rate?.toString() ?? '',
+          LossAndLabourDuties: result.Duties?.LossAndLabour?.Rate?.toString() ?? '',
+        });
       }
     } catch (err) {
       // silent
@@ -215,6 +262,37 @@ export default function ModifyPricingScreen({ route, navigation }) {
       setIsCalculating(false);
     }
   }, [selectedType, flatStones, metalData, chargesData, dutyEdits, clientId, metalKt, selectedClient, calculatePricing, findTypeData, getEffectiveStone, stoneTypeOverrides, getEffectiveType]);
+
+  useEffect(() => { runCalculationRef.current = runCalculation; }, [runCalculation]);
+
+  // First calculation — prices fetched from the client rate chart. Bound to the RECALCULATE button.
+  const handleRecalculate = useCallback(() => runCalculation(false), [runCalculation]);
+  // Recalculation — keeps the entered prices, same payload but isRecalculate=true (as in SingleStonePricing).
+  const handleRecalculateUpdate = useCallback(() => runCalculation(true), [runCalculation]);
+
+  const recalcUpdateRef = useRef(null);
+  const recalcFirstRef = useRef(null);
+  useEffect(() => { recalcUpdateRef.current = handleRecalculateUpdate; }, [handleRecalculateUpdate]);
+  useEffect(() => { recalcFirstRef.current = handleRecalculate; }, [handleRecalculate]);
+
+  // On keyboard dismiss: only a price-only edit keeps the entered price
+  // (recalc). Any other field change refetches the price (first calculation).
+  useEffect(() => {
+    const sub = Keyboard.addListener('keyboardDidHide', () => {
+      if (!dataChangedRef.current || !clientId || flatStones.length === 0) return;
+      const priceOnly = !nonPriceChangedRef.current;
+      dataChangedRef.current = false;
+      nonPriceChangedRef.current = false;
+      if (!isAutoRecalculatingRef.current) {
+        isAutoRecalculatingRef.current = true;
+        const fn = priceOnly ? recalcUpdateRef.current : recalcFirstRef.current;
+        Promise.resolve(fn?.()).finally(() => {
+          isAutoRecalculatingRef.current = false;
+        });
+      }
+    });
+    return () => sub.remove();
+  }, [clientId, flatStones.length]);
 
   const openEditModal = useCallback((idx) => {
     setEditingIndex(idx);
@@ -240,7 +318,26 @@ export default function ModifyPricingScreen({ route, navigation }) {
   const selectPerStoneShape = useCallback((idx, shape) => {
     updateStoneField(idx, 'Shape', shape);
     setPerStoneShapeModalIndex(null);
+    // Shape affects the stone rate — run a fresh first calculation (Price refetched).
+    setShapeVersion(v => v + 1);
   }, [updateStoneField]);
+
+  // Add a new shape typed by the user, then select it for the current stone.
+  const addNewShape = useCallback(() => {
+    const val = newShapeText.trim().toUpperCase();
+    if (!val) return;
+    setShapeOptions(prev => (prev.includes(val) ? prev : [...prev, val]));
+    setNewShapeText('');
+    if (perStoneShapeModalIndex !== null) selectPerStoneShape(perStoneShapeModalIndex, val);
+  }, [newShapeText, perStoneShapeModalIndex, selectPerStoneShape]);
+
+  // Shape list for the modal: options + the stone's current shape if it isn't already listed.
+  const shapeListForModal = useMemo(() => {
+    const cur = perStoneShapeModalIndex !== null
+      ? String(getEffectiveStone(perStoneShapeModalIndex).Shape || '').trim()
+      : '';
+    return cur && !shapeOptions.includes(cur) ? [...shapeOptions, cur] : shapeOptions;
+  }, [perStoneShapeModalIndex, shapeOptions, getEffectiveStone]);
 
   const renderStoneRow = (item, idx) => {
     const eff = getEffectiveStone(idx);
@@ -278,7 +375,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
             <Text style={s.stoneFieldLabel}>Price ($/CT)</Text>
             <TextInput
               style={[s.priceInput, isMissing && s.priceInputMissing]}
-              value={stoneEdits[idx]?.Price !== undefined ? String(stoneEdits[idx].Price) : (num(eff.Price) > 0 ? String(num(eff.Price).toFixed(2)) : '')}
+              value={stoneEdits[idx]?.Price !== undefined ? String(stoneEdits[idx].Price) : (num(eff.Price) > 0 ? String(num(eff.Price)) : '')}
               onChangeText={(v) => updateStoneField(idx, 'Price', v)}
               keyboardType="decimal-pad"
               placeholder="--"
@@ -306,131 +403,38 @@ export default function ModifyPricingScreen({ route, navigation }) {
         </View>
       </View>
 
-      <ScrollView
-        style={s.scroll}
-        contentContainerStyle={s.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={s.pageTitle}>Stones Summary</Text>
-
-        <TouchableOpacity
-          style={s.typeSelectorRow}
-          onPress={() => setTopTypeModalVisible(true)}
-          activeOpacity={0.7}
+      <View style={{ flex: 1 }}>
+        <ScrollView
+          style={s.scroll}
+          contentContainerStyle={s.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <Text style={s.typeSelectorValue} numberOfLines={1}>
-            {selectedType || 'Select Stone Type'}
-          </Text>
-          <Icon name="arrow-drop-down" size={20} color={colors.textSecondary} />
-        </TouchableOpacity>
+          <Text style={s.pageTitle}>Stones Summary</Text>
 
-        {flatStones.length === 0 ? (
-          <View style={s.emptyTypeState}>
-            <Text style={s.emptyTypeText}>No stones yet</Text>
-          </View>
-        ) : (
-          flatStones.map((item, idx) => renderStoneRow(item, idx))
-        )}
+          <TouchableOpacity
+            style={s.typeSelectorRow}
+            onPress={() => setTopTypeModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={s.typeSelectorValue} numberOfLines={1}>
+              {selectedType || 'Select Stone Type'}
+            </Text>
+            <Icon name="arrow-drop-down" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
 
-        <View style={{ height: 120 }} />
-      </ScrollView>
+          {flatStones.length === 0 ? (
+            <View style={s.emptyTypeState}>
+              <Text style={s.emptyTypeText}>No stones yet</Text>
+            </View>
+          ) : (
+            flatStones.map((item, idx) => renderStoneRow(item, idx))
+          )}
+
+          <View style={{ height: 120 }} />
+        </ScrollView>
 
       <View style={s.bottomSection}>
-        <TouchableOpacity
-          style={s.bottomToggle}
-          onPress={() => setBottomExpanded(!bottomExpanded)}
-          activeOpacity={0.7}
-        >
-          <View style={s.bottomToggleLeft}>
-            <Icon name="tune" size={20} color={colors.primary} />
-            <Text style={s.bottomToggleText}>Metal & Client Charges</Text>
-          </View>
-          <Icon
-            name={bottomExpanded ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-            size={22}
-            color={colors.textSecondary}
-          />
-        </TouchableOpacity>
-
-        {bottomExpanded && (
-          <View style={s.bottomExpandedContent}>
-            <Text style={s.bottomSectionTitle}>Metal Weight & Rate</Text>
-            <View style={s.bottomGrid}>
-              <View style={s.bottomField}>
-                <Text style={s.bottomFieldLabel}>Weight (g)</Text>
-                <TextInput
-                  style={s.bottomInput}
-                  value={metalData.Weight}
-                  onChangeText={(v) => setMetalData(prev => ({ ...prev, Weight: v }))}
-                  keyboardType="decimal-pad"
-                  placeholder="0"
-                  placeholderTextColor={colors.textLight}
-                />
-              </View>
-              <View style={s.bottomField}>
-                <Text style={s.bottomFieldLabel}>Rate ($/g) *</Text>
-                <TextInput
-                  style={s.bottomInput}
-                  value={metalData.Rate}
-                  onChangeText={(v) => setMetalData(prev => ({ ...prev, Rate: v }))}
-                  keyboardType="decimal-pad"
-                  placeholder="0"
-                  placeholderTextColor={colors.textLight}
-                />
-              </View>
-            </View>
-
-            <Text style={s.bottomSectionTitle}>Client Metal Charges & Duties</Text>
-            <View style={s.bottomGrid}>
-              <View style={s.bottomField}>
-                <Text style={s.bottomFieldLabel}>Loss (%)</Text>
-                <TextInput
-                  style={s.bottomInput}
-                  value={chargesData.Loss}
-                  onChangeText={(v) => setChargesData(prev => ({ ...prev, Loss: v }))}
-                  keyboardType="decimal-pad"
-                  placeholder="0"
-                  placeholderTextColor={colors.textLight}
-                />
-              </View>
-              <View style={s.bottomField}>
-                <Text style={s.bottomFieldLabel}>Labour ($/g)</Text>
-                <TextInput
-                  style={s.bottomInput}
-                  value={chargesData.Labour}
-                  onChangeText={(v) => setChargesData(prev => ({ ...prev, Labour: v }))}
-                  keyboardType="decimal-pad"
-                  placeholder="0"
-                  placeholderTextColor={colors.textLight}
-                />
-              </View>
-              <View style={s.bottomField}>
-                <Text style={s.bottomFieldLabel}>Extra (%)</Text>
-                <TextInput
-                  style={s.bottomInput}
-                  value={chargesData.ExtraCharges}
-                  onChangeText={(v) => setChargesData(prev => ({ ...prev, ExtraCharges: v }))}
-                  keyboardType="decimal-pad"
-                  placeholder="0"
-                  placeholderTextColor={colors.textLight}
-                />
-              </View>
-              <View style={s.bottomField}>
-                <Text style={s.bottomFieldLabel}>Gold Duty (%)</Text>
-                <TextInput
-                  style={s.bottomInput}
-                  value={chargesData.GoldDuties}
-                  onChangeText={(v) => setChargesData(prev => ({ ...prev, GoldDuties: v }))}
-                  keyboardType="decimal-pad"
-                  placeholder="--"
-                  placeholderTextColor={colors.textLight}
-                />
-              </View>
-            </View>
-          </View>
-        )}
-
         <View style={s.bottomBtnRow}>
           <TouchableOpacity
             style={[s.recalcBtn, isCalculating && s.recalcBtnDisabled]}
@@ -455,16 +459,19 @@ export default function ModifyPricingScreen({ route, navigation }) {
                 pricingEntries: [result],
                 clientName: selectedClient?.name || 'Client',
                 metalKt,
-                showMessageFormat: false,
+                modify: true,
               });
             }}
             activeOpacity={0.85}
             disabled={!pricingResults[selectedType]}
           >
-            <Icon name="visibility" size={18} color={colors.primary} />
-            <Text style={s.previewBtnText}>PREVIEW</Text>
+            <Icon name="visibility" size={18} color={pricingResults[selectedType] ? colors.primary : colors.textSecondary} />
+            <Text style={[s.previewBtnText, !pricingResults[selectedType] && s.previewBtnTextDisabled]}>
+              {pricingResults[selectedType] ? 'PREVIEW' : 'Recalculate First'}
+            </Text>
           </TouchableOpacity>
         </View>
+      </View>
       </View>
 
       {/* TOP TYPE SELECTOR MODAL */}
@@ -564,8 +571,9 @@ export default function ModifyPricingScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
             <FlatList
-              data={SHAPES}
+              data={shapeListForModal}
               keyExtractor={(item) => item}
+              keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => {
                 const currentShape = perStoneShapeModalIndex !== null ? (getEffectiveStone(perStoneShapeModalIndex).Shape || '') : '';
                 const isSelected = item === currentShape;
@@ -582,6 +590,24 @@ export default function ModifyPricingScreen({ route, navigation }) {
                   </TouchableOpacity>
                 );
               }}
+              ListFooterComponent={
+                <View style={s.addShapeRow}>
+                  <TextInput
+                    style={s.addShapeInput}
+                    value={newShapeText}
+                    onChangeText={setNewShapeText}
+                    placeholder="Add new shape"
+                    placeholderTextColor={colors.textLight}
+                    autoCapitalize="characters"
+                    onSubmitEditing={addNewShape}
+                    returnKeyType="done"
+                  />
+                  <TouchableOpacity style={s.addShapeBtn} onPress={addNewShape} activeOpacity={0.85}>
+                    <Icon name="add" size={18} color="#fff" />
+                    <Text style={s.addShapeBtnText}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              }
             />
           </View>
         </View>
@@ -685,13 +711,20 @@ export default function ModifyPricingScreen({ route, navigation }) {
                     {(() => {
                       const stoneType = editingIndex !== null ? (stoneTypeOverrides[editingIndex] || getEffectiveStone(editingIndex).Type || selectedType) : '';
                       const isLab = isLabType(stoneType);
-                      const isSilver = metalKt === 'Silver 925';
-                      const isGold = !isSilver && metalKt !== 'Platinum';
+                      const isSilver = metalKt?.includes('Silver');
+                      const isPlatinum = metalKt?.includes('Platinum');
                       const dutyFields = [];
-                      if (!isLab) {
+                      if (isSilver) {
+                        dutyFields.push('UndercutPrice');
+                        dutyFields.push(isLab ? 'LabDuties' : 'SilverAndLabsDuties');
+                      } else if (isPlatinum) {
                         dutyFields.push('UndercutPrice', 'NaturalDuties');
-                      } else if (isGold) {
-                        dutyFields.push('LabDuties');
+                      } else {
+                        if (!isLab) {
+                          dutyFields.push('UndercutPrice', 'NaturalDuties');
+                        } else {
+                          dutyFields.push('LabDuties');
+                        }
                       }
                       if (dutyFields.length === 0) return null;
                       return (
@@ -704,7 +737,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
                                 <TextInput
                                   style={s.modalFieldInput}
                                   value={dutyEdits[key] ?? ''}
-                                  onChangeText={(v) => setDutyEdits(prev => ({ ...prev, [key]: v }))}
+                                  onChangeText={(v) => updateDuty(key, v)}
                                   keyboardType="decimal-pad"
                                   placeholder="0"
                                   placeholderTextColor={colors.textLight}
@@ -837,34 +870,6 @@ const s = StyleSheet.create({
     marginBottom: 1,
   },
 
-  chargesSubRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    paddingTop: 4,
-    backgroundColor: colors.backgroundSecondary,
-    marginHorizontal: 8,
-    marginBottom: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border + '80',
-  },
-  chargeSubField: { flex: 1 },
-  chargeSubLabel: { fontFamily: fonts.bold, fontSize: 9, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.05, marginBottom: 4 },
-  chargeSubInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm,
-    color: colors.textPrimary,
-    backgroundColor: colors.background,
-    textAlign: 'right',
-  },
-
   bottomSection: {
     backgroundColor: colors.background,
     borderTopWidth: 1,
@@ -872,42 +877,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 16,
     paddingTop: 4,
-  },
-  bottomToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-  },
-  bottomToggleLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  bottomToggleText: { fontFamily: fonts.bold, fontSize: fonts.sm, color: colors.primary },
-
-  bottomExpandedContent: { paddingBottom: 12 },
-  bottomSectionTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.05,
-    marginBottom: 8,
-    marginTop: 8,
-    paddingBottom: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  bottomGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  bottomField: { width: '48%', marginBottom: 4 },
-  bottomFieldLabel: { fontFamily: fonts.bold, fontSize: 10, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.05, marginBottom: 4 },
-  bottomInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm,
-    color: colors.textPrimary,
-    backgroundColor: colors.backgroundSecondary,
   },
 
   bottomBtnRow: {
@@ -940,8 +909,8 @@ const s = StyleSheet.create({
     borderColor: colors.primary,
   },
   previewBtnText: { fontFamily: fonts.bold, fontSize: fonts.sm, color: colors.primary, letterSpacing: 0.5 },
-  previewBtnDisabled: { opacity: 0.4 },
-
+  previewBtnDisabled: { opacity: 0.5 },
+  previewBtnTextDisabled: { color: colors.textSecondary },
   typeModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   typeModalContent: {
     backgroundColor: colors.background,
@@ -970,6 +939,38 @@ const s = StyleSheet.create({
     borderBottomColor: colors.borderLight,
   },
   typeModalItemSelected: { backgroundColor: colors.primaryExtraLight },
+
+  addShapeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  addShapeInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontFamily: fonts.regular,
+    fontSize: fonts.sm,
+    color: colors.textPrimary,
+    backgroundColor: colors.backgroundSecondary,
+  },
+  addShapeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  addShapeBtnText: { fontFamily: fonts.bold, fontSize: fonts.sm, color: '#fff' },
   typeModalItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   typeModalItemText: { fontFamily: fonts.medium, fontSize: fonts.sm, color: colors.textPrimary },
   typeModalItemTextSelected: { fontFamily: fonts.bold, color: colors.primary },

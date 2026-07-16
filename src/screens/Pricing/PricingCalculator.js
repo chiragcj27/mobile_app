@@ -38,6 +38,7 @@ import {
   useImagepriceDataMutation,
   useGetClientByIdQuery,
 } from '../../store/api';
+import { buildCombinedHtml } from './previewScreen';
 
 let generatePDFModule = null;
 try {
@@ -352,7 +353,7 @@ export default function PricingCalci({ route, navigation }) {
     const p = responseData.pricing || responseData.extractedData || responseData;
     return {
       imageData: responseData,
-      editableStones: (p.Stones || []).map(s => ({ Type: type, ...s })),
+      editableStones: (p.Stones || []).map(s => ({ ...s, Type: type })),
       editableMetal: {
         Weight: p.Metal?.Weight || 0,
         Quality: p.Metal?.Quality || metalKt,
@@ -378,6 +379,8 @@ export default function PricingCalci({ route, navigation }) {
 
   const handleMetalKtChange = (newKt) => {
     setMetalKt(newKt);
+    const updated = { ...commonMetal, Rate: '' };
+    setCommonMetal(updated);
     setGroupedData((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((cat) => {
@@ -385,7 +388,7 @@ export default function PricingCalci({ route, navigation }) {
         Object.keys(newByType).forEach((type) => {
           newByType[type] = {
             ...newByType[type],
-            editableMetal: { ...newByType[type].editableMetal, Quality: newKt },
+            editableMetal: { ...newByType[type].editableMetal, Quality: newKt, Rate: '' },
           };
         });
         next[cat] = { ...next[cat], byType: newByType };
@@ -691,8 +694,8 @@ export default function PricingCalci({ route, navigation }) {
             const buildTypeData = (type) => ({
               imageData: extractionResponse,
               editableStones: (p.Stones || []).map(s => ({
-                Type: type,
                 ...s,
+                Type: type,
               })),
               editableMetal: {
                 Weight: p.Metal?.Weight || 0,
@@ -781,158 +784,20 @@ export default function PricingCalci({ route, navigation }) {
   };
 
   const buildPricingHtml = useCallback(() => {
-    const allTypes = [];
+    const entries = [];
     Object.values(groupedData).forEach((catData) => {
       catData.types.forEach((type) => {
-        if (catData.byType[type]) {
-          allTypes.push({ type, data: catData.byType[type] });
+        const typeData = catData.byType[type];
+        if (typeData?.pricingResult) {
+          entries.push(typeData.pricingResult);
         }
       });
     });
-    if (allTypes.length === 0) return '';
-
+    if (entries.length === 0) return '';
     const clientName =
       clients.find(c => c.id === clientId || c._id === clientId)?.name || 'N/A';
-    const currentDate = new Date().toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-
-    let sectionsHtml = allTypes
-      .map(({ type, data }) => {
-        if (!data) return '';
-        const result = data.pricingResult;
-
-        const stonesHtml = (Array.isArray(data.editableStones) ? data.editableStones : [])
-          .map(
-            (s, idx) => `
-        <tr style="${idx % 2 === 0 ? 'background:#f9f9f9' : ''}">
-          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
-            s.Type || type
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
-            s.MmSize || '-'
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
-            s.Color || '-'
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
-            s.Shape || '-'
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
-            s.SieveSize || '-'
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:right">${
-            s.Weight || 0
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:center">${
-            s.Pcs || 0
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:right">${
-            s.CtWeight || 0
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:right">${
-            s.Markup || 0
-          }</td>
-          <td style="padding:8px;border:1px solid #ddd;text-align:right">$${
-            s.Price || 0
-          }</td>
-        </tr>`,
-          )
-          .join('');
-
-        const applicableDuties = result.Applicable
-          ? Object.entries(result.Applicable)
-              .filter(([_, value]) => value)
-              .map(([key]) => key.replace(/([A-Z])/g, ' $1').trim())
-              .join(', ')
-          : 'None';
-
-        return `
-        <div class="section">
-          <h2>${type} Report</h2>
-          <div class="info-grid">
-            <div class="info-row"><div class="info-label">Diamond Weight:</div><div class="info-value">${
-              result.DiamondWeight || 0
-            } ct</div></div>
-            <div class="info-row"><div class="info-label">Metal Details:</div><div class="info-value">${
-              data.editableMetal.Weight || 0
-            }g, ${data.editableMetal.Quality}, $${
-          data.editableMetal.Rate
-        }/g</div></div>
-          </div>
-
-          ${
-            (Array.isArray(data.editableStones) ? data.editableStones.length : 0) > 0
-              ? `
-          <h3>Stones Breakdown</h3>
-          <table>
-            <thead><tr><th>Type</th><th>MM</th><th>Color</th><th>Shape</th><th>Sieve</th><th>Avg Wt</th><th>Pcs</th><th>Ct Wt</th><th>Markup</th><th>$/Ct</th></tr></thead>
-            <tbody>${stonesHtml}</tbody>
-          </table>`
-              : ''
-          }
-
-          <div style="display: flex; justify-content: space-between; margin-top: 20px;">
-            <div style="width: 48%;">
-              <h3>Client Charges Applied</h3>
-              <div class="info-grid">
-                <div class="info-row"><div class="info-label" style="font-size:12px;">Loss:</div><div class="info-value" style="font-size:12px;">${
-                  result.Client?.Loss || data.editableCharges.Loss || 0
-                }%</div></div>
-                <div class="info-row"><div class="info-label" style="font-size:12px;">Labour:</div><div class="info-value" style="font-size:12px;">$${
-                  result.Client?.Labour || data.editableCharges.Labour || 0
-                }/g</div></div>
-                <div class="info-row"><div class="info-label" style="font-size:12px;">Extra Charges:</div><div class="info-value" style="font-size:12px;">${
-                  result.Client?.ExtraCharges ||
-                  data.editableCharges.ExtraCharges ||
-                  0
-                }%</div></div>
-                ${
-                  (result.Client?.UndercutPrice ||
-                    data.dutyRates?.UndercutPrice) > 0
-                    ? `
-                <div class="info-row"><div class="info-label" style="font-size:12px;">Undercut Price:</div><div class="info-value" style="font-size:12px;">$${
-                  result.Client?.UndercutPrice ||
-                  data.dutyRates?.UndercutPrice ||
-                  0
-                }/ct</div></div>`
-                    : ''
-                }
-              </div>
-            </div>
-            
-            <div style="width: 48%;">
-              <h3>Applicable Duties</h3>
-              <p style="font-size: 12px; margin: 0; padding: 8px;">${applicableDuties}</p>
-            </div>
-          </div>
-
-          <div class="total-section">
-            <div class="total-row"><span class="total-label">Metal Price:</span><span class="total-value">$${(
-              result.MetalPrice || 0
-            ).toFixed(2)}</span></div>
-            <div class="total-row"><span class="total-label">Diamonds Price:</span><span class="total-value">$${(
-              result.DiamondsPrice || 0
-            ).toFixed(2)}</span></div>
-            <div class="total-row"><span class="total-label">Duties Amount:</span><span class="total-value">$${(
-              result.DutiesAmount || 0
-            ).toFixed(2)}</span></div>
-            <div class="total-row grand-total" style="border-top: 2px solid #143F45; margin-top: 10px; padding-top: 10px;">
-              <span class="total-label" style="color: #D4AF37;">TOTAL PRICE:</span>
-              <span class="total-value" style="color: #D4AF37;">$${(
-                result.TotalPrice || 0
-              ).toFixed(2)}</span>
-            </div>
-          </div>
-        </div>
-      `;
-      })
-      .join('');
-
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>@page{margin:0;padding:0}*{margin:0;padding:0;box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;padding:10px;color:#1A1A1A}.header{text-align:center;margin-bottom:12px;border-bottom:2px solid #143F45;padding-bottom:8px}.header h1{color:#143F45;margin:0 0 4px 0;font-size:22px}.header p{margin:2px 0;font-size:12px}.info-grid{display:table;width:100%;margin-bottom:10px}.info-row{display:table-row}.info-label{display:table-cell;padding:5px;font-weight:bold;width:40%;border-bottom:1px solid #F3F4F6;font-size:11px}.info-value{display:table-cell;padding:5px;border-bottom:1px solid #F3F4F6;font-size:11px}table{width:100%;border-collapse:collapse;margin:10px 0}th{background:#8B4513;color:white;padding:6px 3px;font-size:10px;border:1px solid #E5E7EB}td{padding:5px 3px;border:1px solid #E5E7EB;font-size:10px}.total-section{background:#F8F9FB;padding:12px;border-radius:4px;margin-top:12px}.total-row{display:flex;justify-content:space-between;padding:4px 0;font-size:11px}.grand-total{font-size:14px;font-weight:bold}.footer{text-align:center;margin-top:15px;padding-top:8px;border-top:1px solid #F3F4F6;color:#9CA3AF;font-size:9px}.section{page-break-inside:avoid;border:1px solid #eee;padding:12px;border-radius:4px;margin-bottom:12px}.section h2{color:#143F45;border-bottom:1px solid #143F45;padding-bottom:6px;margin:0 0 10px 0;font-size:16px}.section h3{background:#143F45;color:white;padding:5px 6px;font-size:12px;margin:10px 0 6px 0}</style></head><body><div class="header"><h1>Chandra Jewels</h1><p>Multi-Stone Pricing Report - ${clientName}</p><p>${currentDate}</p></div>${sectionsHtml}<div class="footer"><p>Generated by Chandra Jewels Management App</p><p>This is a computer-generated document and does not require a signature</p></div></body></html>`;
-  }, [groupedData, clients, clientId]);
+    return buildCombinedHtml(entries, clientName, metalKt);
+  }, [groupedData, clients, clientId, metalKt]);
 
   const generatePdfFile = useCallback(async () => {
     if (typeof generatePDFModule !== 'function')
