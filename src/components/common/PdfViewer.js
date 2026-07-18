@@ -45,6 +45,9 @@ const PdfViewer = ({ url, html, style }) => {
             domStorageEnabled={true}
             startInLoadingState={false}
             scalesPageToFit={false}
+            pinchGestureEnabled={true}
+            scrollEnabled={true}
+            showsVerticalScrollIndicator={true}
             originWhitelist={['*']}
           />
         )}

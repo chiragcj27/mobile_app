@@ -36,7 +36,9 @@ import {
   useGetMetalPricesQuery,
   useSavePricingMutation,
   useGetEnquiryByIdQuery,
+  useGetClientByIdQuery,
 } from '../../store/api';
+import { LOGO_BASE64 } from '../../screens/Pricing/previewScreen';
 import CompareRefrences from './CompareRefrences';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 
@@ -74,87 +76,297 @@ const stonesAreMissing = (stones) =>
   !Array.isArray(stones) || stones.length === 0 ||
   stones.every(s => num(s.Price) === 0);
 
-const mapSourceToPricingResult = (source) => {
-  if (!source) return null;
-  const mp = num(source.MetalPrice);
-  const dp = num(source.DiamondsPrice);
-  const da = num(source.DutiesAmount);
-  const tp = num(source.TotalPrice);
-  if (mp === 0 && dp === 0 && da === 0 && tp === 0) return null;
-  return { MetalPrice: mp, DiamondsPrice: dp, DutiesAmount: da, TotalPrice: tp };
-};
+const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePricing }) => {
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
-const buildHtml = ({ enquiry, pricingResult, stones, metal, charges, clientName }) => {
-  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const stonesHtml = stones.map((s, i) => `
-    <tr style="${i % 2 === 0 ? 'background:#f9f9f9' : ''}">
-      <td>${s.Type || '-'}</td><td>${s.Color || '-'}</td><td>${s.Shape || '-'}</td>
-      <td>${s.MmSize || '-'}</td><td>${s.SieveSize || '-'}</td>
-      <td>${s.Weight ?? 0}</td><td>${s.Pcs ?? 0}</td><td>${s.CtWeight ?? s.Carat ?? 0}</td>
-      <td>${s.Markup ?? 0}</td><td>$${num(s.Price).toFixed(2)}</td>
+  const stoneTypes = [...new Set(stones.map(s => s.Type).filter(Boolean))];
+  const diamondTypeLabel = stoneTypes.length > 0 ? stoneTypes.join(', ') : 'NATURAL';
+
+  const stonesHtml = stones.map(s => `
+    <tr style="border-bottom:1px solid #E6F0F1;">
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Type || 'NATURAL'}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Shape || 'RD'}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.MmSize || '-'}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:right;">${num(s.Weight).toFixed(3)}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:right;">${num(s.Markup || 0).toFixed(0)}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:right;">$${num(s.Price).toFixed(0)}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:right;">${s.Pcs || 0}</td>
     </tr>`).join('');
 
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  const PR = pricingResult || {};
+  const metalQuality = metal.Quality || PR.MetalKT || '';
+
+  const hasRichData = PR.Duties && typeof PR.Duties === 'object' && Object.keys(PR.Duties).length > 0;
+
+  const SP = sourcePricing || {};
+  const hasLabStone = stones.some(s => /lab/i.test(s.Type));
+  const dutyLabels = {
+    Natural: 'Natural',
+    Lab: 'Lab',
+    Gold: 'Gold',
+    LossAndLabour: 'Loss + Labour',
+    SilverAndLabs: hasLabStone ? 'Silver & Labs' : 'Silver',
+  };
+
+  if (hasRichData) {
+    const dutiesEntries = Object.entries(PR.Duties).filter(([, d]) => d && typeof d === 'object');
+    const undercutPrice = num(PR.Client?.UndercutPrice || 0);
+    const hasNaturalDuty = dutiesEntries.some(([k]) => k === 'Natural');
+    const totalDutiesWithUndercut = num(PR.TotalDutiesWithUndercut);
+
+    const dutiesHtml = dutiesEntries.length > 0 ? `
+    <table style="width:100%;border-collapse:collapse;margin-top:12px;border:1px solid #E6F0F1;">
+      <thead>
+        <tr style="background-color:#143F45;color:#ffffff;text-align:center;font-size:10px;font-weight:700;">
+          <th colspan="3" style="padding:6px;border:1px solid #0F3236;background-color:#D4AF37;color:#1A1A1A;">DUTIES BREAKDOWN</th>
+        </tr>
+        <tr style="background-color:#235A63;color:#ffffff;text-align:center;font-size:9px;font-weight:700;">
+          <th style="padding:4px;border:1px solid #0F3236;">Duty Type</th>
+          <th style="padding:4px;border:1px solid #0F3236;">Rate × Base Amount</th>
+          <th style="padding:4px;border:1px solid #0F3236;">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${dutiesEntries.map(([key, duty]) => {
+        const label = dutyLabels[key] || key.replace(/([A-Z])/g, ' $1').trim();
+        return `
+        <tr style="text-align:center;font-size:11px;">
+          <td style="padding:6px;border:1px solid #E6F0F1;font-weight:600;">${label}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">${num(duty.Rate).toFixed(0)}% × $${num(duty.BaseAmount).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;font-weight:600;">$${num(duty.Amount).toFixed(2)}</td>
+        </tr>`;
+      }).join('')}
+        ${hasNaturalDuty && undercutPrice > 0 ? `
+        <tr style="text-align:center;font-size:11px;background-color:#FFF8E1;">
+          <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;color:#1A1A1A;" colspan="2">Total Duties</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;color:#143F45;">$${totalDutiesWithUndercut.toFixed(2)}</td>
+        </tr>` : `
+        <tr style="text-align:center;font-size:11px;background-color:#FFF8E1;">
+          <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;color:#1A1A1A;" colspan="2">Duties Amount</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;color:#143F45;">$${num(PR.DutiesAmount).toFixed(2)}</td>
+        </tr>`}
+      </tbody>
+    </table>` : '';
+
+    const extraChargesHtml = num(PR.ExtraChargesPercent) > 0 || num(PR.ExtraChargesAmount) > 0 ? `
+    <div style="margin-top:12px;padding:8px;background:#FFF8E1;border:1px solid #D4AF37;border-radius:4px;display:flex;justify-content:space-between;font-size:11px;font-weight:600;">
+      <span>Extra Charges (${num(PR.ExtraChargesPercent).toFixed(0)}%)</span>
+      <span>$${num(PR.ExtraChargesAmount).toFixed(2)}</span>
+    </div>` : '';
+
+   
+
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=0.6, maximum-scale=3.0, user-scalable=yes">
+    <title>Chandra Jewels - Quotation</title>
+    <style>
+      @page{margin:0;padding:0}
+      *{margin:0;padding:0;box-sizing:border-box}
+      body{font-family:Arial,sans-serif;background:#fff;color:#1A1A1A;padding:24px}
+      .hdr{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:20px}
+      .hdr-logo{height:44px;width:auto}
+      .hdr-title{font-size:24px;color:#D4AF37;font-weight:700;letter-spacing:.15em;text-transform:uppercase;margin-bottom:2px}
+      .hdr-sub{font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.2em}
+      .divider{height:1px;background:#E6F0F1;margin:6px 0}
+      table{width:100%;border-collapse:collapse;margin:0 0 12px}
+      th{background:#143F45;color:#fff;padding:6px;text-align:center;font-size:9px;font-weight:700;border:1px solid #0F3236}
+      td{padding:6px;border:1px solid #E6F0F1;text-align:center;font-size:11px}
+    </style></head><body>
+    <div class="hdr">
+      <img src="data:image/png;base64,${LOGO_BASE64}" class="hdr-logo" />
+      <div>
+        <h2 class="hdr-title">CHANDRA JEWELS</h2>
+        <div class="divider"></div>
+        <p class="hdr-sub">Quotation (${date})</p>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>Date</th><th>KT & Diamond Type</th><th>Client</th></tr></thead>
+      <tbody>
+        <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
+          <td style="padding:10px;border:1px solid #E6F0F1;">${date}</td>
+          <td style="padding:10px;border:1px solid #E6F0F1;background-color:#FFF8E1;">${PR.MetalKT || metalQuality} & ${diamondTypeLabel}</td>
+          <td style="padding:10px;border:1px solid #E6F0F1;">${clientName || '-'}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <table>
+      <thead><tr>
+        <th>KT</th><th>Metal Rate 24K</th><th>Metal Rate/g</th>
+        <th style="background-color:#143F45;">Loss</th><th style="background-color:#143F45;">Labour ($/g)</th>
+        <th>Metal Amt</th><th>Loss Amt</th><th>Labour Amt</th><th>Metal Weight</th>
+      </tr></thead>
+      <tbody>
+        <tr style="text-align:center;font-weight:600;font-size:11px;">
+          <td style="padding:6px;border:1px solid #E6F0F1;">${PR.MetalKT || metalQuality}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">$${num(PR.GoldRate24K).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">$${num(PR.GoldRateKT).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;color:#EF4444;">${num(PR.LossPercent)}%</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;color:#EF4444;">$${num(PR.LabourPercent).toFixed(2)}/g</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">$${num(PR.GoldAmount).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">$${num(PR.LossAmount).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">$${num(PR.LabourAmount).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;">${num(PR.GoldWeight).toFixed(1)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    ${stones.length ? `
+    <table style="border:1px solid #E6F0F1;">
+      <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
+      <tbody>${stonesHtml}</tbody>
+    </table>
+    <div style="display:flex;justify-content:flex-end;gap:12px;margin:8px 0;flex-wrap:wrap;">
+      <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
+        <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Total Pieces</div>
+        <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(PR.TotalPieces).toFixed(0)}</div>
+      </div>
+      <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
+        <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Total Diamond Wt</div>
+        <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(PR.DiamondWeight).toFixed(3)}</div>
+      </div>
+      <div style="background:#D4AF37;padding:6px 12px;border-radius:4px;text-align:center;min-width:120px;">
+        <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Diamond Price</div>
+        <div style="font-size:16px;font-weight:700;color:#1A1A1A;">$${num(PR.DiamondsPrice).toFixed(2)}</div>
+      </div>
+    </div>` : ''}
+
+    ${dutiesHtml}
+
+    ${extraChargesHtml}
+
+
+    <table style="margin-top:12px;">
+      <thead><tr><th>Final Metal Price</th><th>Diamond Price</th><th>Duties Total</th><th>Total Price</th></tr></thead>
+      <tbody>
+        <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
+          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.GoldAmount).toFixed(2)}</td>
+          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DiamondsPrice).toFixed(2)}</td>
+          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DutiesAmount).toFixed(2)}</td>
+          <td style="padding:10px 6px;border:1px solid #E6F0F1;color:#143F45;font-size:13px;">$${num(PR.TotalPrice).toFixed(2)}</td>
+        </tr>
+      </tbody>
+    </table>
+    </body></html>`;
+  }
+
+  const dutyMap = [
+    { key: 'Natural',       value: num(SP.NaturalDuties) },
+    { key: 'Lab',           value: num(SP.LabDuties) },
+    { key: 'Gold',          value: num(SP.GoldDuties) },
+    { key: 'LossAndLabour', value: num(SP.LossAndLabourDuties) },
+    { key: 'SilverAndLabs', value: num(SP.SilverAndLabsDuties) },
+  ].filter(({ value }) => value > 0);
+
+  const dutiesHtml = dutyMap.length > 0 ? `
+  <table style="width:100%;border-collapse:collapse;margin-top:12px;border:1px solid #E6F0F1;">
+    <thead>
+      <tr style="background-color:#D4AF37;color:#1A1A1A;text-align:center;font-size:10px;font-weight:700;">
+        <th colspan="2" style="padding:6px;border:1px solid #B8942E;">DUTIES BREAKDOWN</th>
+      </tr>
+      <tr style="background-color:#235A63;color:#fff;text-align:center;font-size:9px;font-weight:700;">
+        <th style="padding:4px;border:1px solid #0F3236;">Duty Type</th>
+        <th style="padding:4px;border:1px solid #0F3236;">Rate</th>
+      </tr>
+    </thead>
+    <tbody>${dutyMap.map(({ key, value }) => `
+      <tr style="text-align:center;font-size:11px;">
+        <td style="padding:6px;border:1px solid #E6F0F1;font-weight:600;">${dutyLabels[key] || key}</td>
+        <td style="padding:6px;border:1px solid #E6F0F1;">${value}%</td>
+      </tr>`).join('')}
+      <tr style="text-align:center;font-size:11px;background-color:#FFF8E1;">
+        <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;color:#1A1A1A;">Duties Amount</td>
+        <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;color:#143F45;">$${num(PR.DutiesAmount).toFixed(2)}</td>
+      </tr>
+    </tbody>
+  </table>` : '';
+
+  const extraCharges = num(charges.ExtraCharges);
+  const extraChargesHtml = extraCharges > 0 ? `
+  <div style="margin-top:12px;padding:8px;background:#FFF8E1;border:1px solid #D4AF37;border-radius:4px;display:flex;justify-content:space-between;font-size:11px;font-weight:600;">
+    <span>Extra Charges (${extraCharges}%)</span>
+  </div>` : '';
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=0.6, maximum-scale=3.0, user-scalable=yes">
+  <title>Chandra Jewels - Quotation</title>
   <style>
-    body{font-family:Arial,sans-serif;padding:24px;color:#2B3735;font-size:13px}
-    .hdr{text-align:center;border-bottom:3px solid #143F46;padding-bottom:16px;margin-bottom:20px}
-    .hdr h1{color:#143F46;margin:0;font-size:24px}
-    .hdr p{color:#BFA26C;margin:4px 0;font-size:12px}
-    .sec-title{background:#143F46;color:#fff;padding:8px 12px;font-weight:900;margin:18px 0 10px;border-left:4px solid #BFA26C}
-    .grid{display:table;width:100%;margin-bottom:8px}
-    .row{display:table-row}
-    .lbl{display:table-cell;padding:6px 8px;font-weight:800;color:#2B3735;width:42%;border-bottom:1px solid #BFA26C}
-    .val{display:table-cell;padding:6px 8px;color:#2B3735;border-bottom:1px solid #BFA26C}
-    table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px}
-    th{background:#143F46;color:#fff;padding:8px;text-align:center;border:1px solid #BFA26C;font-weight:900}
-    td{padding:7px;border:1px solid #BFA26C;text-align:center}
-    .totals{background:#f5f5f5;padding:16px;border-radius:6px;margin-top:16px}
-    .tot-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #BFA26C}
-    .grand{font-size:18px;color:#143F46;margin-top:12px;padding-top:12px;border-top:2px solid #BFA26C}
-    .footer{text-align:center;margin-top:32px;padding-top:16px;border-top:2px solid #BFA26C;color:#BFA26C;font-size:11px}
+    @page{margin:0;padding:0}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:Arial,sans-serif;background:#fff;color:#1A1A1A;padding:24px}
+    .hdr{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:20px}
+    .hdr-logo{height:44px;width:auto}
+    .hdr-title{font-size:24px;color:#D4AF37;font-weight:700;letter-spacing:.15em;text-transform:uppercase;margin-bottom:2px}
+    .hdr-sub{font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.2em}
+    .divider{height:1px;background:#E6F0F1;margin:6px 0}
+    table{width:100%;border-collapse:collapse;margin:0 0 12px}
+    th{background:#143F45;color:#fff;padding:6px;text-align:center;font-size:9px;font-weight:700;border:1px solid #0F3236}
+    td{padding:6px;border:1px solid #E6F0F1;text-align:center;font-size:11px}
   </style></head><body>
-  <div class="hdr"><h1>Chandra Jewels</h1><p>Quotation</p><p>${date}</p></div>
-
-  <div class="sec-title">Enquiry Details</div>
-  <div class="grid">
-    <div class="row"><div class="lbl">Name</div><div class="val">${enquiry?.Name || '-'}</div></div>
-    <div class="row"><div class="lbl">Client</div><div class="val">${clientName || '-'}</div></div>
-    <div class="row"><div class="lbl">Category</div><div class="val">${enquiry?.Category || '-'}</div></div>
-    <div class="row"><div class="lbl">Stone Type</div><div class="val">${enquiry?.StoneType || '-'}</div></div>
-    <div class="row"><div class="lbl">Priority</div><div class="val">${enquiry?.Priority || '-'}</div></div>
-    <div class="row"><div class="lbl">Quantity</div><div class="val">${enquiry?.Quantity ?? 1}</div></div>
+  <div class="hdr">
+    <img src="data:image/png;base64,${LOGO_BASE64}" class="hdr-logo" />
+    <div>
+      <h2 class="hdr-title">CHANDRA JEWELS</h2>
+      <div class="divider"></div>
+      <p class="hdr-sub">Quotation (${date})</p>
+    </div>
   </div>
 
-  <div class="sec-title">Metal</div>
-  <div class="grid">
-    <div class="row"><div class="lbl">Weight</div><div class="val">${num(metal.Weight).toFixed(3)} g</div></div>
-    <div class="row"><div class="lbl">Quality</div><div class="val">${metal.Quality || '-'}</div></div>
-    <div class="row"><div class="lbl">Rate</div><div class="val">$${num(metal.Rate).toFixed(2)}/g</div></div>
-  </div>
+  <table>
+    <thead><tr><th>Date</th><th>KT & Diamond Type</th><th>Client</th></tr></thead>
+    <tbody>
+      <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
+        <td style="padding:10px;border:1px solid #E6F0F1;">${date}</td>
+        <td style="padding:10px;border:1px solid #E6F0F1;background-color:#FFF8E1;">${metalQuality} & ${diamondTypeLabel}</td>
+        <td style="padding:10px;border:1px solid #E6F0F1;">${clientName || '-'}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table>
+    <thead><tr><th>KT</th><th>Metal Rate/g</th><th>Loss</th><th>Labour</th><th>Metal Weight</th></tr></thead>
+    <tbody>
+      <tr style="text-align:center;font-weight:600;font-size:11px;">
+        <td style="padding:6px;border:1px solid #E6F0F1;">${metalQuality}</td>
+        <td style="padding:6px;border:1px solid #E6F0F1;">$${num(metal.Rate).toFixed(2)}/g</td>
+        <td style="padding:6px;border:1px solid #E6F0F1;color:#EF4444;">${num(charges.Loss)}%</td>
+        <td style="padding:6px;border:1px solid #E6F0F1;color:#EF4444;">$${num(charges.Labour).toFixed(2)}/g</td>
+        <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;">${num(metal.Weight).toFixed(1)}</td>
+      </tr>
+    </tbody>
+  </table>
 
   ${stones.length ? `
-  <div class="sec-title">Stones (${stones.length})</div>
-  <table><thead><tr>
-    <th>Type</th><th>Color</th><th>Shape</th><th>MM</th><th>Sieve</th>
-    <th>Avg Wt</th><th>Pcs</th><th>Ct Wt</th><th>Markup</th><th>$/Ct</th>
-  </tr></thead><tbody>${stonesHtml}</tbody></table>` : ''}
+  <table style="border:1px solid #E6F0F1;">
+    <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
+    <tbody>${stonesHtml}</tbody>
+  </table>
+  <div style="display:flex;justify-content:flex-end;gap:12px;margin:8px 0;flex-wrap:wrap;">
+    <div style="background:#D4AF37;padding:6px 12px;border-radius:4px;text-align:center;min-width:120px;">
+      <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Diamond Price</div>
+      <div style="font-size:16px;font-weight:700;color:#1A1A1A;">$${num(PR.DiamondsPrice).toFixed(2)}</div>
+    </div>
+  </div>` : ''}
 
-  <div class="sec-title">Charges</div>
-  <div class="grid">
-    <div class="row"><div class="lbl">Loss</div><div class="val">${charges.Loss}%</div></div>
-    <div class="row"><div class="lbl">Labour</div><div class="val">$${charges.Labour}/g</div></div>
-    <div class="row"><div class="lbl">Extra Charges</div><div class="val">${charges.ExtraCharges}%</div></div>
-    ${charges.UndercutPrice > 0 ? `<div class="row"><div class="lbl">Undercut Price</div><div class="val">$${charges.UndercutPrice}/ct</div></div>` : ''}
-  </div>
+  ${dutiesHtml}
 
-  <div class="totals">
-    <div class="tot-row"><span>Metal Price</span><span>$${num(pricingResult.MetalPrice).toFixed(2)}</span></div>
-    <div class="tot-row"><span>Diamonds Price</span><span>$${num(pricingResult.DiamondsPrice).toFixed(2)}</span></div>
-    <div class="tot-row"><span>Duties Amount</span><span>$${num(pricingResult.DutiesAmount).toFixed(2)}</span></div>
-    <div class="tot-row grand"><strong>TOTAL PRICE</strong><strong>$${num(pricingResult.TotalPrice).toFixed(2)}</strong></div>
-  </div>
+  ${extraChargesHtml}
 
-  <div class="footer"><p>Generated by Chandra Jewels Management App</p></div>
+  ${num(charges.UndercutPrice) > 0 ? `
+  <div style="margin-top:8px;padding:8px;background:#FFF8E1;border:1px solid #D4AF37;border-radius:4px;display:flex;justify-content:space-between;font-size:11px;font-weight:600;">
+    <span>Undercut Price</span><span>$${num(charges.UndercutPrice).toFixed(2)}/ct</span>
+  </div>` : ''}
+
+  <table style="margin-top:12px;">
+    <thead><tr><th>Metal Price</th><th>Diamond Price</th><th>Duties Total</th><th>Total Price</th></tr></thead>
+    <tbody>
+      <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
+        <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.MetalPrice).toFixed(2)}</td>
+        <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DiamondsPrice).toFixed(2)}</td>
+        <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DutiesAmount).toFixed(2)}</td>
+        <td style="padding:10px 6px;border:1px solid #E6F0F1;color:#143F45;font-size:13px;">$${num(PR.TotalPrice).toFixed(2)}</td>
+      </tr>
+    </tbody>
+  </table>
   </body></html>`;
 };
 
@@ -172,6 +384,8 @@ const ChargeInput = ({ label, value, onChangeText, placeholder = '0', keyboardTy
   </View>
 );
 
+export { num, getLatestPricing, buildHtml };
+
 const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const { data: fullEnquiryData, isFetching: isFetchingEnquiry } = useGetEnquiryByIdQuery(enquiryId, {
     skip: !visible || !enquiryId,
@@ -182,6 +396,14 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const fullEnquiry = rawEnquiry;
 
   const sourcePricing = useMemo(() => getLatestPricing(fullEnquiry), [fullEnquiry]);
+
+  const clientIdResolved = fullEnquiry?.ClientId || fullEnquiry?.clientId;
+  const { data: clientData } = useGetClientByIdQuery(clientIdResolved, {
+    skip: !visible || !clientIdResolved || isFetchingEnquiry,
+  });
+  const resolvedClientName = useMemo(() => {
+    return clientData?.name || clientData?.Name || fullEnquiry?.ClientName || fullEnquiry?.clientName || '';
+  }, [clientData, fullEnquiry?.ClientName, fullEnquiry?.clientName]);
 
   const [metalWeight,       setMetalWeight]       = useState('0');
   const [metalQuality,      setMetalQuality]      = useState('10K');
@@ -207,6 +429,16 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
   const [clientMsg,     setClientMsg]     = useState('');
   const [copied,        setCopied]        = useState(false);
+
+  const initialPricing = useMemo(() => {
+    if (!sourcePricing) return null;
+    const mp = num(sourcePricing.MetalPrice);
+    const dp = num(sourcePricing.DiamondsPrice);
+    const da = num(sourcePricing.DutiesAmount);
+    const tp = num(sourcePricing.TotalPrice);
+    if (mp === 0 && dp === 0 && da === 0 && tp === 0) return null;
+    return { MetalPrice: mp, DiamondsPrice: dp, DutiesAmount: da, TotalPrice: tp };
+  }, [sourcePricing]);
 
   const [calculatePricing, { isLoading: isCalculating }] = useCalculatePricingMutation();
   const [savePricing,      { isLoading: isSaving }]      = useSavePricingMutation();
@@ -238,75 +470,57 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     const enq = fullEnquiry   || {};
     const mpd = metalPricesData;
 
-      setMetalWeight(String(p.Metal?.Weight ?? 0));
-      setMetalQuality(p.Metal?.Quality || enq?.Metal?.Quality || '10K');
-      const autoRate = (() => {
-        if (p.Metal?.Rate) return String(p.Metal.Rate);
-        const prices = mpd?.prices || {};
-        const q = p.Metal?.Quality || enq?.Metal?.Quality || '10K';
-        if (/silver\s*925/i.test(q)) return String(prices.silver?.price ?? 0);
-        if (/platinum/i.test(q))     return String(prices.platinum?.price ?? 0);
-        const base = prices.gold?.price || 0;
-        const m = q.match(/(\d+)K/i);
-        if (m && base) return String((base * parseInt(m[1], 10) / 24).toFixed(2));
-        return '0';
-      })();
-      setMetalRate(autoRate);
+    setMetalWeight(String(p.Metal?.Weight ?? 0));
+    setMetalQuality(p.Metal?.Quality || enq?.Metal?.Quality || '10K');
+    const autoRate = (() => {
+      if (p.Metal?.Rate) return String(p.Metal.Rate);
+      const prices = mpd?.prices || {};
+      const q = p.Metal?.Quality || enq?.Metal?.Quality || '10K';
+      if (/silver\s*925/i.test(q)) return String(prices.silver?.price ?? 0);
+      if (/platinum/i.test(q))     return String(prices.platinum?.price ?? 0);
+      const base = prices.gold?.price || 0;
+      const m = q.match(/(\d+)K/i);
+      if (m && base) return String((base * parseInt(m[1], 10) / 24).toFixed(2));
+      return '0';
+    })();
+    setMetalRate(autoRate);
 
-      const rawStones = Array.isArray(p.Stones) ? p.Stones : [];
-      setDiamonds(rawStones.length > 0
-        ? rawStones.map(st => ({
-            localId:   makeId(),
-            Type:      st.Type      || '',
-            Shape:     st.Shape     || '',
-            Carat:     num(st.CtWeight ?? st.Carat),
-            MmSize:    num(st.MmSize),
-            SieveSize: st.SieveSize || '',
-            Price:     num(st.Price),
-            Color:     st.Color     || '',
-            Weight:    num(st.Weight),
-            Markup:    num(st.Markup),
-          }))
-        : []);
+    const rawStones = Array.isArray(p.Stones) ? p.Stones : [];
+    setDiamonds(rawStones.length > 0
+      ? rawStones.map(st => ({
+          localId:   makeId(),
+          Type:      st.Type      || '',
+          Shape:     st.Shape     || '',
+          Carat:     num(st.CtWeight ?? st.Carat),
+          MmSize:    num(st.MmSize),
+          SieveSize: st.SieveSize || '',
+          Price:     num(st.Price),
+          Color:     st.Color     || '',
+          Weight:    num(st.Weight),
+          Pcs:       Math.round(num(st.Pcs)),
+          Markup:    num(st.Markup),
+        }))
+      : []);
 
-      const initialMissing = new Set(
-        rawStones.reduce((acc, st, i) => { if (num(st.Price) <= 0) acc.push(i); return acc; }, [])
-      );
-      setMissingIndices(initialMissing);
+    const initialMissing = new Set(
+      rawStones.reduce((acc, st, i) => { if (num(st.Price) <= 0) acc.push(i); return acc; }, [])
+    );
+    setMissingIndices(initialMissing);
 
-      setClientMsg(p.ClientPricingMessage || '');
-      if (isQRPhase && sourcePricing) {
-        const qrResult = mapSourceToPricingResult(sourcePricing);
-        setPricingResult(qrResult);
-        if (qrResult) {
-          const html = buildHtml({
-            enquiry: fullEnquiry,
-            pricingResult: qrResult,
-            stones: rawStones,
-            metal: {
-              Weight: num(p.Metal?.Weight ?? 0),
-              Quality: p.Metal?.Quality || '10K',
-              Rate: num(p.Metal?.Rate ?? 0),
-            },
-            charges: {
-              Loss: num(p.Loss ?? 0),
-              Labour: num(p.Labour ?? 0),
-              ExtraCharges: num(p.ExtraCharges ?? 0),
-              UndercutPrice: num(p.UndercutPrice ?? 0),
-            },
-            clientName: fullEnquiry?.ClientName || fullEnquiry?.clientName || '',
-          });
-          setPdfHtml(html);
-        }
-      } else {
-        setPricingResult(null);
-        setPdfHtml(null);
-      }
-      setShowPdf(false);
-      setShowCompareModal(false);
-      setCopied(false);
+    setClientMsg(p.ClientPricingMessage || '');
+    setShowPdf(false);
+    setShowCompareModal(false);
+    setCopied(false);
 
   }, [visible, isFetchingEnquiry, fullEnquiry, enquiryId, sourcePricing, metalPricesData]);
+
+  useEffect(() => {
+    if (!visible || isFetchingEnquiry || !fullEnquiry) return;
+    if (!isQRPhase) {
+      setPricingResult(null);
+      setPdfHtml(null);
+    }
+  }, [visible, isFetchingEnquiry, fullEnquiry, isQRPhase]);
 
 
 
@@ -524,6 +738,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
     try {
       const result = await calculatePricing(payload).unwrap();
+      console.log('=== calculatePricing raw response ===', JSON.stringify(result, null, 2));
       setPricingResult(result);
 
       setClientMsg(prev => {
@@ -532,7 +747,6 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       });
 
       const html = buildHtml({
-        enquiry: fullEnquiry,
         pricingResult: result,
         stones: mergedDiamonds,
         metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
@@ -542,14 +756,101 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0),
           UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
         },
-        clientName: fullEnquiry?.ClientName || fullEnquiry?.clientName || '',
+        clientName: resolvedClientName,
+        sourcePricing: sourcePricing || {},
       });
       setPdfHtml(html);
       setShowPdf(true);
     } catch (e) {
       showAlert('Calculation Failed', e?.data?.message || 'Failed to calculate pricing. Please try again.', 'error', [{ text: 'OK' }]);
     }
-  }, [diamonds, editedPrices, metalWeight, metalQuality, metalRate, sourcePricing, fullEnquiry, calculatePricing, showAlert]);
+  }, [diamonds, editedPrices, metalWeight, metalQuality, metalRate, sourcePricing, fullEnquiry, calculatePricing, showAlert, resolvedClientName]);
+
+  const autoCalcTimerRef = useRef(null);
+  const autoSaveInProgress = useRef(false);
+  const fullEnquiryRef = useRef(fullEnquiry);
+  fullEnquiryRef.current = fullEnquiry;
+  useEffect(() => {
+    if (!visible || !isQRPhase) return;
+    if (!diamonds.length) return;
+    if (num(metalWeight) <= 0 || num(metalRate) <= 0) return;
+    if (autoCalcTimerRef.current) clearTimeout(autoCalcTimerRef.current);
+    autoCalcTimerRef.current = setTimeout(() => {
+      if (autoSaveInProgress.current) return;
+      const merged = diamonds.map((d, i) => editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d);
+      const anyMissingPrice = merged.some(d => num(d.Price) <= 0);
+      if (anyMissingPrice) return;
+      const enq = fullEnquiryRef.current;
+      const payload = {
+        details: {
+          Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+          Stones: merged.map(d => ({
+            Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
+            MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
+            CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)), Price: num(d.Price), Markup: num(d.Markup),
+          })).filter(st => st.Type),
+          Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0),
+          ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+          NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0), LabDuties: num(sourcePricing?.LabDuties ?? 0),
+          GoldDuties: num(sourcePricing?.GoldDuties ?? 0), SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
+          LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0), Quantity: enq?.Quantity || 1,
+        },
+        clientId: enq?.ClientId || enq?.clientId,
+        isRecalculate: true,
+      };
+      calculatePricing(payload).unwrap().then(result => {
+        setPricingResult(result);
+        setClientMsg(prev => result.ClientPricingMessage || prev);
+        const html = buildHtml({
+          pricingResult: result, stones: merged,
+          metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+          charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
+          clientName: resolvedClientName, sourcePricing: sourcePricing || {},
+        });
+        setPdfHtml(html);
+
+        if (isQRPhase && !autoSaveInProgress.current) {
+          const resolvedId = enq?._id || enq?.id || enq?.Id;
+          if (resolvedId) {
+            const pool = [
+              ...(Array.isArray(enq?.Cad)  ? enq.Cad.map(e  => ({ ...e, _type: 'cad' }))  : []),
+              ...(Array.isArray(enq?.Coral) ? enq.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+            ];
+            pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+            const latestDesign = pool[0];
+            if (latestDesign?.Version) {
+              autoSaveInProgress.current = true;
+              savePricing({
+                enquiryId: resolvedId,
+                designType: latestDesign._type,
+                version: latestDesign.Version,
+                pricingData: {
+                  Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+                  Stones: merged.map(d => ({
+                    Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
+                    MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
+                    CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)),
+                    Price: num(d.Price), Markup: num(d.Markup),
+                  })).filter(st => st.Type),
+                  Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0),
+                  ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+                  NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0), LabDuties: num(sourcePricing?.LabDuties ?? 0),
+                  GoldDuties: num(sourcePricing?.GoldDuties ?? 0), SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
+                  LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
+                  MetalPrice: result.MetalPrice, DiamondsPrice: result.DiamondsPrice,
+                  DutiesAmount: result.DutiesAmount, TotalPrice: result.TotalPrice,
+                  ClientPricingMessage: result.ClientPricingMessage || '',
+                },
+              }).unwrap().then(() => {
+                setTimeout(() => { autoSaveInProgress.current = false; }, 2000);
+              }).catch(() => { autoSaveInProgress.current = false; });
+            }
+          }
+        }
+      }).catch(() => {});
+    }, 800);
+    return () => { if (autoCalcTimerRef.current) clearTimeout(autoCalcTimerRef.current); };
+  }, [visible, isQRPhase, metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing, calculatePricing, savePricing, resolvedClientName]);
 
   const handleSharePdf = useCallback(async () => {
     if (!pdfHtml) return;
@@ -667,21 +968,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           </Text>
         </View>
 
-        {missingStones.length === 0 ? (
-          <TouchableOpacity
-            style={[s.calcBtn, { paddingVertical: 18, marginTop: 20 }]}
-            onPress={handleCalculate}
-            disabled={isCalculating}
-            activeOpacity={0.85}
-          >
-            {isCalculating
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <>
-                  <Icon name="calculate" size={20} color="#fff" />
-                  <Text style={[s.calcBtnText, { fontSize: (fonts.base || 16) }]}>Recalculate</Text>
-                </>}
-          </TouchableOpacity>
-        ) : (
+        {missingStones.length === 0 ? null : (
         <View style={s.stoneTable}>
             <View style={s.stoneTableHeader}>
               <Text style={[s.stoneCol, s.stoneColType,  s.stoneTh]}>Type</Text>
@@ -815,68 +1102,94 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             >
               <View style={s.infoBanner}>
                 <Icon name="info" size={15} color={colors.primary} />
-                <Text style={s.infoText}>Stones pre-filled from the latest design version.</Text>
+                <Text style={s.infoText}>Review details below, then tap View PDF to recalculate and generate quotation.</Text>
               </View>
 
-              {pricingResult && (
-                <>
+              <View style={s.metalSection}>
+                <Text style={s.sectionTitle}>Metal</Text>
+                <View style={s.metalRow}>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Weight (g)</Text>
+                    <TextInput style={s.chargeInput} value={metalWeight} onChangeText={setMetalWeight} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                  </View>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Quality</Text>
+                    <TouchableOpacity style={s.qualityBtn} onPress={() => setShowQualityPicker(true)} activeOpacity={0.8}>
+                      <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
+                      <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Rate ($/g)</Text>
+                    <TextInput style={s.chargeInput} value={metalRate} onChangeText={setMetalRate} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                  </View>
+                </View>
+              </View>
+
+
+
+              <TouchableOpacity
+                style={[s.calcBtn, { backgroundColor: '#DC2626' }]}
+                onPress={handleCalculate}
+                disabled={isCalculating}
+                activeOpacity={0.85}
+              >
+                {isCalculating
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Icon name="picture-as-pdf" size={18} color="#fff" />
+                      <Text style={s.calcBtnText}>View PDF</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 4, paddingLeft: 8, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.4)' }}>
+                        <Icon name="refresh" size={14} color="#FFD700" />
+                        <Text style={{ color: '#FFD700', fontSize: 10, fontWeight: '600' }}> Auto</Text>
+                      </View>
+                    </View>}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[s.calcBtn, { backgroundColor: '#7C3AED' }]}
+                onPress={handleCompareImages}
+                activeOpacity={0.85}
+              >
+                <Icon name="compare" size={18} color="#fff" />
+                <Text style={s.calcBtnText}>Compare Images</Text>
+              </TouchableOpacity>
+
+              {(() => {
+                const PR = pricingResult || initialPricing;
+                if (!PR) return null;
+                return <>
                   <Text style={s.sectionTitle}>Pricing</Text>
                   <View style={s.resultCard}>
                     <View style={s.resultRow}>
                       <Text style={s.resultLbl}>Metal Price</Text>
-                      <Text style={s.resultVal}>${num(pricingResult.MetalPrice).toFixed(2)}</Text>
+                      <Text style={s.resultVal}>${num(PR.MetalPrice).toFixed(2)}</Text>
                     </View>
                     <View style={s.resultRow}>
                       <Text style={s.resultLbl}>Diamonds Price</Text>
-                      <Text style={s.resultVal}>${num(pricingResult.DiamondsPrice).toFixed(2)}</Text>
+                      <Text style={s.resultVal}>${num(PR.DiamondsPrice).toFixed(2)}</Text>
                     </View>
                     <View style={s.resultRow}>
                       <Text style={s.resultLbl}>Duties Amount</Text>
-                      <Text style={s.resultVal}>${num(pricingResult.DutiesAmount).toFixed(2)}</Text>
+                      <Text style={s.resultVal}>${num(PR.DutiesAmount).toFixed(2)}</Text>
                     </View>
                     <View style={[s.resultRow, s.resultTotalRow]}>
                       <Text style={s.resultTotalLbl}>TOTAL PRICE</Text>
-                      <Text style={s.resultTotalVal}>${num(pricingResult.TotalPrice).toFixed(2)}</Text>
+                      <Text style={s.resultTotalVal}>${num(PR.TotalPrice).toFixed(2)}</Text>
                     </View>
                   </View>
-
-                  <TouchableOpacity
-                    style={[s.calcBtn, { backgroundColor: '#DC2626' }]}
-                    onPress={() => setShowPdf(true)}
-                    activeOpacity={0.85}
-                  >
-                    <Icon name="picture-as-pdf" size={18} color="#fff" />
-                    <Text style={s.calcBtnText}>View PDF</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[s.calcBtn, { backgroundColor: '#7C3AED' }]}
-                    onPress={handleCompareImages}
-                    activeOpacity={0.85}
-                  >
-                    <Icon name="compare" size={18} color="#fff" />
-                    <Text style={s.calcBtnText}>Compare Images</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              {(clientMsg !== null && clientMsg !== undefined && diamonds.length > 0) ? (
+                </>;
+              })()}
+              {(clientMsg !== null && clientMsg !== undefined && clientMsg !== '' && diamonds.length > 0) ? (
                 <View style={s.clientMsgCard}>
                   <View style={s.clientMsgHeader}>
-                    <Text style={s.clientMsgLabel}>Copy pricing format for your client</Text>
+                    <Text style={s.clientMsgLabel}>Client Pricing Message</Text>
                     <TouchableOpacity style={s.copyBtn} onPress={handleCopyMsg} activeOpacity={0.8}>
                       <Icon name={copied ? 'check' : 'content-copy'} size={15} color={copied ? '#059669' : colors.primary} />
                       <Text style={[s.copyBtnText, copied && { color: '#059669' }]}>{copied ? 'Copied!' : 'Copy'}</Text>
                     </TouchableOpacity>
                   </View>
-                  {diamonds.length > 0 && <TextInput
-                    style={s.clientMsgInput}
-                    value={clientMsg}
-                    onChangeText={setClientMsg}
-                    multiline
-                    placeholder="No pricing message saved yet..."
-                    placeholderTextColor={colors.textSecondary}
-                    textAlignVertical="top"
-                  />}
+                  <Text style={s.clientMsgText}>{clientMsg}</Text>
                 </View>
               ) : null}
             </ScrollView>
@@ -1356,6 +1669,13 @@ const s = StyleSheet.create({
     borderRadius: 8, padding: 10, fontFamily: fonts.regular,
     fontSize: fonts.sm || 13, color: colors.textPrimary,
     backgroundColor: colors.background,
+  },
+  clientMsgText: {
+    fontFamily: fonts.regular,
+    fontSize: fonts.sm || 13,
+    color: colors.textPrimary,
+    lineHeight: 20,
+    marginTop: 4,
   },
 });
 

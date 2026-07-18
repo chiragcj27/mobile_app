@@ -130,6 +130,15 @@ export const api = createApi({
       },
     }),
 
+    // Get Stone Shapes list from API
+    getStoneShapes: builder.query({
+      query: () => '/api/codelists/StoneShapes',
+      transformResponse: data => {
+        const arr = Array.isArray(data) ? data : (data?.data || []);
+        return arr.map(s => ({ id: s.Id, code: s.Code, name: s.Name }));
+      },
+    }),
+
     // Get Stone Types list from API
     getStoneTypes: builder.query({
       query: () => '/api/codelists/StoneTypes',
@@ -6014,4 +6023,5 @@ export const {
   useGetRolesQuery,
   useGetStatusesQuery,
   useGetStoneTypesQuery,
+  useGetStoneShapesQuery,
 } = api;

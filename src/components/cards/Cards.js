@@ -1356,12 +1356,17 @@ const getStatusColor = (status) => {
 };
 
 const getPriorityColor = (priority) => {
-  const colors = {
+  const p = (priority || '').toLowerCase().trim();
+  const priorityColors = {
     high: '#EF4444',
+    'super high': '#EF4444',
     medium: '#F59E0B',
     low: '#10B981',
+    normal: '#10B981',
+    urgent: '#EF4444',
+    'super urgent': '#EF4444',
   };
-  return colors[priority] || '#6B7280';
+  return priorityColors[p] || '#6B7280';
 };
 
 const formatDate = (dateString) => {

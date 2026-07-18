@@ -22,10 +22,11 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Video from 'react-native-video';
+import ImageZoom from 'react-native-image-pan-zoom';
 import secureStorage from '../../utils/secureStorage';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { FILE_BASE_URL, API_BASE_URL } from '../../config/apiConfig';
+import { FILE_BASE_URL } from '../../config/apiConfig';
 import Icon from '../common/Icon';
 import BrandedAlert from '../common/BrandedAlert';
 import { useAuth } from '../../context/AuthContext';
@@ -41,7 +42,8 @@ import {
 import { actionsFor, resolveRoleCode, ACTION, SUBSTATUS, STATUS, ROLE } from '../../constants/enquiry';
 import { useEnquiryActions } from '../../hooks/useEnquiryActions';
 
-const { width: screenWidth } = Dimensions.get('window');
+
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 function ModalVideoItem({ uri }) {
   const [paused, setPaused] = useState(true);
@@ -72,9 +74,9 @@ export default function NewEnquiryCard({
   currentTab,
   onUpdateEnquiry,
   onDeleteEnquiry,
-  isExpandedAll = false,
   onFinalLook,
   onSummary,
+  onShare,
 }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -88,7 +90,7 @@ export default function NewEnquiryCard({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isImageModalVisible, setImageModalVisible] = useState(false);
   const [modalCurrentIndex, setModalCurrentIndex] = useState(0);
-  const [zoomedImageIndex, setZoomedImageIndex] = useState(null);
+  const [isModalZoomed, setIsModalZoomed] = useState(false);
   const modalFlatListRef = useRef(null);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [isRemarkExpanded, setIsRemarkExpanded] = useState(false);
@@ -152,6 +154,7 @@ export default function NewEnquiryCard({
   }, [user]);
 
   const isAdminCh = roleCode === ROLE.AD || roleCode === ROLE.CH;
+  const isDesigner = roleCode === ROLE.CO || roleCode === ROLE.CD;
 
   const enquiryId = item?.Id || item?._id || item?.id;
   const { data: enquiryResult, isFetching: isFetchingEnquiry } = useGetEnquiryByIdQuery(
@@ -194,7 +197,25 @@ export default function NewEnquiryCard({
   const isQuotationReview = subStatus === SUBSTATUS.QR;
   const isAssignPending = subStatus === SUBSTATUS.AP;
 
-  const referenceImages = item?.ReferenceImages || [];
+  // Show reference images only. Any image whose Key also lives in a Coral/CAD design
+  // version is an uploaded design image that leaked into ReferenceImages — drop it.
+  const referenceImages = useMemo(() => {
+    const raw = item?._originalData || item || {};
+    const designKeys = new Set();
+    [
+      ...(raw.Coral || item?.Coral || []),
+      ...(raw.Cad || item?.Cad || []),
+    ].forEach(version => {
+      (version?.Images || version?.images || []).forEach(img => {
+        const k = img?.Key || img?.key;
+        if (k) designKeys.add(k);
+      });
+    });
+    return (item?.ReferenceImages || []).filter(img => {
+      const k = img?.Key || img?.key;
+      return !(k && designKeys.has(k));
+    });
+  }, [item]);
 
   const currentInferredDesignType = useMemo(() => {
     const rawData = fullSrc || item;
@@ -213,7 +234,10 @@ export default function NewEnquiryCard({
   }, [fullSrc, item]);
 
   useEffect(() => {
-    if (!isExpandedAll || !referenceImages.length) return;
+    if (!referenceImages || referenceImages.length === 0) {
+      setImagesData([]);
+      return;
+    }
     let cancelled = false;
     const loadAllImages = async () => {
       setImageLoading(true);
@@ -245,7 +269,7 @@ export default function NewEnquiryCard({
     };
     loadAllImages();
     return () => { cancelled = true; };
-  }, [isExpandedAll]);
+  }, [referenceImages]);
 
   const createdDate = item?.CreatedDate || item?.createdAt;
   const daysSinceCreation = createdDate
@@ -310,10 +334,51 @@ export default function NewEnquiryCard({
 
   const handleScroll = e => setCurrentIndex(Math.round(e.nativeEvent.contentOffset.x / screenWidth));
   const handleImagePress = useCallback(index => { setModalCurrentIndex(index); setImageModalVisible(true); }, []);
-  const closeImageModal = useCallback(() => { setImageModalVisible(false); setZoomedImageIndex(null); }, []);
-  const handleDoubleTap = useCallback(index => {
-    setZoomedImageIndex(prev => prev === index ? null : index);
+  const closeImageModal = useCallback(() => { setImageModalVisible(false); setIsModalZoomed(false); }, []);
+
+  const ZOOM_ON_THRESHOLD = 1.05;
+  const ZOOM_OFF_THRESHOLD = 1.02;
+
+  const handleZoomMove = useCallback(event => {
+    const scale = event?.scale ?? 1;
+    setIsModalZoomed(prev => {
+      if (!prev && scale >= ZOOM_ON_THRESHOLD) return true;
+      if (prev && scale <= ZOOM_OFF_THRESHOLD) return false;
+      return prev;
+    });
   }, []);
+
+  const updateModalIndex = useCallback((index, scrollList = true) => {
+    const boundedIndex = Math.max(0, Math.min((imagesData?.length || 1) - 1, index));
+    if (modalFlatListRef.current && scrollList && imagesData.length > 1) {
+      modalFlatListRef.current.scrollToIndex({ index: boundedIndex, animated: true });
+    }
+    requestAnimationFrame(() => {
+      setModalCurrentIndex(prev => prev === boundedIndex ? prev : boundedIndex);
+      setIsModalZoomed(false);
+    });
+  }, [imagesData]);
+
+  const handleModalPrev = useCallback(() => {
+    if (!imagesData || imagesData.length <= 1) return;
+    updateModalIndex(modalCurrentIndex - 1);
+  }, [imagesData, modalCurrentIndex, updateModalIndex]);
+
+  const handleModalNext = useCallback(() => {
+    if (!imagesData || imagesData.length <= 1) return;
+    updateModalIndex(modalCurrentIndex + 1);
+  }, [imagesData, modalCurrentIndex, updateModalIndex]);
+
+  const modalOnViewableItemsChanged = useCallback(({ viewableItems }) => {
+    if (viewableItems.length > 0) {
+      const nextIndex = viewableItems[0].index || 0;
+      if (nextIndex !== modalCurrentIndex) {
+        updateModalIndex(nextIndex, false);
+      }
+    }
+  }, [modalCurrentIndex, updateModalIndex]);
+
+  const modalViewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 50 }), []);
 
   const updateEnquiryStatus = async (updateData) => {
     if (!onUpdateEnquiry) {
@@ -488,139 +553,123 @@ export default function NewEnquiryCard({
   };
 
   return (
-    <View style={[styles.mainContainer, { borderWidth: isPendingStatus ? 4 : 0, borderColor: pendingShadeColor }]}>
+    <View style={[styles.mainContainer, { borderWidth: isPendingStatus ? 2 : 0, borderColor: pendingShadeColor }]}>
 
-      {isExpandedAll && (
-        <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-          <View style={styles.ImageContainer}>
-            {imageLoading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={colors.primary} />
-              </View>
-            ) : imagesData.length > 0 ? (
-              <View style={styles.carouselContainer}>
-                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
-                  {imagesData.map((media, index) => {
-                    const imgDesc = referenceImages[index]?.Description || '';
-                    return (
-                    <TouchableOpacity key={`media-${index}`} activeOpacity={0.9} onPress={() => handleImagePress(index)}>
-                      <View style={styles.carouselImageWrap}>
-                        <View style={styles.carouselImage}>
-                          {media.isVideo ? (
-                            <Video
-                              source={{ uri: media.uri }}
-                              style={StyleSheet.absoluteFill}
-                              resizeMode="cover"
-                              paused
-                              muted
-                              repeat={false}
-                            />
-                          ) : (
-                            <ImageBackground source={{ uri: media.uri }} style={StyleSheet.absoluteFill} />
-                          )}
-                          {media.isVideo && (
-                            <View style={styles.carouselPlayOverlay}>
-                              <Icon name="play-circle-filled" size={44} color="rgba(255,255,255,0.9)" />
-                            </View>
-                          )}
-                        </View>
-                        {!!imgDesc && (
-                          <View style={styles.imageDescBadge}>
-                            <Text style={styles.imageDescText} numberOfLines={2} ellipsizeMode="tail">{imgDesc}</Text>
-                          </View>
-                        )}
-                      </View>
-                    </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-                {imagesData.length > 1 && (
-                  <View style={styles.paginationContainer}>
-                    <Text style={styles.paginationText}>{currentIndex + 1} / {imagesData.length}</Text>
-                  </View>
-                )}
-              </View>
-            ) : (
-              <View style={styles.placeholderContainer}>
-                <Text style={styles.placeholderText}>No Image</Text>
-              </View>
-            )}
-          </View>
-        </TouchableOpacity>
-      )}
+      {/* ── Horizontal card body ── */}
+      <TouchableOpacity onPress={onPress} activeOpacity={0.8} style={styles.horzRow}>
 
-      <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-        <View style={styles.titleRow}>
-          <Text style={styles.Heading} numberOfLines={1}>{item?.Name || 'Untitled Enquiry'}</Text>
-          <View style={styles.badgesRow}>
-            <View style={[styles.badge, { backgroundColor: getPriorityColor(priority) }]}>
-              <Text style={styles.badgeText}>{priority.toUpperCase()}</Text>
+        {/* Left: image thumbnail */}
+        <View style={styles.horzImageWrap}>
+          {imageLoading ? (
+            <View style={styles.horzImagePlaceholder}>
+              <ActivityIndicator size="small" color={colors.primary} />
             </View>
-            
-            <View style={[styles.badge, { backgroundColor: getStatusColor(status) }]}>
-              <Text style={styles.badgeText} numberOfLines={1}>
-                {status.toUpperCase()}
-                {isFinalVersion ? ' · Final Version' : ` · ${subStatus}` }
-              </Text>
+          ) : imagesData.length > 0 ? (
+            <TouchableOpacity activeOpacity={0.9} onPress={() => handleImagePress(0)} style={{ flex: 1 }}>
+              {imagesData[0].isVideo ? (
+                <View style={styles.horzImagePlaceholder}>
+                  <Icon name="play-circle-filled" size={32} color="rgba(255,255,255,0.9)" />
+                </View>
+              ) : (
+                <Image source={{ uri: imagesData[0].uri }} style={styles.horzImage} resizeMode="cover" />
+              )}
+              {imagesData.length > 1 && (
+                <View style={styles.horzImageCount}>
+                  <Text style={styles.horzImageCountText}>1/{imagesData.length}</Text>
+                </View>
+              )}
+              {!!referenceImages[0]?.Description && (
+                <View style={styles.horzImgDesc}>
+                  <Text style={styles.horzImgDescText} numberOfLines={2}>{referenceImages[0].Description}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.horzImagePlaceholder}>
+              <Icon name="image" size={28} color={colors.textLight} />
             </View>
-            {isAdmin && (
-              <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setShowMoreOptions(true)}>
-                <Icon name="more-vert" size={18} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
+          )}
+          {/* Priority badge */}
+          <View style={[styles.horzPriorityBadge, { backgroundColor: getPriorityColor(priority) }]}>
+            <Text style={styles.horzPriorityText}>{priority.toUpperCase()}</Text>
           </View>
         </View>
-        {(fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection) ? (
-          <View style={{ backgroundColor: '#FEF2F2', padding: 8, borderRadius: 6, marginTop: 4, borderLeftWidth: 3, borderLeftColor: '#DC2626' , marginBottom:10}}>
-            <Text style={{ fontSize: 12, fontFamily: fonts.medium, color: '#DC2626', marginBottom: 2 }}>Rejection Message</Text>
-            <Text style={{ fontSize: 12, fontFamily: fonts.regular, color: '#7F1D1D' }}>
-              {fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection}
-            </Text>
+
+        {/* Right: content */}
+        <View style={styles.horzContent}>
+          {/* Title row */}
+          <View style={styles.horzTitleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.horzTitle} numberOfLines={2}>{item?.Name || 'Untitled Enquiry'}</Text>
+              <View style={styles.styleNumRow}>
+                <Icon name="tag" size={11} color={colors.primaryDark} />
+                <Text style={styles.styleNumText} numberOfLines={1}>{item?.EnquiryCode || item?.Code || item?.StyleNumber || '—'}</Text>
+              </View>
+            </View>
+            <View style={styles.horzBadgesCol}>
+              <View style={[styles.badge, { backgroundColor: getStatusColor(status) }]}>
+                <Text style={styles.badgeText} numberOfLines={1}>
+                  {status.toUpperCase()}{isFinalVersion ? ' · Final' : subStatus ? ` · ${subStatus}` : ''}
+                </Text>
+              </View>
+              {isAdmin && (
+                <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setShowMoreOptions(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Icon name="more-vert" size={16} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.shareIconBtn}
+                onPress={() => onShare?.(item)}
+                activeOpacity={0.75}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Icon name="share" size={18} color={colors.primaryDark} />
+              </TouchableOpacity>
+            </View>
           </View>
-        ) : null}
-        <View style={styles.metaRow}>
-          <Icon name="person" size={12} color={colors.textSecondary} />
-          <Text style={styles.metaText}>{item?.clientName || 'Unknown'}</Text>
-          <Text style={styles.metaDot}>·</Text>
-          <Icon name="schedule" size={12} color={colors.textSecondary} />
-          <Text style={styles.metaText}>{formatDate(item?.CreatedDate) || '—'}</Text>
+
+          {/* Meta: client · time */}
+          <View style={styles.metaRow}>
+            <Icon name="person" size={11} color={colors.textSecondary} />
+            <Text style={styles.metaText} numberOfLines={1}>{item?.clientName || 'Unknown'}</Text>
+            <Text style={styles.metaDot}>·</Text>
+            <Icon name="schedule" size={11} color={colors.textSecondary} />
+            <Text style={styles.metaText}>{formatDate(item?.CreatedDate) || '—'}</Text>
+          </View>
+
+          {/* Assigned chip */}
+          {hasAssignedUser && (
+            <View style={styles.AssignedRow}>
+              <Icon name="person-add" size={11} color={colors.background} />
+              <Text style={styles.AssignedName} numberOfLines={1}>
+                {assignedUserName || 'User assigned'}
+              </Text>
+            </View>
+          )}
+
+          {/* Rejection message */}
+          {(fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection) ? (
+            <View style={styles.horzRejection}>
+              <Icon name="error" size={11} color="#DC2626" />
+              <Text style={styles.horzRejectionText} numberOfLines={2}>
+                {fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Summary button */}
           {onSummary && (
-            <TouchableOpacity style={styles.summaryBtn} onPress={() => onSummary(item)} activeOpacity={0.7}>
-              <Icon name="description" size={12} color={colors.primary} />
+            <TouchableOpacity style={[styles.summaryBtn, { alignSelf: 'flex-start', marginTop: 4 }]} onPress={() => onSummary(item)} activeOpacity={0.7}>
+              <Icon name="description" size={11} color={colors.primary} />
               <Text style={styles.summaryBtnText}>Summary</Text>
             </TouchableOpacity>
           )}
         </View>
-        {hasAssignedUser && (
-          <View style={styles.AssignedRow}>
-            <Icon name="person-add" size={13} color={colors.background} />
-            <Text style={styles.AssignedName} numberOfLines={1}>
-              Assigned: {assignedUserName || 'User assigned'}
-            </Text>
-          </View>
-        )}
       </TouchableOpacity>
 
-      {isExpandedAll && (
-        <View style={styles.ButtonContainer}>
-          <View style={styles.remarkContainer}>
-            <Text style={styles.placeholderText2} numberOfLines={isRemarkExpanded ? undefined : 2}>
-              {item?.Remarks || 'No description available.'}
-            </Text>
-            {item?.Remarks && (item.Remarks.length > 60 || item.Remarks.includes('\n')) && (
-              <TouchableOpacity
-                style={styles.expandButton}
-                onPress={() => setIsRemarkExpanded(v => !v)}
-              >
-                <Icon
-                  name={isRemarkExpanded ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-                  size={22}
-                  color={colors.textSecondary}
-                />
-              </TouchableOpacity>
-            )}
-          </View>
-
+      {/* ── Always-visible bottom action bar ── */}
+      <View style={styles.bottomBar}>
+        <View>
         {shouldShowAssignCoral ? (
           <View style={styles.QuickButtonContainer}>
             <TouchableOpacity style={styles.ChatButton} onPress={() => navigation.navigate('ChatDetail', { enquiryId: item?.id || item?._id })}>
@@ -730,47 +779,15 @@ export default function NewEnquiryCard({
             <TouchableOpacity
               style={[styles.QuickActionButton, { backgroundColor: '#F59E0B' }]}
               disabled={isActionLoading}
-              onPress={() => {
-                const targetType = (fullSrc?.CurrentStatus || item?.CurrentStatus) === STATUS.CORAL ? 'coral' : 'cad';
-                showAlert(
-                  'Confirm Move to Approval',
-                  'Are you sure you want to move this enquiry to Approval Pending?',
-                  'info',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Confirm', onPress: async () => {
-                      hideAlert();
-                      setIsActionLoading(true);
-                      try {
-                        const numericVersion = getVersionFromLast(targetType);
-                        await updateAssetData({
-                          enquiryId,
-                          type: targetType,
-                          version: String(numericVersion),
-                          data: { SendForApproval: true },
-                        }).unwrap();
-                        showAlert('Success', 'Enquiry moved to Approval Pending.', 'success', [{ text: 'OK' }]);
-                      } catch (e) {
-                        showAlert('Failed', e?.data?.message || 'Could not move to approval.', 'error', [{ text: 'OK' }]);
-                      } finally {
-                        setIsActionLoading(false);
-                      }
-                    }},
-                  ]
-                );
-              }}
+              onPress={() => onFinalLook && onFinalLook(item)}
             >
-              {isActionLoading
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <><Icon name="check-circle" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Send for Approval</Text></>}
+              <Icon name="visibility" size={16} color={colors.textWhite} />
+              <View style={{ width: 4 }} />
+              <Text style={styles.QuickActionButtonText}>Check & Send</Text>
             </TouchableOpacity>
           </View>
         ) : shouldShowApprovalButtons ? (
           <View style={styles.QuickButtonContainer}>
-            <TouchableOpacity style={styles.ChatButton} onPress={() => onFinalLook && onFinalLook(item)}>
-              <Icon name="visibility" size={16} color={colors.primaryDark} />
-              <Text style={styles.ChatButtonText}>Final Look</Text>
-            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
               disabled={isActionLoading}
@@ -880,6 +897,10 @@ export default function NewEnquiryCard({
           </View>
         ) : isPlacementStage ? (
           <View style={styles.QuickButtonContainer}>
+            <TouchableOpacity style={styles.ChatButton} onPress={() => onFinalLook && onFinalLook(item)}>
+              <Icon name="visibility" size={16} color={colors.primaryDark} />
+              <Text style={styles.ChatButtonText}>Final Look</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
               disabled={isActionLoading}
@@ -941,7 +962,7 @@ export default function NewEnquiryCard({
           </View>
         ) : null}
         </View>
-      )}
+      </View>
 
       <Modal
         visible={showQuotationActions}
@@ -1200,41 +1221,107 @@ export default function NewEnquiryCard({
             <Icon name="close" size={24} color={colors.textWhite} />
           </TouchableOpacity>
           {imagesData.length > 1 && (
-            <View style={styles.modalImageCounter}>
-              <Text style={styles.modalImageCounterText}>{modalCurrentIndex + 1} / {imagesData.length}</Text>
+            <>
+              <View style={styles.modalImageCounter}>
+                <Text style={styles.modalImageCounterText}>{modalCurrentIndex + 1} / {imagesData.length}</Text>
+              </View>
+              <FlatList
+                ref={modalFlatListRef}
+                data={imagesData}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                initialScrollIndex={modalCurrentIndex}
+                onViewableItemsChanged={modalOnViewableItemsChanged}
+                viewabilityConfig={modalViewabilityConfig}
+                getItemLayout={(_, index) => ({ length: screenWidth, offset: screenWidth * index, index })}
+                scrollEnabled={!isModalZoomed}
+                onMomentumScrollEnd={() => setIsModalZoomed(false)}
+                onScrollBeginDrag={() => setIsModalZoomed(false)}
+                keyExtractor={(_, index) => `modal-img-${index}`}
+                renderItem={({ item: media, index }) => {
+                  const imgComment = referenceImages[index]?.Description || referenceImages[index]?.description || null;
+                  return (
+                    <View style={styles.modalImageContainer}>
+                      {media.isVideo ? (
+                        <ModalVideoItem uri={media.uri} />
+                      ) : (
+                        <ImageZoom
+                          cropWidth={screenWidth}
+                          cropHeight={screenHeight}
+                          imageWidth={screenWidth}
+                          imageHeight={screenHeight}
+                          enableCenterFocus
+                          useNativeDriver
+                          enableSwipeDown={false}
+                          pinchToZoom
+                          panToMove={isModalZoomed}
+                          onMove={handleZoomMove}
+                        >
+                          <Image source={{ uri: media.uri }} style={styles.fullscreenImage} resizeMode="contain" />
+                        </ImageZoom>
+                      )}
+                      {!!imgComment && (
+                        <View style={styles.modalImgComment}>
+                          <Icon name="comment" size={12} color="#fff" />
+                          <Text style={styles.modalImgCommentText}>{imgComment}</Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                }}
+              />
+              <TouchableOpacity
+                style={[styles.modalNavButton, styles.modalNavButtonLeft, modalCurrentIndex === 0 && styles.modalNavButtonDisabled]}
+                onPress={handleModalPrev}
+                disabled={modalCurrentIndex === 0}
+                activeOpacity={0.8}
+              >
+                <Icon name="chevron-left" size={28} color={colors.textWhite} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalNavButton, styles.modalNavButtonRight, modalCurrentIndex === imagesData.length - 1 && styles.modalNavButtonDisabled]}
+                onPress={handleModalNext}
+                disabled={modalCurrentIndex === imagesData.length - 1}
+                activeOpacity={0.8}
+              >
+                <Icon name="chevron-right" size={28} color={colors.textWhite} />
+              </TouchableOpacity>
+              <View style={styles.modalPaginationContainer}>
+                {imagesData.map((_, index) => (
+                  <View key={index} style={[styles.modalPaginationDot, index === modalCurrentIndex && styles.modalPaginationDotActive]} />
+                ))}
+              </View>
+            </>
+          )}
+          {imagesData.length === 1 && (
+            <View style={styles.modalImageContainer}>
+              {imagesData[0]?.isVideo ? (
+                <ModalVideoItem uri={imagesData[0].uri} />
+              ) : (
+                <ImageZoom
+                  cropWidth={screenWidth}
+                  cropHeight={screenHeight}
+                  imageWidth={screenWidth}
+                  imageHeight={screenHeight}
+                  enableCenterFocus
+                  useNativeDriver
+                  enableSwipeDown={false}
+                  pinchToZoom
+                  panToMove={isModalZoomed}
+                  onMove={handleZoomMove}
+                >
+                  <Image source={{ uri: imagesData[0].uri }} style={styles.fullscreenImage} resizeMode="contain" />
+                </ImageZoom>
+              )}
+              {!!referenceImages[0]?.Description && (
+                <View style={styles.modalImgComment}>
+                  <Icon name="comment" size={12} color="#fff" />
+                  <Text style={styles.modalImgCommentText}>{referenceImages[0].Description}</Text>
+                </View>
+              )}
             </View>
           )}
-          <FlatList
-            ref={modalFlatListRef}
-            data={imagesData}
-            horizontal pagingEnabled showsHorizontalScrollIndicator={false}
-            initialScrollIndex={modalCurrentIndex}
-            getItemLayout={(_, index) => ({ length: screenWidth, offset: screenWidth * index, index })}
-            onMomentumScrollEnd={e => {
-              const index = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
-              setModalCurrentIndex(index);
-              setZoomedImageIndex(null);
-            }}
-            scrollEventThrottle={16}
-            scrollEnabled={zoomedImageIndex === null}
-            keyExtractor={(_, index) => `modal-img-${index}`}
-            renderItem={({ item: media, index }) => (
-              <View style={styles.modalImageContainer}>
-                {media.isVideo ? (
-                  <ModalVideoItem uri={media.uri} />
-                ) : (
-                  <TouchableOpacity activeOpacity={1} onPress={() => handleDoubleTap(index)} style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Image source={{ uri: media.uri }} style={[styles.fullscreenImage, zoomedImageIndex === index && styles.fullscreenImageZoomed]} resizeMode="contain" />
-                  </TouchableOpacity>
-                )}
-                {!media.isVideo && zoomedImageIndex === index && (
-                  <View style={styles.zoomHintContainer}>
-                    <Text style={styles.zoomHintText}>Tap again to zoom out</Text>
-                  </View>
-                )}
-              </View>
-            )}
-          />
         </View>
       </Modal>
 
@@ -1352,12 +1439,17 @@ const getStatusColor = status => {
 };
 
 const getPriorityColor = priority => {
+  const p = (priority || '').toLowerCase().trim();
   const priorityColors = {
     high: '#EF4444',
+    'super high': '#EF4444',
     medium: '#F59E0B',
     low: '#10B981',
+    normal: '#10B981',
+    urgent: '#EF4444',
+    'super urgent': '#EF4444',
   };
-  return priorityColors[priority] || '#6B7280';
+  return priorityColors[p] || '#6B7280';
 };
 
 const formatDate = dateString => {
@@ -1569,11 +1661,15 @@ const styles = StyleSheet.create({
   fullscreenImageCloseButton: { position: 'absolute', top: 40, right: 20, padding: 12, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 1000 },
   modalImageCounter: { position: 'absolute', top: 50, left: 20, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, zIndex: 10 },
   modalImageCounterText: { color: colors.textWhite, fontSize: 14, fontFamily: fonts.medium },
+  modalNavButton: { position: 'absolute', top: '50%', marginTop: -28, backgroundColor: 'rgba(0,0,0,0.5)', padding: 12, borderRadius: 28, zIndex: 15 },
+  modalNavButtonLeft: { left: 12 },
+  modalNavButtonRight: { right: 12 },
+  modalNavButtonDisabled: { opacity: 0.35 },
+  modalPaginationContainer: { position: 'absolute', bottom: 40, flexDirection: 'row', alignSelf: 'center', gap: 6, zIndex: 10 },
+  modalPaginationDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
+  modalPaginationDotActive: { backgroundColor: '#fff', width: 10, height: 10, borderRadius: 5 },
   modalImageContainer: { width: Dimensions.get('window').width, height: Dimensions.get('window').height, justifyContent: 'center', alignItems: 'center' },
   fullscreenImage: { width: Dimensions.get('window').width, height: Dimensions.get('window').height * 0.8 },
-  fullscreenImageZoomed: { width: Dimensions.get('window').width * 2.5, height: Dimensions.get('window').height * 2.5 },
-  zoomHintContainer: { position: 'absolute', bottom: 100, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
-  zoomHintText: { color: colors.textWhite, fontSize: 12, fontFamily: fonts.medium },
   modalVideoPlayOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
   modalOverlay: {
     flex: 1,
@@ -1768,5 +1864,157 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: colors.textSecondary,
+  },
+  // ── Horizontal card styles ──────────────────────────────────────────────
+  horzRow: {
+    flexDirection: 'row',
+    minHeight: 130,
+  },
+  horzImageWrap: {
+    width: 110,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: colors.backgroundSecondary,
+    flexShrink: 0,
+    position: 'relative',
+  },
+  horzImage: {
+    width: '100%',
+    height: '100%',
+    minHeight: 130,
+  },
+  horzImagePlaceholder: {
+    flex: 1,
+    minHeight: 130,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundSecondary,
+  },
+  horzImageCount: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  horzImageCountText: {
+    color: '#fff',
+    fontSize: 9,
+    fontFamily: fonts.medium,
+  },
+  horzPriorityBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  horzPriorityText: {
+    fontSize: 9,
+    color: '#fff',
+    fontFamily: fonts.bold,
+  },
+  horzContent: {
+    flex: 1,
+    paddingLeft: 10,
+    justifyContent: 'flex-start',
+    gap: 3,
+  },
+  horzTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  horzTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: colors.textPrimary,
+    flex: 1,
+    lineHeight: 18,
+  },
+  horzBadgesCol: {
+    alignItems: 'flex-end',
+    gap: 2,
+    flexShrink: 0,
+  },
+  horzSubStatus: {
+    fontSize: 10,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+  },
+  horzCode: {
+    fontSize: 11,
+    fontFamily: fonts.semiBold,
+    color: colors.primaryDark,
+  },
+  horzRejection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 2,
+  },
+  horzRejectionText: {
+    fontSize: 14,
+    fontFamily: fonts.medium,
+    color: '#DC2626',
+    flex: 1,
+    lineHeight: 14,
+  },
+  horzImgDesc: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(220,38,38,0.88)',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  horzImgDescText: {
+    color: '#fff',
+    fontSize: 9,
+    fontFamily: fonts.medium,
+    lineHeight: 13,
+  },
+  styleNumRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
+  styleNumText: { fontSize: 11, fontFamily: fonts.medium, color: colors.primaryDark },
+  shareIconBtn: {
+    padding: 2,
+    borderRadius: 5,
+    marginTop: 5,
+
+  },
+  modalImgComment: {
+    position: 'absolute',
+    bottom: 130,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(220,38,38,0.88)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  modalImgCommentText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    flex: 1,
+    lineHeight: 17,
+  },
+  bottomBar: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    marginTop: 10,
+    paddingTop: 8,
   },
 });

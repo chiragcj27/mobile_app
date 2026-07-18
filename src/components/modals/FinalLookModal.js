@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal,
-  ActivityIndicator, Platform,
+  ActivityIndicator, Platform, TextInput,
 } from 'react-native';
 import Share from 'react-native-share';
 import RNFS from 'react-native-fs';
@@ -19,8 +19,21 @@ try {
   generatePDFModule = mod.generatePDF || mod.default?.generatePDF || mod.default;
 } catch (_) {}
 
-const FinalLookModal = ({ visible, enquiryId, onClose, clientName, onApprove }) => {
-  const { data: fullEnquiryData, isFetching } = useGetEnquiryByIdQuery(enquiryId, {
+const FinalLookModal = ({
+  visible,
+  enquiryId,
+  onClose,
+  clientName,
+  onApprove,
+  onSendForApproval,
+  onReject,
+  showApprovalActions = false,
+  isActionLoading: externalLoading = false,
+  shareExcelMode = false,
+  onShareExcel,
+  headerTitle,
+}) => {
+  const { data: fullEnquiryData, isFetching, refetch } = useGetEnquiryByIdQuery(enquiryId, {
     skip: !visible || !enquiryId,
     refetchOnMountOrArgChange: true,
   });
@@ -34,10 +47,26 @@ const FinalLookModal = ({ visible, enquiryId, onClose, clientName, onApprove }) 
   const [isSaving,    setIsSaving]    = useState(false);
   const [isApproving, setIsApproving] = useState(false);
 
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
   const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   const showAlert = useCallback((title, message, type = 'info', buttons = []) =>
     setAlertCfg({ visible: true, title, message, type, buttons }), []);
   const hideAlert = useCallback(() => setAlertCfg(p => ({ ...p, visible: false })), []);
+
+  useEffect(() => {
+    if (!visible) {
+      setShowRejectInput(false);
+      setRejectReason('');
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (visible && enquiryId) {
+      refetch();
+    }
+  }, [visible, enquiryId, refetch]);
 
   useEffect(() => {
     if (!visible || !fullEnquiry || isFetching) return;
@@ -106,6 +135,11 @@ const FinalLookModal = ({ visible, enquiryId, onClose, clientName, onApprove }) 
     }
   }, [pdfHtml, fullEnquiry, showAlert]);
 
+  const handleRejectSubmit = useCallback(() => {
+    if (!rejectReason.trim()) return;
+    onReject?.(rejectReason.trim());
+  }, [rejectReason, onReject]);
+
   return (
     <>
       <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -113,10 +147,17 @@ const FinalLookModal = ({ visible, enquiryId, onClose, clientName, onApprove }) 
           <View style={s.sheet}>
             <View style={s.header}>
               <View style={{ flex: 1 }}>
-                <Text style={s.headerTitle} numberOfLines={1}>Final Look</Text>
+                <Text style={s.headerTitle} numberOfLines={1}>{headerTitle || 'Final Look'}</Text>
                 {fullEnquiry?.Name ? <Text style={s.headerSub} numberOfLines={1}>{fullEnquiry.Name}</Text> : null}
               </View>
               {isFetching && <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />}
+              {!shareExcelMode && (
+                <TouchableOpacity style={s.headerIconBtn} onPress={handleSharePdf} disabled={isSharing} activeOpacity={0.7}>
+                  {isSharing
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Icon name="share" size={20} color="#fff" />}
+                </TouchableOpacity>
+              )}
               <TouchableOpacity style={s.closeBtn} onPress={onClose} activeOpacity={0.7}>
                 <Icon name="close" size={22} color="#fff" />
               </TouchableOpacity>
@@ -130,18 +171,83 @@ const FinalLookModal = ({ visible, enquiryId, onClose, clientName, onApprove }) 
             ) : pdfHtml ? (
               <View style={{ flex: 1 }}>
                 <PdfViewer html={pdfHtml} style={{ flex: 1 }} />
+                {showRejectInput && (
+                  <View style={s.rejectInputWrap}>
+                    <TextInput
+                      style={s.rejectInput}
+                      placeholder="Enter rejection reason..."
+                      placeholderTextColor="#9CA3AF"
+                      value={rejectReason}
+                      onChangeText={setRejectReason}
+                      multiline
+                    />
+                    <TouchableOpacity
+                      style={[s.rejectSubmitBtn, { opacity: (!rejectReason.trim() || externalLoading) ? 0.5 : 1 }]}
+                      onPress={handleRejectSubmit}
+                      disabled={!rejectReason.trim() || externalLoading}
+                    >
+                      {externalLoading
+                        ? <ActivityIndicator size="small" color="#fff" />
+                        : <Text style={s.rejectSubmitBtnText}>Submit</Text>}
+                    </TouchableOpacity>
+                  </View>
+                )}
                 <View style={s.pdfBar}>
-                  <TouchableOpacity style={s.pdfBarBtn} onPress={handleSharePdf} disabled={isSharing} activeOpacity={0.85}>
-                    {isSharing
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <><Icon name="share" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Share PDF</Text></>}
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[s.pdfBarBtn, s.saveBtn]} onPress={handleSavePdf} disabled={isSaving} activeOpacity={0.85}>
-                    {isSaving
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <><Icon name="save" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Save PDF</Text></>}
-                  </TouchableOpacity>
-
+                  {shareExcelMode ? (
+                    <>
+                      <TouchableOpacity style={[s.pdfBarBtn, { backgroundColor: colors.primary }]} onPress={onShareExcel} disabled={isSharing} activeOpacity={0.85}>
+                        {isSharing
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <><Icon name="table-chart" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Share Excel</Text></>}
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[s.pdfBarBtn, { backgroundColor: 'rgba(255,255,255,0.2)' }]} onPress={onClose} activeOpacity={0.85}>
+                        <Icon name="close" size={18} color="#fff" />
+                        <Text style={s.pdfBarBtnText}>Close</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : showApprovalActions ? (
+                    <>
+                      <TouchableOpacity
+                        style={[s.pdfBarBtn, { backgroundColor: '#F59E0B' }]}
+                        onPress={onSendForApproval}
+                        disabled={externalLoading}
+                        activeOpacity={0.85}
+                      >
+                        {externalLoading
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <><Icon name="check-circle" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Send for Approval</Text></>}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.pdfBarBtn, { backgroundColor: '#DC2626' }]}
+                        onPress={() => {
+                          if (showRejectInput) {
+                            handleRejectSubmit();
+                          } else {
+                            setShowRejectInput(true);
+                          }
+                        }}
+                        disabled={externalLoading || (showRejectInput && !rejectReason.trim())}
+                        activeOpacity={0.85}
+                      >
+                        {externalLoading
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <><Icon name="close" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>{showRejectInput ? 'Reject' : 'Reject'}</Text></>}
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <TouchableOpacity style={s.pdfBarBtn} onPress={handleSharePdf} disabled={isSharing} activeOpacity={0.85}>
+                        {isSharing
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <><Icon name="share" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Share PDF</Text></>}
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[s.pdfBarBtn, s.saveBtn]} onPress={handleSavePdf} disabled={isSaving} activeOpacity={0.85}>
+                        {isSaving
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <><Icon name="save" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Save PDF</Text></>}
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               </View>
             ) : (
@@ -176,9 +282,26 @@ const s = StyleSheet.create({
   },
   headerTitle: { fontFamily: fonts.bold, fontSize: fonts.base || 15, color: '#fff' },
   headerSub:   { fontFamily: fonts.regular, fontSize: fonts.xs || 11, color: 'rgba(255,255,255,0.75)', marginTop: 1 },
+  headerIconBtn: { padding: 4, marginLeft: 4 },
   closeBtn: { padding: 4 },
   loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
   loaderText: { fontFamily: fonts.medium, fontSize: fonts.sm || 13, color: colors.textSecondary },
+  rejectInputWrap: {
+    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
+    paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4,
+    backgroundColor: '#fff',
+  },
+  rejectInput: {
+    flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 8,
+    fontFamily: fonts.regular, fontSize: fonts.sm || 13, color: '#111827',
+    maxHeight: 80,
+  },
+  rejectSubmitBtn: {
+    backgroundColor: '#DC2626', paddingHorizontal: 16, paddingVertical: 10,
+    borderRadius: 8,
+  },
+  rejectSubmitBtnText: { fontFamily: fonts.medium, fontSize: fonts.xs || 12, color: '#fff' },
   pdfBar: { flexDirection: 'row', gap: 10, padding: 10, backgroundColor: 'rgba(0,0,0,0.75)' },
   pdfBarBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

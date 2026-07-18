@@ -548,7 +548,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
             onChangeText={setPricingMessageFormat}
             placeholder="Enter pricing message format"
             multiline
-            numberOfLines={3}
+            numberOfLines={12}
             style={styles.messageFormatInput}
           />
         </View>
@@ -953,7 +953,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   messageFormatInput: {
-    minHeight: 80,
+    minHeight: 200,
     textAlignVertical: 'top',
   },
 });

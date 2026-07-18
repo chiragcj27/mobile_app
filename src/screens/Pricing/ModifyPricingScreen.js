@@ -18,10 +18,12 @@ import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
-import { useCalculatePricingMutation } from '../../store/api';
+import {
+  useCalculatePricingMutation,
+  useGetStoneShapesQuery,
+} from '../../store/api';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
-const SHAPES = ['PS', 'RD', 'OV', 'EM', 'MQ', 'PR', 'CU', 'AS'];
 const isLabType = (t) => t === 'LabGrown' || t === 'CVDLabGrown';
 const DUTY_CONFIG = {
   UndercutPrice: { label: 'Undercut ($/ct)' },
@@ -65,7 +67,14 @@ export default function ModifyPricingScreen({ route, navigation }) {
   const [topTypeModalVisible, setTopTypeModalVisible] = useState(false);
   const [perStoneTypeModalIndex, setPerStoneTypeModalIndex] = useState(null);
   const [perStoneShapeModalIndex, setPerStoneShapeModalIndex] = useState(null);
-  const [shapeOptions, setShapeOptions] = useState(SHAPES);
+  const { data: stoneShapesData } = useGetStoneShapesQuery();
+  const [shapeOptions, setShapeOptions] = useState([]);
+  useEffect(() => {
+    if (stoneShapesData && stoneShapesData.length > 0) {
+      const codes = stoneShapesData.map(s => s.code).filter(Boolean);
+      if (codes.length > 0) setShapeOptions(codes);
+    }
+  }, [stoneShapesData]);
   const [newShapeText, setNewShapeText] = useState('');
   const [stoneTypeOverrides, setStoneTypeOverrides] = useState({});
   const [shapeVersion, setShapeVersion] = useState(0);
@@ -302,7 +311,19 @@ export default function ModifyPricingScreen({ route, navigation }) {
   const closeEditModal = useCallback(() => {
     setEditingIndex(null);
     setEditModalVisible(false);
-  }, []);
+    if (dataChangedRef.current && clientId && flatStonesRef.current.length > 0) {
+      const priceOnly = !nonPriceChangedRef.current;
+      dataChangedRef.current = false;
+      nonPriceChangedRef.current = false;
+      if (!isAutoRecalculatingRef.current) {
+        isAutoRecalculatingRef.current = true;
+        const fn = priceOnly ? recalcUpdateRef.current : recalcFirstRef.current;
+        Promise.resolve(fn?.()).finally(() => {
+          isAutoRecalculatingRef.current = false;
+        });
+      }
+    }
+  }, [clientId]);
 
   const selectTopType = useCallback((type) => {
     setSelectedType(type);
@@ -354,7 +375,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
               onPress={() => setPerStoneTypeModalIndex(idx)}
               activeOpacity={0.7}
             >
-              <Text style={s.selectText} numberOfLines={1}>{displayType}</Text>
+              <Text style={s.selectText}>{String(displayType).slice(0, 2).toUpperCase()}</Text>
               <Icon name="arrow-drop-down" size={16} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -366,9 +387,23 @@ export default function ModifyPricingScreen({ route, navigation }) {
               onPress={() => setPerStoneShapeModalIndex(idx)}
               activeOpacity={0.7}
             >
-              <Text style={s.selectText} numberOfLines={1}>{eff.Shape || '—'}</Text>
+              <Text style={s.selectText}>
+                {String(eff.Shape || '—').slice(0, 2).toUpperCase()}
+              </Text>
               <Icon name="arrow-drop-down" size={16} color={colors.textSecondary} />
             </TouchableOpacity>
+          </View>
+
+          <View style={s.stoneFieldWrapSmall}>
+            <Text style={s.stoneFieldLabel}>Pcs</Text>
+            <TextInput
+              style={s.priceInput}
+              value={stoneEdits[idx]?.Pcs !== undefined ? String(stoneEdits[idx].Pcs) : String(eff.Pcs ?? 0)}
+              onChangeText={(v) => updateStoneField(idx, 'Pcs', v)}
+              keyboardType="number-pad"
+              placeholder="0"
+              placeholderTextColor={colors.textLight}
+            />
           </View>
 
           <View style={s.stoneFieldWrapPrice}>
@@ -824,9 +859,9 @@ const s = StyleSheet.create({
     paddingBottom: 8,
     gap: 8,
   },
-  stoneFieldWrap: { flex: 2 },
+  stoneFieldWrap: { flex: 1.5 },
   stoneFieldWrapSmall: { flex: 1.5 },
-  stoneFieldWrapPrice: { flex: 2 },
+  stoneFieldWrapPrice: { flex: 1.5 },
   stoneFieldLabel: { fontFamily: fonts.bold, fontSize: 10, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.05, marginBottom: 4 },
 
   selectWrap: {

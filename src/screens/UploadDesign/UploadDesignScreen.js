@@ -714,6 +714,7 @@ const UploadDesignScreen = ({ route, navigation }) => {
         checklist={alertConfig.checklist}
         buttons={alertConfig.buttons}
         onClose={hideAlert}
+        fullScreen
       />
     </View>
   );
