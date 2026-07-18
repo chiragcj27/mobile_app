@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -22,6 +22,7 @@ import {
   useGetEnquiryByIdQuery,
   useUpdateEnquiryMutation,
   useDeleteEnquiryMutation,
+  useUpdateAssetDataMutation,
 } from '../../store/api';
 import {
   setActiveTab,
@@ -39,10 +40,13 @@ import Icon from '../../components/common/Icon';
 import EnquiryFiltersModal from '../../components/filters/EnquiryFiltersModal';
 import QuotationModal from '../../components/modals/QuotationModal';
 import FinalLookModal from '../../components/modals/FinalLookModal';
+import ShareEnquiryModal from '../../components/modals/ShareEnquiryModal';
 import CreateEnquiryModal from '../EditEnquiry/createEnquiryModal';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
+import Clipboard from '@react-native-clipboard/clipboard';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
+import { useEnquiryActions } from '../../hooks/useEnquiryActions';
 
 const PAGE_SIZE = 20;
 
@@ -227,11 +231,15 @@ export default function EnquiryListScreen({ navigation }) {
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [quotationEnquiry, setQuotationEnquiry] = useState(null);
   const [finalLookEnquiry, setFinalLookEnquiry] = useState(null);
-  const [isExpandedAll, setIsExpandedAll] = useState(true);
+  const [finalLookActionLoading, setFinalLookActionLoading] = useState(false);
+  const [shareEnquiry, setShareEnquiry] = useState(null);
+  const [shareEnquiryId, setShareEnquiryId] = useState(null);
+  const { data: shareFullEnquiry } = useGetEnquiryByIdQuery(shareEnquiryId, { skip: !shareEnquiryId });
   const [designerTab, setDesignerTab] = useState(DESIGNER_TAB.MINE);
   const [unassignedSubFilter, setUnassignedSubFilter] = useState('unassigned');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [summaryEnquiryId, setSummaryEnquiryId] = useState(null);
+  const summaryTextRef = useRef('');
   const { data: summaryData, isLoading: summaryLoading } = useGetEnquiryByIdQuery(summaryEnquiryId, { skip: !summaryEnquiryId });
 
   // When CH/Admin lands here via "ClientHandlerEnquiries" route with a selected client,
@@ -406,6 +414,23 @@ export default function EnquiryListScreen({ navigation }) {
     };
   }, [isAdminCh, isClient, isOrderPlacement, activeTab, isUnassignedOnly, unassignedSubFilter, unassignedQ1, unassignedQ2, wipQ, approvalQ, orderPlacementQ, designerMineQ, designerWipQ, designerTab, clientQ, clientNameMap]);
 
+  // Client-side priority sorting (backend sorts alphabetically, not by priority level)
+  const PRIORITY_ORDER = { 'super high': 0, 'high': 1, 'urgent': 1, 'medium': 2, 'normal': 3, 'low': 4, 'super urgent': 0 };
+  const sortedRows = useMemo(() => {
+    if (sortBy !== 'Priority') return activeQuery.rows;
+    const rows = [...(activeQuery.rows || [])];
+    rows.sort((a, b) => {
+      const aRaw = a?._originalData || a;
+      const bRaw = b?._originalData || b;
+      const aP = (aRaw?.Priority || a?.Priority || a?.priority || '').toLowerCase().trim();
+      const bP = (bRaw?.Priority || b?.Priority || b?.priority || '').toLowerCase().trim();
+      const aIdx = PRIORITY_ORDER[aP] ?? 5;
+      const bIdx = PRIORITY_ORDER[bP] ?? 5;
+      return sortOrder === 'asc' ? aIdx - bIdx : bIdx - aIdx;
+    });
+    return rows;
+  }, [activeQuery.rows, sortBy, sortOrder]);
+
   useEffect(() => {
     if (__DEV__ && activeQuery.rows.length > 0) {
       console.log('[EnquiryListScreen] enquiryData =', JSON.stringify(activeQuery.rows, null, 2));
@@ -427,6 +452,8 @@ export default function EnquiryListScreen({ navigation }) {
 
   const [updateEnquiry] = useUpdateEnquiryMutation();
   const [deleteEnquiry] = useDeleteEnquiryMutation();
+  const [updateAssetData] = useUpdateAssetDataMutation();
+  const { generateAndShareExcel } = useEnquiryActions({});
 
   const refreshAll = useCallback(() => {
     if (isAdminCh) refetchBuckets();
@@ -542,7 +569,6 @@ export default function EnquiryListScreen({ navigation }) {
         item={item}
         navigation={navigation}
         currentTab={isAdminCh ? activeTab : 'designer'}
-        isExpandedAll={isExpandedAll}
         onViewQuotation={() => {
           if (__DEV__) console.log('[List] View Quotation click; id=', id, 'item keys=', Object.keys(item || {}));
           setQuotationEnquiry({ ...item, _resolvedId: id });
@@ -555,6 +581,11 @@ export default function EnquiryListScreen({ navigation }) {
         onUpdateEnquiry={onUpdateEnquiry}
         onDeleteEnquiry={onDeleteEnquiry}
         onSummary={(enq) => setSummaryEnquiryId(enq?._id || enq?.Id || enq?.id)}
+        onShare={(enq) => {
+          const id = enq?._id || enq?.Id || enq?.id;
+          setShareEnquiryId(id);
+          setShareEnquiry(enq);
+        }}
       />
     );
   };
@@ -709,16 +740,6 @@ export default function EnquiryListScreen({ navigation }) {
           <TouchableOpacity style={styles.iconBtn} onPress={() => setFilterModalVisible(true)}>
             <Icon name="tune" size={20} color={colors.primary} />
           </TouchableOpacity>
-          <View style={styles.expandToggleWrapper}>
-            <Text style={styles.expandToggleLabel}>
-              {isExpandedAll ? 'Collapse' : 'Expand'}
-            </Text>
-            <TouchableOpacity onPress={() => setIsExpandedAll(v => !v)} activeOpacity={0.8}>
-              <View style={[styles.expandToggleTrack, isExpandedAll && styles.expandToggleTrackOn]}>
-                <View style={[styles.expandToggleThumb, isExpandedAll && styles.expandToggleThumbOn]} />
-              </View>
-            </TouchableOpacity>
-          </View>
         </View>
       </View>
 
@@ -759,7 +780,7 @@ export default function EnquiryListScreen({ navigation }) {
         <View style={styles.loader}><AnimatedLogoLoader /></View>
       ) : (
         <FlatList
-          data={activeQuery.rows}
+          data={sortedRows}
           renderItem={renderItem}
           keyExtractor={(item, idx) => item?._id || item?.Id || String(idx)}
           contentContainerStyle={styles.listContent}
@@ -834,18 +855,88 @@ export default function EnquiryListScreen({ navigation }) {
         />
       )}
 
-      {finalLookEnquiry && (
-        <FinalLookModal
-          visible={!!finalLookEnquiry}
-          enquiryId={finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id}
-          clientName={finalLookEnquiry?.clientName || finalLookEnquiry?.ClientName || ''}
-          onClose={() => setFinalLookEnquiry(null)}
-          onApprove={async (enquiryId) => {
-            try {
-              await updateEnquiry({ id: enquiryId, Status: 'Production', ApprovedDate: new Date().toISOString() }).unwrap();
-              refreshAll();
-            } catch (e) {}
-          }}
+      {finalLookEnquiry && (() => {
+        const flRaw = finalLookEnquiry?._originalData || finalLookEnquiry || {};
+        const flSrc = finalLookEnquiry || {};
+        const currentStatus = (flRaw.CurrentStatus || flSrc.CurrentStatus || '').toLowerCase();
+        const targetType = currentStatus === 'coral' ? 'coral' : 'cad';
+        const isPlacementMode = currentStatus === 'order placement';
+        const rawObj = targetType === 'cad'
+          ? (flRaw.lastCad || flSrc.lastCad)
+          : (flRaw.lastCoral || flSrc.lastCoral);
+        const numericVersion = parseInt(rawObj?.Version || rawObj?.version || '1', 10);
+        return (
+          <FinalLookModal
+            visible={!!finalLookEnquiry}
+            enquiryId={finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id}
+            clientName={finalLookEnquiry?.clientName || finalLookEnquiry?.ClientName || ''}
+            onClose={() => setFinalLookEnquiry(null)}
+            showApprovalActions={!isPlacementMode}
+            shareExcelMode={isPlacementMode}
+            isActionLoading={finalLookActionLoading}
+            headerTitle={isPlacementMode ? 'Order Placement' : undefined}
+            onShareExcel={isPlacementMode ? async () => {
+              try {
+                const result = await generateAndShareExcel(finalLookEnquiry);
+                if (!result?.success) {
+                  // silently ignore - user can share from card
+                }
+              } catch (e) {}
+              setFinalLookEnquiry(null);
+            } : undefined}
+            onSendForApproval={!isPlacementMode ? async () => {
+              const eid = finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id;
+              setFinalLookActionLoading(true);
+              try {
+                await updateAssetData({
+                  enquiryId: eid,
+                  type: targetType,
+                  version: String(numericVersion),
+                  data: { SendForApproval: true },
+                }).unwrap();
+                setFinalLookEnquiry(null);
+                refreshAll();
+              } catch (e) {}
+              finally { setFinalLookActionLoading(false); }
+            } : undefined}
+            onReject={!isPlacementMode ? async (reason) => {
+              const eid = finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id;
+              setFinalLookActionLoading(true);
+              try {
+                await updateAssetData({
+                  enquiryId: eid,
+                  type: targetType,
+                  version: String(numericVersion),
+                  data: { IsApprovedVersion: false, ReasonForRejection: reason },
+                }).unwrap();
+                setFinalLookEnquiry(null);
+                refreshAll();
+              } catch (e) {}
+              finally { setFinalLookActionLoading(false); }
+            } : undefined}
+          />
+        );
+      })()}
+
+      {shareEnquiry && (
+        <ShareEnquiryModal
+          visible={!!shareEnquiry}
+          enquiry={(() => {
+            const base = shareFullEnquiry || shareEnquiry;
+            const idRaw = base?.clientId || base?.ClientId;
+            const idStr = idRaw ? String(idRaw).trim() : '';
+            let name = base?.clientName || base?.ClientName || base?.client;
+            if ((!name || name === 'Unknown Client') && idStr) {
+              name = clientNameMap.get(idStr);
+              if (!name) {
+                const cleanId = idStr.replace(/^ObjectId\(/, '').replace(/\)$/, '').trim();
+                name = clientNameMap.get(cleanId);
+              }
+            }
+            return { ...base, clientName: name || 'Unknown Client' };
+          })()}
+          onClose={() => { setShareEnquiry(null); setShareEnquiryId(null); }}
+          isDesigner={isDesigner}
         />
       )}
 
@@ -854,9 +945,21 @@ export default function EnquiryListScreen({ navigation }) {
           <View style={styles.modalBox2}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Enquiry Summary</Text>
-              <TouchableOpacity onPress={() => setSummaryEnquiryId(null)}>
-                <Icon name="close" size={24} color={colors.textSecondary} />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (summaryTextRef.current) {
+                      Clipboard.setString(summaryTextRef.current);
+                    }
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Icon name="content-copy" size={20} color={colors.primaryDark} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setSummaryEnquiryId(null)}>
+                  <Icon name="close" size={24} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
             </View>
             {summaryLoading ? (
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
@@ -878,6 +981,7 @@ export default function EnquiryListScreen({ navigation }) {
                   const sm = summaryCandidates.find(
                     value => typeof value === 'string' && value.trim().length > 0,
                   );
+                  summaryTextRef.current = sm || '';
                   return renderMdSummary(sm, styles) || <Text style={styles.noSummary}>No summary available for this enquiry.</Text>;
                 })()}
               </ScrollView>
@@ -983,42 +1087,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   loader: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  expandToggleWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    height: 48,
-    flexShrink: 0,
-  },
-  expandToggleLabel: {
-    fontSize: 11,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  expandToggleTrack: {
-    width: 36,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.border,
-    justifyContent: 'center',
-    paddingHorizontal: 2,
-  },
-  expandToggleTrackOn: { backgroundColor: colors.primary },
-  expandToggleThumb: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    elevation: 2,
-    alignSelf: 'flex-start',
-  },
-  expandToggleThumbOn: { alignSelf: 'flex-end' },
   clientHeaderBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1173,7 +1241,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     maxHeight: '80%',
     width: '100%',
-    paddingBottom: 20,
   },
   modalHeader: {
     flexDirection: 'row',

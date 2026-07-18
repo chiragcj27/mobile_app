@@ -99,15 +99,15 @@ export const getLoadColor = (pct) => {
 };
 
 export const getPriorityColor = (priority) => {
-  const priorityLower = (priority || '').toLowerCase();
+  const priorityLower = (priority || '').toLowerCase().trim();
   const priorityColors = {
     'normal': colors.success,
-    'high': colors.warning,
+    'high': colors.error,
     'super high': colors.error,
     // Legacy support
     'low': colors.success,
-    'medium': colors.success,
-    'urgent': colors.warning,
+    'medium': colors.warning,
+    'urgent': colors.error,
     'super urgent': colors.error,
   };
   return priorityColors[priorityLower] || colors.textSecondary;

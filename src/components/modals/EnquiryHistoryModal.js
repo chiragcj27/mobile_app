@@ -7,11 +7,10 @@ import {
   ScrollView,
   Text,
 } from 'react-native';
-import { Card } from '../../components/cards/Cards';
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { formatDateTime, formatHistoryDetails } from '../../utils/helpers';
+import { formatDateTime } from '../../utils/helpers';
 import { useUsers } from '../../features/users/usersHooks';
 import { getUserName } from '../../utils/userUtils';
 
@@ -31,67 +30,121 @@ const EnquiryHistoryModal = ({ visible, onClose, enquiry }) => {
     });
   }, [statusHistory]);
 
+  // Status color mapping
+  const getStatusColor = (status) => {
+    const statusLower = String(status || '').toLowerCase();
+    if (statusLower.includes('enquiry created') || statusLower === 'created') {
+      return '#e8f0e8'; // Light green
+    } else if (statusLower.includes('cad') || statusLower === 'cad') {
+      return '#eff6ff'; // Light blue
+    } else if (statusLower.includes('coral') || statusLower === 'coral') {
+      return '#fef3c7'; // Light amber
+    } else if (statusLower.includes('approved')) {
+      return '#d1fae5'; // Light emerald
+    } else if (statusLower.includes('rejected')) {
+      return '#fee2e2'; // Light red
+    }
+    return '#f3f4f6'; // Light gray
+  };
+
+  const getStatusTextColor = (status) => {
+    const statusLower = String(status || '').toLowerCase();
+    if (statusLower.includes('enquiry created') || statusLower === 'created') {
+      return '#2d7a2d'; // Dark green
+    } else if (statusLower.includes('cad') || statusLower === 'cad') {
+      return '#1e40af'; // Dark blue
+    } else if (statusLower.includes('coral') || statusLower === 'coral') {
+      return '#b45309'; // Dark amber
+    } else if (statusLower.includes('approved')) {
+      return '#047857'; // Dark emerald
+    } else if (statusLower.includes('rejected')) {
+      return '#991b1b'; // Dark red
+    }
+    return '#374151'; // Dark gray
+  };
+
   const renderHistoryItem = (item, index) => {
     const status = item.Status || item.status || 'N/A';
-    const rawDetails = item.Details || item.details || '';
+    const subStatus = item.SubStatus || item.subStatus || null;
+    const details = item.Details || item.details || '-';
     const assignedToId = item.AssignedTo || item.assignedTo || '';
     const addedById = item.AddedBy || item.addedBy || '';
     const timestamp = item.Timestamp || item.timestamp || '';
-    
-    // Format details for better readability
-    const formattedDetails = formatHistoryDetails(rawDetails);
     
     // Get names from IDs using cached users
     const assignedToName = getUserName(assignedToId);
     const addedByName = getUserName(addedById);
     
+    const statusBgColor = getStatusColor(status);
+    const statusTextColor = getStatusTextColor(status);
+    
+    // Format status display with SubStatus if available
+    const statusDisplay = subStatus ? `${status} - ${subStatus}` : status;
+    
     return (
-      <View key={index} style={styles.historyItem}>
-        <View style={styles.historyRow}>
-          <View style={styles.column}>
-            <Text style={[styles.columnLabel, { color: colors.textSecondary, fontSize: 11 }]}>
-              Status
-            </Text>
-            <Text style={[styles.columnValue, { color: colors.textPrimary, fontSize: 13 }]}>
-              {status}
-            </Text>
+      <View key={index} style={styles.historyCard}>
+        <View style={styles.cardGrid}>
+          {/* Status */}
+          <View style={styles.gridCell}>
+            <Text style={styles.cellLabel}>Status</Text>
+            <View style={[styles.statusBadge, { backgroundColor: statusBgColor }]}>
+              <Text style={[styles.statusText, { color: statusTextColor }]}>
+                {statusDisplay}
+              </Text>
+            </View>
           </View>
           
-          <View style={[styles.column, styles.detailsColumn]}>
-            <Text style={[styles.columnLabel, { color: colors.textSecondary, fontSize: 11 }]}>
-              Details
-            </Text>
-            <Text style={[styles.columnValue, styles.detailsValue, { color: colors.textSecondary, fontSize: 13 }]}>
-              {formattedDetails || '-'}
-            </Text>
+          {/* Details */}
+          <View style={styles.gridCell}>
+            <Text style={styles.cellLabel}>Details</Text>
+            <Text style={styles.cellValue} numberOfLines={2}>{details}</Text>
           </View>
           
-          <View style={styles.column}>
-            <Text style={[styles.columnLabel, { color: colors.textSecondary, fontSize: 11 }]}>
-              Assigned To
-            </Text>
-            <Text style={[styles.columnValue, { color: colors.textPrimary, fontSize: 13 }]}>
-              {assignedToName || '-'}
-            </Text>
+          {/* Assigned To */}
+          <View style={styles.gridCell}>
+            <Text style={styles.cellLabel}>Assigned To</Text>
+            <View style={styles.userRow}>
+              {assignedToName && assignedToName !== '-' ? (
+                <>
+                  <View style={styles.userAvatar}>
+                    <Text style={styles.userAvatarText}>
+                      {assignedToName.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.cellValue}>{assignedToName}</Text>
+                </>
+              ) : (
+                <Text style={styles.cellValue}>-</Text>
+              )}
+            </View>
           </View>
           
-          <View style={styles.column}>
-            <Text style={[styles.columnLabel, { color: colors.textSecondary, fontSize: 11 }]}>
-              Added By
-            </Text>
-            <Text style={[styles.columnValue, { color: colors.textPrimary, fontSize: 13 }]}>
-              {addedByName || 'N/A'}
-            </Text>
+          {/* Added By */}
+          <View style={styles.gridCell}>
+            <Text style={styles.cellLabel}>Added By</Text>
+            <View style={styles.userRow}>
+              {addedByName && addedByName !== '-' ? (
+                <>
+                  <View style={[styles.userAvatar, { backgroundColor: '#c5562b' }]}>
+                    <Text style={styles.userAvatarText}>
+                      {addedByName.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.cellValue}>{addedByName}</Text>
+                </>
+              ) : (
+                <Text style={styles.cellValue}>-</Text>
+              )}
+            </View>
           </View>
-          
-          <View style={styles.column}>
-            <Text style={[styles.columnLabel, { color: colors.textSecondary, fontSize: 11 }]}>
-              Timestamp
-            </Text>
-            <Text style={[styles.columnValue, { color: colors.textSecondary, fontSize: 13 }]}>
-              {timestamp ? formatDateTime(timestamp) : '-'}
-            </Text>
-          </View>
+        </View>
+        
+        {/* Timestamp Footer */}
+        <View style={styles.cardFooter}>
+          <Icon name="schedule" size={13} color={colors.textSecondary} />
+          <Text style={styles.timestampText}>
+            {timestamp ? formatDateTime(timestamp) : '-'}
+          </Text>
         </View>
       </View>
     );
@@ -105,48 +158,27 @@ const EnquiryHistoryModal = ({ visible, onClose, enquiry }) => {
       onRequestClose={onClose}>
       
       <View style={styles.container}>
+        {/* Header */}
         <View style={styles.header}>
-          <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.textPrimary }}>
-            Enquiry History
-          </Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Text style={{ fontSize: 20, color: colors.textPrimary }}>✕</Text>
+          <TouchableOpacity onPress={onClose} style={styles.backButton}>
+            <Icon name="arrow-back" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
+          <Text style={styles.headerTitle}>Enquiry History</Text>
+          <View style={{ width: 24 }} />
         </View>
 
-        <ScrollView style={styles.content}>
+        {/* Content */}
+        <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
           {sortedHistory.length === 0 ? (
-            <Card style={styles.emptyCard}>
-              <Icon name="history" size={40} color={colors.textLight} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: fonts.base }]}>
-                No history available
-              </Text>
-              <Text style={{ color: colors.textLight, fontSize: fonts.sm }}>
+            <View style={styles.emptyState}>
+              <Icon name="history" size={48} color={colors.textSecondary} />
+              <Text style={styles.emptyTitle}>No History</Text>
+              <Text style={styles.emptySubtitle}>
                 History will appear here as the enquiry progresses
               </Text>
-            </Card>
-          ) : (
-            <View style={styles.historyContainer}>
-              <View style={styles.tableHeader}>
-                <Text style={[styles.headerText, { color: colors.textSecondary, fontSize: 11, fontWeight: '600' }]}>
-                  STATUS
-                </Text>
-                <Text style={[styles.headerText, { color: colors.textSecondary, fontSize: 11, fontWeight: '600' }]}>
-                  DETAILS
-                </Text>
-                <Text style={[styles.headerText, { color: colors.textSecondary, fontSize: 11, fontWeight: '600' }]}>
-                  ASSIGNED TO
-                </Text>
-                <Text style={[styles.headerText, { color: colors.textSecondary, fontSize: 11, fontWeight: '600' }]}>
-                  ADDED BY
-                </Text>
-                <Text style={[styles.headerText, { color: colors.textSecondary, fontSize: 11, fontWeight: '600' }]}>
-                  TIMESTAMP
-                </Text>
-              </View>
-              
-              {sortedHistory.map((item, index) => renderHistoryItem(item, index))}
             </View>
+          ) : (
+            sortedHistory.map((item, index) => renderHistoryItem(item, index))
           )}
         </ScrollView>
       </View>
@@ -163,78 +195,129 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
     backgroundColor: colors.background,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    elevation: 2,
   },
-  closeButton: {
-    padding: 4,
+  backButton: {
+    padding: 8,
+    marginLeft: -8,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    flex: 1,
+    textAlign: 'center',
   },
   content: {
     flex: 1,
   },
-  historyContainer: {
-    padding: 16,
+  contentContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    paddingBottom: 24,
   },
-  tableHeader: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  headerText: {
-    flex: 1,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  historyItem: {
+  historyCard: {
     backgroundColor: colors.background,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  historyRow: {
+  cardGrid: {
+    display: 'flex',
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 16,
+    marginBottom: 12,
   },
-  column: {
+  gridCell: {
     flex: 1,
-    minWidth: 100,
-    marginBottom: 4,
+    minWidth: '45%',
   },
-  detailsColumn: {
-    flex: 1.5,
-    minWidth: 150,
-  },
-  columnLabel: {
-    marginBottom: 4,
+  cellLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    marginBottom: 6,
   },
-  columnValue: {
+  cellValue: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textPrimary,
     lineHeight: 18,
   },
-  detailsValue: {
-    flexWrap: 'wrap',
-    lineHeight: 20,
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
   },
-  emptyCard: {
-    margin: 16,
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  userRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 40,
+    gap: 8,
   },
-  emptyText: {
+  userAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#1a3c3c',
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  userAvatarText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.textWhite,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  timestampText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textSecondary,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
     marginTop: 16,
     marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
   },
 });
 
 export default EnquiryHistoryModal;
-
