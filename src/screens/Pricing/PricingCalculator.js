@@ -17,6 +17,7 @@ import PdfViewer from '../../components/common/PdfViewer';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
 import { launchImageLibrary } from 'react-native-image-picker';
+import ImageCropPicker from 'react-native-image-crop-picker';
 
 import { Card } from '../../components/cards/Cards';
 import Icon from '../../components/common/Icon';
@@ -644,15 +645,29 @@ export default function PricingCalci({ route, navigation }) {
     }
 
     try {
-      const pickerResult = await launchImageLibrary({
-        mediaType: 'photo',
-        quality: 0.8,
-      });
-      if (pickerResult.didCancel) return;
+      // Pick from the gallery and immediately open the cropper — only the cropped image is used.
+      let cropped;
+      try {
+        cropped = await ImageCropPicker.openPicker({
+          mediaType: 'photo',
+          cropping: true,
+          freeStyleCropEnabled: true,
+          compressImageQuality: 0.8,
+          forceJpg: true,
+          cropperToolbarTitle: 'Crop the stones excel for accuracy',
+          cropperStatusBarColor: colors.primary,
+          cropperToolbarColor: colors.primary,
+          cropperActiveWidgetColor: colors.primary,
+          cropperToolbarWidgetColor: '#ffffff',
+        });
+      } catch (pickErr) {
+        // User backed out of the picker or the crop screen — nothing to extract.
+        if (pickErr?.code === 'E_PICKER_CANCELLED') return;
+        throw pickErr;
+      }
 
-      if (pickerResult.assets && pickerResult.assets.length > 0) {
-        const asset = pickerResult.assets[0];
-        if (asset.fileSize && asset.fileSize > 20 * 1024 * 1024) {
+      if (cropped) {
+        if (cropped.size && cropped.size > 20 * 1024 * 1024) {
           showAlert(
             'File too large',
             'Maximum allowed image size is 20MB.',
@@ -662,9 +677,9 @@ export default function PricingCalci({ route, navigation }) {
         }
 
         const newImageFile = {
-          uri: asset.uri,
-          name: asset.fileName || `image_${Date.now()}.jpg`,
-          type: asset.type || 'image/jpeg',
+          uri: cropped.path,
+          name: cropped.filename || `image_${Date.now()}.jpg`,
+          type: cropped.mime || 'image/jpeg',
         };
         setImageFile(newImageFile);
         setIsExtracting(true);

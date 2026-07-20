@@ -2421,6 +2421,7 @@ export const api = createApi({
           designCode,
           cost,
           isFinalVersion,
+          isOnlyMetalDesign,
         },
         { dispatch },
         extraOptions,
@@ -2540,6 +2541,11 @@ export const api = createApi({
           // Add isFinalVersion flag for Final CAD uploads
           if (isFinalVersion) {
             formData.append('isFinalVersion', 'true');
+          }
+
+          // Add isOnlyMetalDesign flag for designs without diamonds
+          if (isOnlyMetalDesign !== undefined) {
+            formData.append('isOnlyMetalDesign', isOnlyMetalDesign ? 'true' : 'false');
           }
 
           // Separate images and videos - backend expects them in separate fields
@@ -2758,6 +2764,7 @@ export const api = createApi({
                   imageFiles.length
                 } images + ${videoFiles.length} videos)`,
                 ...(excel ? { excel: '1 file' } : {}),
+                ...(isOnlyMetalDesign !== undefined ? { isOnlyMetalDesign: String(isOnlyMetalDesign) } : {}),
                 note:
                   videoFiles.length > 0
                     ? `Videos sent in 'images' field for ${designType} uploads`
@@ -3152,7 +3159,7 @@ export const api = createApi({
     }),
     // Save pricing for coral/CAD design
     savePricing: builder.mutation({
-      query: ({ enquiryId, designType, version, pricingData }) => {
+      query: ({ enquiryId, designType, version, pricingData, isOnlyMetalDesign }) => {
         const startTime = Date.now();
 
         if (__DEV__) {
@@ -3181,8 +3188,16 @@ export const api = createApi({
         const pricingArray = Array.isArray(pricingData)
           ? pricingData
           : [pricingData];
+        // The pricing-save PUT (updateAssetData) reads `data.IsOnlyMetalDesign` — capital I,
+        // as a boolean — and deriveCostSubStatus() only advances the sub-status to
+        // "Quotation Review" when asset.IsOnlyMetalDesign is truthy. Send it exactly that way.
+        const resolvedIsOnlyMetal =
+          typeof isOnlyMetalDesign === 'boolean'
+            ? isOnlyMetalDesign
+            : !!(pricingArray[0] && pricingArray[0].isOnlyMetalDesign);
         const requestBody = {
           Pricing: pricingArray,
+          IsOnlyMetalDesign: resolvedIsOnlyMetal,
         };
 
         const endpoint = `/api/enquiries/${enquiryId}/upload/${designType}${versionParam}`;

@@ -211,7 +211,7 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
     }
   }, [triggerGetEnquiryById]);
 
-  const handleAcceptApproval = useCallback(async (enquiry, coralVersion, cadVersion, approvedCoral, approvedCad) => {
+  const handleAcceptApproval = useCallback(async (enquiry, coralVersion, cadVersion, approvedCoral, approvedCad, approvalMessage) => {
     const enquiryId = getEnquiryId(enquiry);
     const raw = enquiry?._originalData || enquiry;
     const assignedTo = raw?.AssignedTo || null;
@@ -220,15 +220,16 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
     const hasCad = !!cadVersion;
     const hasApprovedCoral = !!approvedCoral;
     const hasApprovedCad = !!approvedCad;
+    const remarks = approvalMessage || '';
 
-    console.log('[handleAcceptApproval] enquiryId:', enquiryId, 'hasCoral:', hasCoral, 'hasCad:', hasCad, 'hasApprovedCoral:', hasApprovedCoral, 'hasApprovedCad:', hasApprovedCad, 'coralVersion:', coralVersion, 'cadVersion:', cadVersion);
+    console.log('[handleAcceptApproval] enquiryId:', enquiryId, 'hasCoral:', hasCoral, 'hasCad:', hasCad, 'hasApprovedCoral:', hasApprovedCoral, 'hasApprovedCad:', hasApprovedCad, 'coralVersion:', coralVersion, 'cadVersion:', cadVersion, 'approvalMessage:', remarks);
 
     if (hasApprovedCoral && hasCad) {
       await updateAssetData({
         enquiryId,
         type: 'cad',
         version: cadVersion,
-        data: { IsApprovedVersion: true },
+        data: { IsApprovedVersion: true, ReasonForRejection: remarks },
       }).unwrap();
       return { success: true };
     }
@@ -239,6 +240,7 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
         CurrentSubStatus: SUBSTATUS.FU,
         ClientId: getClientId(enquiry),
         ...(assignedTo ? { AssignedTo: assignedTo } : {}),
+        ApprovalRemarks: remarks,
       }).unwrap();
       return { success: true };
     }
@@ -248,7 +250,7 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
         enquiryId,
         type: 'coral',
         version: coralVersion,
-        data: { IsApprovedVersion: true },
+        data: { IsApprovedVersion: true, ReasonForRejection: remarks },
       }).unwrap();
       return { success: true };
     }
@@ -258,7 +260,7 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
         enquiryId,
         type: 'cad',
         version: cadVersion,
-        data: { IsApprovedVersion: true },
+        data: { IsApprovedVersion: true, ReasonForRejection: remarks },
       }).unwrap();
       return { success: true };
     }
@@ -267,7 +269,7 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
       enquiryId,
       type: 'coral',
       version: '1',
-      data: { IsApprovedVersion: true },
+      data: { IsApprovedVersion: true, ReasonForRejection: remarks },
     }).unwrap();
     return { success: true };
   }, [updateAssetData, updateEnquiry]);

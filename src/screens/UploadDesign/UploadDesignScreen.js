@@ -89,6 +89,7 @@ const UploadDesignScreen = ({ route, navigation }) => {
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
   const [imageValidated, setImageValidated] = useState(false);
   const [cost, setCost] = useState(0);
+  const [designWithDiamonds, setDesignWithDiamonds] = useState(null);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [], checklist: [] });
   const showAlert = (title, message, type = 'info', buttons = [], checklist = []) =>
     setAlertConfig({ visible: true, title, message, type, buttons, checklist });
@@ -381,6 +382,11 @@ const UploadDesignScreen = ({ route, navigation }) => {
       return;
     }
 
+    if (designWithDiamonds === null) {
+      showAlert('Validation Error', 'Please select whether the design is with or without diamonds', 'warning');
+      return;
+    }
+
     try {
       const enquiryId2 = enquiry?.id || enquiry?._id || enquiryId;
     
@@ -430,7 +436,7 @@ const UploadDesignScreen = ({ route, navigation }) => {
           {
             text: 'Continue',
             onPress: () => {
-              navigation.navigate('UploadExcel', {
+                navigation.navigate('UploadExcel', {
                 enquiryId: enquiryId2,
                 designType,
                 version: selectedVersion.toString(),
@@ -440,6 +446,7 @@ const UploadDesignScreen = ({ route, navigation }) => {
                 cost: cost,
                 returnRoute,
                 isFinalVersion,
+                designWithDiamonds,
               });
             },
           },
@@ -655,6 +662,25 @@ const UploadDesignScreen = ({ route, navigation }) => {
             />
           </View>
 
+          
+          <View style={styles.chipRow}>
+            <TouchableOpacity
+              style={[styles.chip, designWithDiamonds === true && styles.chipActive]}
+              onPress={() => setDesignWithDiamonds(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.chipText, designWithDiamonds === true && styles.chipTextActive]}>Design with Diamonds</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.chip, designWithDiamonds === false && styles.chipActive]}
+              onPress={() => setDesignWithDiamonds(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.chipText, designWithDiamonds === false && styles.chipTextActive]}>Design without Diamonds</Text>
+            </TouchableOpacity>
+          </View>
+          
+
           {/* Version Dropdown */}
           <View style={styles.versionContainer}>
             <Text style={styles.label}>Version:</Text>
@@ -746,6 +772,35 @@ const styles = StyleSheet.create({
   },
   costBlock: {
     marginBottom: 20,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  chip: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+  },
+  chipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '15',
+  },
+  chipText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  chipTextActive: {
+    color: colors.primary,
+    fontFamily: fonts.bold,
   },
   label: {
     fontSize: fonts.md,

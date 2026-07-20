@@ -22,6 +22,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView,
   TextInput, ActivityIndicator, Platform, Animated, Keyboard,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import Share from 'react-native-share';
 import RNFS from 'react-native-fs';
@@ -442,6 +443,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
   const [calculatePricing, { isLoading: isCalculating }] = useCalculatePricingMutation();
   const [savePricing,      { isLoading: isSaving }]      = useSavePricingMutation();
+  const navigation = useNavigation();
 
   const lastHistory = useMemo(() => {
     const hist = fullEnquiry?.StatusHistory;
@@ -615,7 +617,10 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
     );
 
+    const isOnlyMetalDesign = diamonds.length === 0;
+
     const pricingToSave = {
+      isOnlyMetalDesign,
       Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
       Stones: mergedForSave.map(d => ({
         Type:      d.Type      || '',
@@ -664,12 +669,21 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     }
 
     try {
-      await savePricing({
+      const saveArgs = {
         enquiryId: resolvedEnquiryId,
         designType,
         version,
         pricingData: pricingToSave,
-      }).unwrap();
+        isOnlyMetalDesign,
+      };
+      await savePricing(saveArgs).unwrap();
+      // Metal-only designs: the backend applies IsOnlyMetalDesign only AFTER deriving the
+      // cost sub-status, so the first save persists the flag but leaves the status at
+      // "Cost Missing". Saving once more now sees the persisted flag and advances it to
+      // "Quotation Review".
+      if (isOnlyMetalDesign) {
+        await savePricing(saveArgs).unwrap();
+      }
       showAlert('Saved', 'Quotation saved successfully.', 'success', [{ text: 'OK' }]);
     } catch (e) {
       showAlert('Save Failed', e?.data?.message || 'Could not save the quotation. Please try again.', 'error', [{ text: 'OK' }]);
@@ -678,12 +692,76 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing,
       clientMsg, savePricing, showAlert]);
 
-  const handleCalculate = useCallback(async () => {
-    if (!diamonds.length) {
-      showAlert('Validation', 'Please add at least one stone before calculating.', 'warning', [{ text: 'OK' }]);
+  // Open the full Modify Pricing screen for this enquiry. It runs in "enquiry mode"
+  // (isEnquiry) so each recalculate there saves the quotation — same as saving here.
+  const handleOpenModify = useCallback(() => {
+    const resolvedEnquiryId = fullEnquiry?._id || fullEnquiry?.id || fullEnquiry?.Id;
+    const modClientId = fullEnquiry?.ClientId || fullEnquiry?.clientId;
+
+    const pool = [
+      ...(Array.isArray(fullEnquiry?.Cad)   ? fullEnquiry.Cad.map(e => ({ ...e, _type: 'cad' }))   : []),
+      ...(Array.isArray(fullEnquiry?.Coral) ? fullEnquiry.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+    ];
+    pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+    const latestDesign = pool[0];
+    if (!resolvedEnquiryId || !latestDesign?.Version) {
+      showAlert('Error', 'No design version found to modify.', 'error', [{ text: 'OK' }]);
       return;
     }
 
+    const merged = diamonds.map((d, i) =>
+      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
+    );
+    const editableStones = merged.map(d => ({
+      Type: d.Type || '',
+      Color: d.Color || '',
+      Shape: d.Shape || '',
+      MmSize: String(d.MmSize ?? ''),
+      SieveSize: String(d.SieveSize ?? ''),
+      Weight: num(d.Weight),
+      Pcs: Math.round(num(d.Pcs)),
+      CtWeight: num(d.Carat),
+      Price: num(d.Price),
+      Markup: num(d.Markup),
+    }));
+    const primaryType = editableStones[0]?.Type || 'Diamond';
+    const typeData = {
+      editableStones,
+      editableMetal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+      editableCharges: {
+        Loss: num(sourcePricing?.Loss ?? 0),
+        Labour: num(sourcePricing?.Labour ?? 0),
+        ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0),
+        GoldDuties: num(sourcePricing?.GoldDuties ?? 0),
+        SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
+        LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
+      },
+      dutyRates: {
+        UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+        NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0),
+        LabDuties: num(sourcePricing?.LabDuties ?? 0),
+      },
+      pricingResult: pricingResult || null,
+      imageData: null,
+    };
+    const stonesData = { All: { types: [primaryType], byType: { [primaryType]: typeData } } };
+
+    onClose?.();
+    navigation.navigate('ModifyPricingScreen', {
+      stonesData,
+      clientId: modClientId,
+      selectedClient: { name: resolvedClientName, ApplicableStoneTypes: [primaryType] },
+      metalKt: metalQuality,
+      isEnquiry: true,
+      enquiryId: resolvedEnquiryId,
+      designType: latestDesign._type,
+      version: latestDesign.Version,
+    });
+  }, [fullEnquiry, diamonds, editedPrices, metalWeight, metalQuality, metalRate,
+      sourcePricing, pricingResult, resolvedClientName, navigation, onClose, showAlert]);
+
+  const handleCalculate = useCallback(async () => {
+    
     const mergedDiamonds = diamonds.map((d, i) =>
       editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
     );
@@ -702,8 +780,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
     const clientId = fullEnquiry?.ClientId || fullEnquiry?.clientId;
 
+    const isOnlyMetalDesign = diamonds.length === 0;
+
     const payload = {
       details: {
+        isOnlyMetalDesign,
         Metal: {
           Weight:  num(metalWeight),
           Quality: metalQuality,
@@ -734,6 +815,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       },
       clientId,
       isRecalculate: true,
+      isOnlyMetalDesign,
     };
 
     try {
@@ -771,8 +853,9 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const fullEnquiryRef = useRef(fullEnquiry);
   fullEnquiryRef.current = fullEnquiry;
   useEffect(() => {
-    if (!visible || !isQRPhase) return;
-    if (!diamonds.length) return;
+    // Runs in Quotation Review AND Cost Missing so that adding/deleting/pricing stones
+    // (e.g. deleting an unpriced stone in Cost Missing) auto-recalculates and saves.
+    if (!visible || !(isQRPhase || isCMPhase)) return;
     if (num(metalWeight) <= 0 || num(metalRate) <= 0) return;
     if (autoCalcTimerRef.current) clearTimeout(autoCalcTimerRef.current);
     autoCalcTimerRef.current = setTimeout(() => {
@@ -781,8 +864,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       const anyMissingPrice = merged.some(d => num(d.Price) <= 0);
       if (anyMissingPrice) return;
       const enq = fullEnquiryRef.current;
+      const isOnlyMetalDesign = diamonds.length === 0;
+
       const payload = {
         details: {
+          isOnlyMetalDesign,
           Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
           Stones: merged.map(d => ({
             Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
@@ -809,7 +895,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         });
         setPdfHtml(html);
 
-        if (isQRPhase && !autoSaveInProgress.current) {
+        if ((isQRPhase || isCMPhase) && !autoSaveInProgress.current) {
           const resolvedId = enq?._id || enq?.id || enq?.Id;
           if (resolvedId) {
             const pool = [
@@ -820,11 +906,13 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             const latestDesign = pool[0];
             if (latestDesign?.Version) {
               autoSaveInProgress.current = true;
-              savePricing({
+              const onlyMetal = diamonds.length === 0;
+              const autoSaveArgs = {
                 enquiryId: resolvedId,
                 designType: latestDesign._type,
                 version: latestDesign.Version,
                 pricingData: {
+                  isOnlyMetalDesign: onlyMetal,
                   Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
                   Stones: merged.map(d => ({
                     Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
@@ -841,16 +929,23 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                   DutiesAmount: result.DutiesAmount, TotalPrice: result.TotalPrice,
                   ClientPricingMessage: result.ClientPricingMessage || '',
                 },
-              }).unwrap().then(() => {
-                setTimeout(() => { autoSaveInProgress.current = false; }, 2000);
-              }).catch(() => { autoSaveInProgress.current = false; });
+                isOnlyMetalDesign: onlyMetal,
+              };
+              // Metal-only (all stones deleted): save twice so the persisted flag advances
+              // the status past "Cost Missing" (backend applies it after deriving the status).
+              savePricing(autoSaveArgs).unwrap()
+                .then(() => (onlyMetal ? savePricing(autoSaveArgs).unwrap() : null))
+                .then(() => {
+                  setTimeout(() => { autoSaveInProgress.current = false; }, 2000);
+                })
+                .catch(() => { autoSaveInProgress.current = false; });
             }
           }
         }
       }).catch(() => {});
     }, 800);
     return () => { if (autoCalcTimerRef.current) clearTimeout(autoCalcTimerRef.current); };
-  }, [visible, isQRPhase, metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing, calculatePricing, savePricing, resolvedClientName]);
+  }, [visible, isQRPhase, isCMPhase, metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing, calculatePricing, savePricing, resolvedClientName]);
 
   const handleSharePdf = useCallback(async () => {
     if (!pdfHtml) return;
@@ -943,6 +1038,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const renderStonesSection = () => {
     if (diamonds.length === 0) {
       return (
+        <>
         <View style={s.emptyStones}>
           <Icon name="diamond" size={28} color={colors.textSecondary} />
           <Text style={s.emptyStonesText}>No stones added yet</Text>
@@ -951,6 +1047,19 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             <Text style={s.addBtnText}>Add First Stone</Text>
           </TouchableOpacity>
         </View>
+         <TouchableOpacity
+          style={[s.calcBtn, { paddingVertical: 18, marginTop: 20 }]}
+          onPress={handleCalculate}
+          disabled={isCalculating}
+          activeOpacity={0.85}
+        >
+          {isCalculating
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <>
+                <Icon name="calculate" size={20} color="#fff" />
+                <Text style={[s.calcBtnText, { fontSize: (fonts.base || 16) }]}>Recalculate</Text>
+              </>}
+        </TouchableOpacity></>
       );
     }
 
@@ -1040,19 +1149,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           </View>
         )}
 
-        <TouchableOpacity
-          style={[s.calcBtn, { paddingVertical: 18, marginTop: 20 }]}
-          onPress={handleCalculate}
-          disabled={isCalculating}
-          activeOpacity={0.85}
-        >
-          {isCalculating
-            ? <ActivityIndicator size="small" color="#fff" />
-            : <>
-                <Icon name="calculate" size={20} color="#fff" />
-                <Text style={[s.calcBtnText, { fontSize: (fonts.base || 16) }]}>Recalculate</Text>
-              </>}
-        </TouchableOpacity>
+       
       </>
     );
   };
@@ -1153,6 +1250,15 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               >
                 <Icon name="compare" size={18} color="#fff" />
                 <Text style={s.calcBtnText}>Compare Images</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[s.calcBtn, { backgroundColor: colors.primary }]}
+                onPress={handleOpenModify}
+                activeOpacity={0.85}
+              >
+                <Icon name="tune" size={18} color="#fff" />
+                <Text style={s.calcBtnText}>Modify Pricing</Text>
               </TouchableOpacity>
 
               {(() => {
