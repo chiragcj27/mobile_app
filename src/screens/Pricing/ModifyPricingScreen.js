@@ -20,6 +20,7 @@ import { fonts } from '../../constants/fonts';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
 import {
   useCalculatePricingMutation,
+  useSavePricingMutation,
   useGetStoneShapesQuery,
 } from '../../store/api';
 
@@ -38,9 +39,16 @@ export default function ModifyPricingScreen({ route, navigation }) {
     clientId,
     selectedClient,
     metalKt = '18K',
+    // Enquiry mode: launched from the quotation modal. When set, each recalculation also
+    // saves the pricing to the enquiry's design version (same as the quotation modal does).
+    isEnquiry = false,
+    enquiryId: enquiryIdParam,
+    designType: designTypeParam,
+    version: versionParam,
   } = route.params || {};
 
   const [calculatePricing] = useCalculatePricingMutation();
+  const [savePricing] = useSavePricingMutation();
 
   const allTypes = useMemo(() => {
     return selectedClient?.ApplicableStoneTypes || [];
@@ -63,6 +71,8 @@ export default function ModifyPricingScreen({ route, navigation }) {
   const [chargesData, setChargesData] = useState({ Loss: '', Labour: '', ExtraCharges: '', GoldDuties: '', SilverAndLabsDuties: '', LossAndLabourDuties: '' });
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
+  // True when the edit modal was opened for a freshly-added stone — shows Type/Shape inputs.
+  const [isNewStoneEdit, setIsNewStoneEdit] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [topTypeModalVisible, setTopTypeModalVisible] = useState(false);
   const [perStoneTypeModalIndex, setPerStoneTypeModalIndex] = useState(null);
@@ -264,13 +274,65 @@ export default function ModifyPricingScreen({ route, navigation }) {
           SilverAndLabsDuties: result.Duties?.SilverAndLabs?.Rate?.toString() ?? '',
           LossAndLabourDuties: result.Duties?.LossAndLabour?.Rate?.toString() ?? '',
         });
+
+        // Enquiry mode: persist the recalculated pricing to the design version, exactly
+        // like the quotation modal — so modifying here saves the quotation too.
+        if (isEnquiry && enquiryIdParam && versionParam && designTypeParam) {
+          const savedStones = (result.Stones || []).map(st => ({
+            Type: st.Type || selectedType,
+            Color: st.Color || '',
+            Shape: st.Shape || '',
+            MmSize: String(st.MmSize ?? '0'),
+            SieveSize: String(st.SieveSize ?? '0'),
+            CtWeight: num(st.CtWeight),
+            Weight: num(st.Weight),
+            Pcs: Math.round(num(st.Pcs)),
+            Price: num(st.Price),
+            Markup: num(st.Markup || 0),
+          }));
+          const onlyMetal = savedStones.length === 0;
+          const pricingToSave = {
+            isOnlyMetalDesign: onlyMetal,
+            Metal: {
+              Weight: num(result.Metal?.Weight ?? currentMetal.Weight),
+              Quality: result.Metal?.Quality || currentMetal.Quality || metalKt,
+              Rate: num(result.Metal?.Rate ?? currentMetal.Rate),
+            },
+            Stones: savedStones,
+            Loss: num(result.Client?.Loss ?? currentCharges.Loss ?? 0),
+            Labour: num(result.Client?.Labour ?? currentCharges.Labour ?? 0),
+            ExtraCharges: num(result.Client?.ExtraCharges ?? currentCharges.ExtraCharges ?? 0),
+            UndercutPrice: num(result.Client?.UndercutPrice ?? 0),
+            NaturalDuties: num(result.Client?.NaturalDuties ?? 0),
+            LabDuties: num(result.Client?.LabDuties ?? 0),
+            GoldDuties: num(result.Client?.GoldDuties ?? 0),
+            SilverAndLabsDuties: num(result.Client?.SilverAndLabsDuties ?? 0),
+            LossAndLabourDuties: num(result.Client?.LossAndLabourDuties ?? 0),
+            MetalPrice: num(result.MetalPrice),
+            DiamondsPrice: num(result.DiamondsPrice),
+            DutiesAmount: num(result.DutiesAmount),
+            TotalPrice: num(result.TotalPrice),
+            ClientPricingMessage: result.ClientPricingMessage || '',
+          };
+          try {
+            await savePricing({
+              enquiryId: enquiryIdParam,
+              designType: designTypeParam,
+              version: versionParam,
+              pricingData: pricingToSave,
+              isOnlyMetalDesign: onlyMetal,
+            }).unwrap();
+          } catch (saveErr) {
+            // Non-fatal: keep the recalculated values on screen even if the save fails.
+          }
+        }
       }
     } catch (err) {
       // silent
     } finally {
       setIsCalculating(false);
     }
-  }, [selectedType, flatStones, metalData, chargesData, dutyEdits, clientId, metalKt, selectedClient, calculatePricing, findTypeData, getEffectiveStone, stoneTypeOverrides, getEffectiveType]);
+  }, [selectedType, flatStones, metalData, chargesData, dutyEdits, clientId, metalKt, selectedClient, calculatePricing, findTypeData, getEffectiveStone, stoneTypeOverrides, getEffectiveType, isEnquiry, enquiryIdParam, versionParam, designTypeParam, savePricing]);
 
   useEffect(() => { runCalculationRef.current = runCalculation; }, [runCalculation]);
 
@@ -305,11 +367,38 @@ export default function ModifyPricingScreen({ route, navigation }) {
 
   const openEditModal = useCallback((idx) => {
     setEditingIndex(idx);
+    setIsNewStoneEdit(false);
     setEditModalVisible(true);
   }, []);
 
+  // Add a brand-new stone (empty fields) and open the editor to fill it in. On modal close
+  // the recalculation runs as a first calculation so the new stone gets priced and merged
+  // into the stones data.
+  const addNewStone = useCallback(() => {
+    const newStone = {
+      Type: selectedType,
+      Color: '',
+      Shape: '',
+      MmSize: '',
+      SieveSize: '',
+      Pcs: 0,
+      Weight: 0,
+      CtWeight: 0,
+      Price: 0,
+      Markup: 0,
+    };
+    dataChangedRef.current = true;
+    nonPriceChangedRef.current = true;
+    const newIndex = flatStonesRef.current.length;
+    setFlatStones(prev => [...prev, { stoneIndex: prev.length, stone: { ...newStone } }]);
+    setEditingIndex(newIndex);
+    setIsNewStoneEdit(true);
+    setEditModalVisible(true);
+  }, [selectedType]);
+
   const closeEditModal = useCallback(() => {
     setEditingIndex(null);
+    setIsNewStoneEdit(false);
     setEditModalVisible(false);
     if (dataChangedRef.current && clientId && flatStonesRef.current.length > 0) {
       const priceOnly = !nonPriceChangedRef.current;
@@ -445,7 +534,13 @@ export default function ModifyPricingScreen({ route, navigation }) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={s.pageTitle}>Stones Summary</Text>
+          <View style={s.summaryHeaderRow}>
+            <Text style={s.pageTitle}>Stones Summary</Text>
+            <TouchableOpacity style={s.addStoneBtnTop} onPress={addNewStone} activeOpacity={0.8}>
+              <Icon name="add" size={16} color={colors.primary} />
+              <Text style={s.addStoneBtnText}>Add New Stone</Text>
+            </TouchableOpacity>
+          </View>
 
           <TouchableOpacity
             style={s.typeSelectorRow}
@@ -663,6 +758,36 @@ export default function ModifyPricingScreen({ route, navigation }) {
               {editingIndex !== null && (
                 <ScrollView style={s.modalScroll} keyboardShouldPersistTaps="handled">
                   <View style={s.modalFields}>
+                    {isNewStoneEdit && (
+                      <View style={s.modalFieldRow}>
+                        <View style={s.modalFieldHalf}>
+                          <Text style={s.modalFieldLabel}>Type</Text>
+                          <TouchableOpacity
+                            style={s.modalSelectInput}
+                            onPress={() => setPerStoneTypeModalIndex(editingIndex)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={s.modalSelectText} numberOfLines={1}>
+                              {stoneTypeOverrides[editingIndex] || getEffectiveStone(editingIndex).Type || selectedType || 'Select'}
+                            </Text>
+                            <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        </View>
+                        <View style={s.modalFieldHalf}>
+                          <Text style={s.modalFieldLabel}>Shape</Text>
+                          <TouchableOpacity
+                            style={s.modalSelectInput}
+                            onPress={() => setPerStoneShapeModalIndex(editingIndex)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={s.modalSelectText} numberOfLines={1}>
+                              {getEffectiveStone(editingIndex).Shape || 'Select'}
+                            </Text>
+                            <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
                     <View style={s.modalFieldRow}>
                       <View style={s.modalFieldHalf}>
                         <Text style={s.modalFieldLabel}>Color</Text>
@@ -837,6 +962,27 @@ const s = StyleSheet.create({
 
   emptyTypeState: { alignItems: 'center', paddingVertical: 20 },
   emptyTypeText: { fontFamily: fonts.regular, fontSize: fonts.sm, color: colors.textLight },
+  summaryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  addStoneBtnTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
+  },
+  addStoneBtnText: {
+    fontFamily: fonts.medium,
+    fontSize: fonts.xs,
+    color: colors.primary,
+  },
 
   stoneCard: {
     backgroundColor: colors.background,
@@ -1064,6 +1210,23 @@ const s = StyleSheet.create({
     backgroundColor: colors.backgroundSecondary,
   },
   modalFieldInputError: { borderColor: colors.error },
+  modalSelectInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.backgroundSecondary,
+  },
+  modalSelectText: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: fonts.sm,
+    color: colors.textPrimary,
+  },
 
   modalDutySection: {
     borderTopWidth: 1,

@@ -45,6 +45,9 @@ import { useEnquiryActions } from '../../hooks/useEnquiryActions';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
+const IMAGE_EXT_RE = /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif|svg|ico)$/i;
+const isImageExtension = (str) => typeof str === 'string' && IMAGE_EXT_RE.test(str.trim());
+
 function ModalVideoItem({ uri }) {
   const [paused, setPaused] = useState(true);
   return (
@@ -107,6 +110,7 @@ export default function NewEnquiryCard({
   const [showCadPicker, setShowCadPicker] = useState(false);
   const [isRejectingQuotation, setIsRejectingQuotation] = useState(false);
   const [isRejectingApproval, setIsRejectingApproval] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
   const [selectedCadDesigner, setSelectedCadDesigner] = useState(null);
   const [updateReason, setUpdateReason] = useState('');
   const [isActionLoading, setIsActionLoading] = useState(false);
@@ -494,6 +498,37 @@ export default function NewEnquiryCard({
     }
   };
 
+  const handleSubmitApproval = async () => {
+    if (!updateReason.trim() || !activeDesignType) return;
+    setIsActionLoading(true);
+    try {
+      const acceptData = fullEnquiryData || item;
+      const src = acceptData?._originalData || acceptData;
+      const itemSrc = item?._originalData || item;
+      const rawCoral = src?.lastCoral || acceptData?.lastCoral || itemSrc?.lastCoral || item?.lastCoral;
+      const rawCad = src?.lastCad || acceptData?.lastCad || itemSrc?.lastCad || item?.lastCad;
+      const coralVersion = rawCoral && typeof rawCoral === 'object' ? String(rawCoral.Version || rawCoral.version || '') : String(rawCoral || '');
+      const cadVersion = rawCad && typeof rawCad === 'object' ? String(rawCad.Version || rawCad.version || '') : String(rawCad || '');
+      const approvedCoral = source?.approvedCoral || src?.approvedCoral || null;
+      const approvedCad = source?.approvedCad || src?.approvedCad || null;
+
+      if (!approvedCoral && !approvedCad && !coralVersion && !cadVersion) {
+        showAlert('Missing Data', 'No design versions found to approve.', 'error', [{ text: 'OK' }]);
+        setIsActionLoading(false);
+        return;
+      }
+
+      await handleAcceptApproval(acceptData, coralVersion, cadVersion, approvedCoral, approvedCad, updateReason.trim());
+      closeQuotationActions();
+      showAlert('Accepted', 'Design accepted successfully.', 'success', [{ text: 'OK' }]);
+    } catch (e) {
+      const errDetail = e?.data ? JSON.stringify(e.data) : e?.message || String(e);
+      showAlert('Failed', `Accept failed: ${errDetail}`, 'error', [{ text: 'OK' }]);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleRejectQuotation = async () => {
     if (!updateReason.trim() || !activeDesignType) return;
     setIsActionLoading(true);
@@ -549,6 +584,8 @@ export default function NewEnquiryCard({
     setSelectedCadDesigner(null);
     setUpdateReason('');
     setIsRejectingQuotation(false);
+    setIsRejectingApproval(false);
+    setIsApproving(false);
     setActiveDesignType(null);
   };
 
@@ -578,7 +615,7 @@ export default function NewEnquiryCard({
                   <Text style={styles.horzImageCountText}>1/{imagesData.length}</Text>
                 </View>
               )}
-              {!!referenceImages[0]?.Description && (
+              {!!referenceImages[0]?.Description && !isImageExtension(referenceImages[0].Description) && (
                 <View style={styles.horzImgDesc}>
                   <Text style={styles.horzImgDescText} numberOfLines={2}>{referenceImages[0].Description}</Text>
                 </View>
@@ -651,7 +688,7 @@ export default function NewEnquiryCard({
           {(fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection) ? (
             <View style={styles.horzRejection}>
               <Icon name="error" size={11} color="#DC2626" />
-              <Text style={styles.horzRejectionText} numberOfLines={2}>
+              <Text style={styles.horzRejectionText} >
                 {fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection}
               </Text>
             </View>
@@ -792,55 +829,11 @@ export default function NewEnquiryCard({
               style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
               disabled={isActionLoading}
               onPress={() => {
-                const acceptData = fullEnquiryData || item;
-                const src = acceptData?._originalData || acceptData;
-                const itemSrc = item?._originalData || item;
-                const rawCoral = src?.lastCoral || acceptData?.lastCoral || itemSrc?.lastCoral || item?.lastCoral;
-                const rawCad = src?.lastCad || acceptData?.lastCad || itemSrc?.lastCad || item?.lastCad;
-                const coralVersion = rawCoral && typeof rawCoral === 'object' ? String(rawCoral.Version || rawCoral.version || '') : String(rawCoral || '');
-                const cadVersion = rawCad && typeof rawCad === 'object' ? String(rawCad.Version || rawCad.version || '') : String(rawCad || '');
-                const versionLabel = cadVersion
-                  ? `CAD Version ${cadVersion}`
-                  : coralVersion
-                    ? `Coral Version ${coralVersion}`
-                    : '';
-                const acceptMessage = versionLabel
-                  ? `Accept and approve this design? (${versionLabel})`
-                  : 'Accept and approve this design?';
-                showAlert(
-                'Confirm Accept',
-                acceptMessage,
-                'info',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                   { text: 'Confirm', onPress: async () => {
-                    hideAlert();
-                    setIsActionLoading(true);
-                    try {
-                      const approvedCoral = source?.approvedCoral || src?.approvedCoral || null;
-                      const approvedCad = source?.approvedCad || src?.approvedCad || null;
-
-                      console.log('[NewCard Accept] approvedCoral:', approvedCoral, 'approvedCad:', approvedCad, 'coralVersion:', coralVersion, 'cadVersion:', cadVersion);
-                      if (!approvedCoral && !approvedCad && !coralVersion && !cadVersion) {
-                        showAlert('Missing Data', 'No design versions found to approve.', 'error', [{ text: 'OK' }]);
-                        setIsActionLoading(false);
-                        return;
-                      }
-
-                      await handleAcceptApproval(acceptData, coralVersion, cadVersion, approvedCoral, approvedCad);
-                      showAlert('Accepted', 'Design accepted successfully.', 'success', [{ text: 'OK' }]);
-                    } catch (e) {
-                      const errDetail = e?.data
-                        ? JSON.stringify(e.data)
-                        : e?.message || String(e);
-                      console.log('[NewCard Accept] FAILED:', errDetail);
-                      showAlert('Failed', `Accept failed: ${errDetail}`, 'error', [{ text: 'OK' }]);
-                    } finally {
-                      setIsActionLoading(false);
-                    }
-                  }},
-                ]
-              );
+                setActiveDesignType(currentInferredDesignType);
+                setIsApproving(true);
+                setShowQuotationActions(true);
+                setShowReasonInput(true);
+                setUpdateReason('');
               }}
             >
               {isActionLoading
@@ -979,7 +972,7 @@ export default function NewEnquiryCard({
             <View style={styles.qaHeader}>
               <View style={styles.qaDragHandle} />
               <Text style={styles.qaTitle}>
-                {showReasonInput ? 'Request a Design Update' : showCadPicker ? 'Assign CAD Designer' : 'Quotation Actions'}
+                {showReasonInput ? (isApproving ? 'Approve Design' : 'Request a Design Update') : showCadPicker ? 'Assign CAD Designer' : 'Quotation Actions'}
               </Text>
               <Text style={styles.qaSubtitle} numberOfLines={1}>
                 {item?.Name || ''}
@@ -1127,13 +1120,13 @@ export default function NewEnquiryCard({
             ) : (
               <View style={styles.qaReasonWrap}>
                 <Text style={styles.qaReasonLabel}>
-                  What changes are needed?
+                  {isApproving ? 'Approval remarks...' : 'What changes are needed?'}
                 </Text>
                 <TextInput
                   style={styles.qaReasonInput}
                   value={updateReason}
                   onChangeText={setUpdateReason}
-                  placeholder="Add a reason to update the version..."
+                  placeholder={isApproving ? 'Add approval remarks...' : 'Add a reason to update the version...'}
                   placeholderTextColor={colors.textSecondary}
                   multiline
                   numberOfLines={4}
@@ -1142,8 +1135,8 @@ export default function NewEnquiryCard({
                 <View style={styles.qaReasonActions}>
                   <TouchableOpacity
                     style={styles.qaReasonBack}
-                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); }}
-                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); }}
+                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); setIsApproving(false); }}
+                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); setIsApproving(false); }}
                     disabled={isActionLoading}
                     activeOpacity={0.8}
                   >
@@ -1155,8 +1148,8 @@ export default function NewEnquiryCard({
                       styles.qaReasonSubmit,
                       (!updateReason.trim() || isActionLoading) && { opacity: 0.4 },
                     ]}
-                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : handleRequestUpdate}
-                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : handleRequestUpdate}
+                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : isApproving ? handleSubmitApproval : handleRequestUpdate}
+                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : isApproving ? handleSubmitApproval : handleRequestUpdate}
                     disabled={!updateReason.trim() || isActionLoading}
                     activeOpacity={0.8}
                   >
@@ -1166,7 +1159,7 @@ export default function NewEnquiryCard({
                       <>
                         <Icon name="send" size={15} color="#fff" />
                         <View style={{ width: 4 }} />
-                        <Text style={styles.qaReasonSubmitText}>Send Request</Text>
+                        <Text style={styles.qaReasonSubmitText}>{isApproving ? 'Approve' : 'Send Request'}</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -1261,7 +1254,7 @@ export default function NewEnquiryCard({
                           <Image source={{ uri: media.uri }} style={styles.fullscreenImage} resizeMode="contain" />
                         </ImageZoom>
                       )}
-                      {!!imgComment && (
+                      {!!imgComment && !isImageExtension(imgComment) && (
                         <View style={styles.modalImgComment}>
                           <Icon name="comment" size={12} color="#fff" />
                           <Text style={styles.modalImgCommentText}>{imgComment}</Text>
@@ -1314,7 +1307,7 @@ export default function NewEnquiryCard({
                   <Image source={{ uri: imagesData[0].uri }} style={styles.fullscreenImage} resizeMode="contain" />
                 </ImageZoom>
               )}
-              {!!referenceImages[0]?.Description && (
+              {!!referenceImages[0]?.Description && !isImageExtension(referenceImages[0].Description) && (
                 <View style={styles.modalImgComment}>
                   <Icon name="comment" size={12} color="#fff" />
                   <Text style={styles.modalImgCommentText}>{referenceImages[0].Description}</Text>
