@@ -15,9 +15,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from '../../components/common/Icon';
-import { colors } from '../../constants/colors';
+import { colors, getStoneBg } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
+import { normalizeExtraCharges } from '../../utils/extraCharges';
 import {
   useCalculatePricingMutation,
   useSavePricingMutation,
@@ -68,7 +69,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
   const [stoneEdits, setStoneEdits] = useState({});
   const [dutyEdits, setDutyEdits] = useState({});
   const [metalData, setMetalData] = useState({ Weight: '', Rate: '', Quality: metalKt });
-  const [chargesData, setChargesData] = useState({ Loss: '', Labour: '', ExtraCharges: '', GoldDuties: '', SilverAndLabsDuties: '', LossAndLabourDuties: '' });
+  const [chargesData, setChargesData] = useState({ Loss: '', Labour: '', ExtraCharges: '', ExtraChargesType: 'percentage', GoldDuties: '', SilverAndLabsDuties: '', LossAndLabourDuties: '' });
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
   // True when the edit modal was opened for a freshly-added stone — shows Type/Shape inputs.
@@ -98,8 +99,9 @@ export default function ModifyPricingScreen({ route, navigation }) {
 
   const originalTypeRef = useRef({});
   const dataChangedRef = useRef(false);
-  // true when a change other than the Price field happened → refetch price (first calc)
-  const nonPriceChangedRef = useRef(false);
+  // true when a rate-lookup field (Color / Shape / Stone Type) changed → refetch price (first calc).
+  // Any other edit keeps the entered prices and just recalculates.
+  const lookupChangedRef = useRef(false);
   const isAutoRecalculatingRef = useRef(false);
   const [pricingResults, setPricingResults] = useState({});
 
@@ -128,6 +130,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
       Loss: typeData.editableCharges?.Loss?.toString() ?? '',
       Labour: typeData.editableCharges?.Labour?.toString() ?? '',
       ExtraCharges: typeData.editableCharges?.ExtraCharges?.toString() ?? '',
+      ExtraChargesType: typeData.editableCharges?.ExtraChargesType ?? 'percentage',
       GoldDuties: typeData.editableCharges?.GoldDuties?.toString() ?? '',
       SilverAndLabsDuties: typeData.editableCharges?.SilverAndLabsDuties?.toString() ?? typeData.dutyRates?.SilverAndLabsDuties?.toString() ?? '',
       LossAndLabourDuties: typeData.editableCharges?.LossAndLabourDuties?.toString() ?? typeData.dutyRates?.LossAndLabourDuties?.toString() ?? '',
@@ -140,7 +143,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
   useEffect(() => {
     if (!dataChangedRef.current || !clientId || flatStonesRef.current.length === 0) return;
     dataChangedRef.current = false;
-    nonPriceChangedRef.current = false;
+    lookupChangedRef.current = false;
     const timer = setTimeout(() => {
       if (!isAutoRecalculatingRef.current) {
         isAutoRecalculatingRef.current = true;
@@ -160,14 +163,16 @@ export default function ModifyPricingScreen({ route, navigation }) {
 
   const updateStoneField = useCallback((idx, field, value) => {
     dataChangedRef.current = true;
-    // Any field except Price refetches the price on recalc (first calculation).
-    if (field !== 'Price') nonPriceChangedRef.current = true;
+    // Only Color / Shape change the rate lookup → refetch price (first calc).
+    // Every other field (Price, Pcs, Weight, CtWeight, MmSize, SieveSize, Markup) keeps the
+    // entered prices and just recalculates.
+    if (field === 'Color' || field === 'Shape') lookupChangedRef.current = true;
     setStoneEdits(prev => ({ ...prev, [idx]: { ...(prev[idx] || {}), [field]: value } }));
   }, []);
 
   const updateDuty = useCallback((field, v) => {
     dataChangedRef.current = true;
-    nonPriceChangedRef.current = true;
+    // Duty rate is not a rate-lookup field → recalculate keeping the entered stone prices.
     setDutyEdits(prev => ({ ...prev, [field]: v }));
   }, []);
 
@@ -221,6 +226,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
           Loss: num(currentCharges.Loss),
           Labour: num(currentCharges.Labour),
           ExtraCharges: num(currentCharges.ExtraCharges),
+          ExtraChargesType: currentCharges.ExtraChargesType || 'percentage',
           GoldDuties: num(currentCharges.GoldDuties),
           SilverAndLabsDuties: num(currentCharges.SilverAndLabsDuties),
           LossAndLabourDuties: num(currentCharges.LossAndLabourDuties),
@@ -263,13 +269,17 @@ export default function ModifyPricingScreen({ route, navigation }) {
         }
         setMetalData(prev => ({
           ...prev,
-          Rate: result.GoldRateKT?.toString() ?? prev.Rate,
+          // Round-trip the 24K full rate (Metal.Rate), NOT GoldRateKT. The backend re-derives
+          // the KT rate from this each time; sending GoldRateKT would reduce it again on every
+          // recalc (matches how PricingCalculator stores editableMetal.Rate).
+          Rate: result.Metal?.Rate?.toString() ?? prev.Rate,
           Quality: result.MetalKT || prev.Quality,
         }));
         setChargesData({
           Loss: result.LossPercent?.toString() ?? '',
           Labour: result.LabourPercent?.toString() ?? '',
-          ExtraCharges: result.ExtraChargesPercent?.toString() ?? '',
+          ExtraCharges: normalizeExtraCharges(result.Client?.ExtraCharges).Value.toString(),
+          ExtraChargesType: normalizeExtraCharges(result.Client?.ExtraCharges).Type,
           GoldDuties: result.Duties?.Gold?.Rate?.toString() ?? '',
           SilverAndLabsDuties: result.Duties?.SilverAndLabs?.Rate?.toString() ?? '',
           LossAndLabourDuties: result.Duties?.LossAndLabour?.Rate?.toString() ?? '',
@@ -301,7 +311,8 @@ export default function ModifyPricingScreen({ route, navigation }) {
             Stones: savedStones,
             Loss: num(result.Client?.Loss ?? currentCharges.Loss ?? 0),
             Labour: num(result.Client?.Labour ?? currentCharges.Labour ?? 0),
-            ExtraCharges: num(result.Client?.ExtraCharges ?? currentCharges.ExtraCharges ?? 0),
+            ExtraCharges: normalizeExtraCharges(result.Client?.ExtraCharges ?? currentCharges.ExtraCharges),
+            ExtraChargesType: result.Client?.ExtraChargesType ?? currentCharges.ExtraChargesType ?? 'percentage',
             UndercutPrice: num(result.Client?.UndercutPrice ?? 0),
             NaturalDuties: num(result.Client?.NaturalDuties ?? 0),
             LabDuties: num(result.Client?.LabDuties ?? 0),
@@ -346,17 +357,17 @@ export default function ModifyPricingScreen({ route, navigation }) {
   useEffect(() => { recalcUpdateRef.current = handleRecalculateUpdate; }, [handleRecalculateUpdate]);
   useEffect(() => { recalcFirstRef.current = handleRecalculate; }, [handleRecalculate]);
 
-  // On keyboard dismiss: only a price-only edit keeps the entered price
-  // (recalc). Any other field change refetches the price (first calculation).
+  // On keyboard dismiss: a Color/Shape/Type change refetches the price (first calculation);
+  // any other edit keeps the entered prices and just recalculates.
   useEffect(() => {
     const sub = Keyboard.addListener('keyboardDidHide', () => {
       if (!dataChangedRef.current || !clientId || flatStones.length === 0) return;
-      const priceOnly = !nonPriceChangedRef.current;
+      const refetchPrices = lookupChangedRef.current;
       dataChangedRef.current = false;
-      nonPriceChangedRef.current = false;
+      lookupChangedRef.current = false;
       if (!isAutoRecalculatingRef.current) {
         isAutoRecalculatingRef.current = true;
-        const fn = priceOnly ? recalcUpdateRef.current : recalcFirstRef.current;
+        const fn = refetchPrices ? recalcFirstRef.current : recalcUpdateRef.current;
         Promise.resolve(fn?.()).finally(() => {
           isAutoRecalculatingRef.current = false;
         });
@@ -388,7 +399,8 @@ export default function ModifyPricingScreen({ route, navigation }) {
       Markup: 0,
     };
     dataChangedRef.current = true;
-    nonPriceChangedRef.current = true;
+    // Brand-new stone has no price yet → refetch it from the client rate chart (first calc).
+    lookupChangedRef.current = true;
     const newIndex = flatStonesRef.current.length;
     setFlatStones(prev => [...prev, { stoneIndex: prev.length, stone: { ...newStone } }]);
     setEditingIndex(newIndex);
@@ -401,12 +413,12 @@ export default function ModifyPricingScreen({ route, navigation }) {
     setIsNewStoneEdit(false);
     setEditModalVisible(false);
     if (dataChangedRef.current && clientId && flatStonesRef.current.length > 0) {
-      const priceOnly = !nonPriceChangedRef.current;
+      const refetchPrices = lookupChangedRef.current;
       dataChangedRef.current = false;
-      nonPriceChangedRef.current = false;
+      lookupChangedRef.current = false;
       if (!isAutoRecalculatingRef.current) {
         isAutoRecalculatingRef.current = true;
-        const fn = priceOnly ? recalcUpdateRef.current : recalcFirstRef.current;
+        const fn = refetchPrices ? recalcFirstRef.current : recalcUpdateRef.current;
         Promise.resolve(fn?.()).finally(() => {
           isAutoRecalculatingRef.current = false;
         });
@@ -453,9 +465,15 @@ export default function ModifyPricingScreen({ route, navigation }) {
     const eff = getEffectiveStone(idx);
     const isMissing = num(eff.Price) <= 0;
     const displayType = stoneTypeOverrides[idx] || eff.Type || selectedType;
+    const stoneColor = eff.Color || '';
+    const colorBg = getStoneBg(stoneColor) || colors.backgroundSecondary;
 
     return (
       <View key={idx} style={[s.stoneCard, isMissing && s.stoneCardMissing]}>
+        <View style={[s.stoneColorBar, { backgroundColor: colorBg }]}>
+          <Text style={s.stoneColorBarText}>{stoneColor || '—'}</Text>
+          <Text style={s.stoneColorHint}>Tap edit icon for more changes</Text>
+        </View>
         <View style={s.stoneMainRow}>
           <View style={s.stoneFieldWrap}>
             <Text style={s.stoneFieldLabel}>Type</Text>
@@ -568,7 +586,7 @@ export default function ModifyPricingScreen({ route, navigation }) {
         <View style={s.bottomBtnRow}>
           <TouchableOpacity
             style={[s.recalcBtn, isCalculating && s.recalcBtnDisabled]}
-            onPress={handleRecalculate}
+            onPress={handleRecalculateUpdate}
             activeOpacity={0.85}
             disabled={isCalculating}
           >
@@ -587,9 +605,10 @@ export default function ModifyPricingScreen({ route, navigation }) {
               if (!result) return;
               navigation.navigate('PricingPreview', {
                 pricingEntries: [result],
-                clientName: selectedClient?.name || 'Client',
+                clientName: selectedClient?.name || selectedClient?.Name || 'Client',
                 metalKt,
                 modify: true,
+                preCropImageKey: '@pre_crop_image',
               });
             }}
             activeOpacity={0.85}
@@ -597,10 +616,31 @@ export default function ModifyPricingScreen({ route, navigation }) {
           >
             <Icon name="visibility" size={18} color={pricingResults[selectedType] ? colors.primary : colors.textSecondary} />
             <Text style={[s.previewBtnText, !pricingResults[selectedType] && s.previewBtnTextDisabled]}>
-              {pricingResults[selectedType] ? 'PREVIEW' : 'Recalculate First'}
+              {pricingResults[selectedType] ? 'ADMIN PREVIEW' : 'Recalculate First'}
             </Text>
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={[s.clientPreviewBtn, !pricingResults[selectedType] && s.clientPreviewBtnDisabled]}
+          onPress={() => {
+            const result = pricingResults[selectedType];
+            if (!result) return;
+            navigation.navigate('PricingPreview', {
+              pricingEntries: [result],
+              clientName: selectedClient?.name || selectedClient?.Name || 'Client',
+              metalKt,
+              modify: true,
+              isClientPreview: true,
+              preCropImageKey: '@pre_crop_image',
+            });
+          }}
+          activeOpacity={0.85}
+          disabled={!pricingResults[selectedType]}
+        >
+          <Icon name="visibility" size={18} color="#fff" />
+          <Text style={s.clientPreviewBtnText}>CLIENT PREVIEW</Text>
+        </TouchableOpacity>
       </View>
       </View>
 
@@ -990,6 +1030,26 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     marginBottom: 8,
+    overflow: 'hidden',
+  },
+  stoneColorBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  stoneColorBarText: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: colors.textPrimary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.05,
+  },
+  stoneColorHint: {
+    fontFamily: fonts.medium,
+    fontSize: 9,
+    color: colors.error,
   },
   stoneCardMissing: {
     borderWidth: 1.5,
@@ -1064,6 +1124,23 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginTop: 12,
+  },
+  clientPreviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginTop: 10,
+  },
+  clientPreviewBtnDisabled: { opacity: 0.5 },
+  clientPreviewBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.sm,
+    color: '#fff',
+    letterSpacing: 0.5,
   },
   recalcBtn: {
     flex: 1,
