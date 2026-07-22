@@ -718,6 +718,9 @@ export default function PricingCalci({ route, navigation }) {
         try {
           const croppedBase64 = await RNFS.readFile(cropped.path.replace(/^file:\/\//, ''), 'base64');
           const processedBase64 = await processImage(croppedBase64);
+          if (!processedBase64 || processedBase64.length < 100) {
+            throw new Error('Processed image is too small or empty');
+          }
           const processedPath = `${RNFS.CachesDirectoryPath}/bw_${Date.now()}.jpg`;
           await RNFS.writeFile(processedPath, processedBase64, 'base64');
           apiImageFile = {
@@ -725,9 +728,11 @@ export default function PricingCalci({ route, navigation }) {
             name: `bw_${Date.now()}.jpg`,
             type: 'image/jpeg',
           };
+          console.log('[ImagePick] B&W processing succeeded');
         } catch (processErr) {
+          console.log('[ImagePick] B&W processing failed, using original:', processErr?.message || processErr);
           apiImageFile = {
-            uri: cropped.path,
+            uri: cropped.path.startsWith('file://') ? cropped.path : `file://${cropped.path}`,
             name: cropped.filename || `image_${Date.now()}.jpg`,
             type: cropped.mime || 'image/jpeg',
           };
