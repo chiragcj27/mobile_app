@@ -132,15 +132,17 @@ export function useImageProcessor() {
 
 const styles = StyleSheet.create({
   hidden: {
-    width: 0,
-    height: 0,
-    overflow: 'hidden',
+    width: 300,
+    height: 300,
+    opacity: 0.01,
     position: 'absolute',
-    top: -9999,
-    left: -9999,
+    top: 0,
+    left: 0,
+    zIndex: -1,
+    overflow: 'hidden',
   },
   webview: {
-    width: 1,
-    height: 1,
+    width: 300,
+    height: 300,
   },
 });
