@@ -4498,7 +4498,7 @@ export const api = createApi({
     }),
     //============= image pricing extraction ===========
     ImagepriceData: builder.mutation({
-      query: ({ image, clientId, stoneType, quantity, metalQuality }) => {
+      query: ({ image, clientId, stoneType, quantity, metalQuality, cropX, cropY, cropW, cropH }) => {
         // Create FormData
         const formData = new FormData();
 
@@ -4517,6 +4517,27 @@ export const api = createApi({
 
         if (metalQuality) {
           formData.append('metalQuality', metalQuality);
+        }
+
+        // Crop region as fractions (0..1) of the ORIGINAL image. The backend crops
+        // full-resolution from these, so the device never has to crop (which degraded iOS).
+        // Only sent when ALL FOUR are real finite numbers AND they describe a genuine
+        // sub-region. If any is missing we send NOTHING (no 0 fallbacks) so the backend
+        // processes the complete image — a stray 0 would otherwise be read as a real coordinate.
+        const cropVals = [cropX, cropY, cropW, cropH].map(Number);
+        const allCropNumbers = cropVals.every(v => Number.isFinite(v));
+        const isRealSubRegion = allCropNumbers &&
+          (cropVals[2] < 1 || cropVals[3] < 1 || cropVals[0] > 0 || cropVals[1] > 0);
+        if (isRealSubRegion) {
+          formData.append('cropX', String(cropVals[0]));
+          formData.append('cropY', String(cropVals[1]));
+          formData.append('cropW', String(cropVals[2]));
+          formData.append('cropH', String(cropVals[3]));
+          console.log('[crop][api] sending crop fractions', {
+            cropX: cropVals[0], cropY: cropVals[1], cropW: cropVals[2], cropH: cropVals[3],
+          });
+        } else {
+          console.log('[crop][api] no crop → sending whole image', { cropX, cropY, cropW, cropH });
         }
 
         // Dev Logs
