@@ -714,23 +714,39 @@ export default function PricingCalci({ route, navigation }) {
         }
 
         // Process cropped image with B&W + sharpen for better API accuracy
+        // iOS: skip WebView B&W processing (unreliable off-screen canvas),
+        // send the original cropped image instead.
         let apiImageFile;
-        try {
-          const croppedBase64 = await RNFS.readFile(cropped.path.replace(/^file:\/\//, ''), 'base64');
-          const processedBase64 = await processImage(croppedBase64);
-          const processedPath = `${RNFS.CachesDirectoryPath}/bw_${Date.now()}.jpg`;
-          await RNFS.writeFile(processedPath, processedBase64, 'base64');
+        if (Platform.OS === 'ios') {
+          console.log('[ImagePick] iOS — skipping B&W, using original cropped image');
           apiImageFile = {
-            uri: processedPath.startsWith('file://') ? processedPath : `file://${processedPath}`,
-            name: `bw_${Date.now()}.jpg`,
-            type: 'image/jpeg',
-          };
-        } catch (processErr) {
-          apiImageFile = {
-            uri: cropped.path,
+            uri: cropped.path.startsWith('file://') ? cropped.path : `file://${cropped.path}`,
             name: cropped.filename || `image_${Date.now()}.jpg`,
             type: cropped.mime || 'image/jpeg',
           };
+        } else {
+          try {
+            const croppedBase64 = await RNFS.readFile(cropped.path.replace(/^file:\/\//, ''), 'base64');
+            const processedBase64 = await processImage(croppedBase64);
+            if (!processedBase64 || processedBase64.length < 100) {
+              throw new Error('Processed image is too small or empty');
+            }
+            const processedPath = `${RNFS.CachesDirectoryPath}/bw_${Date.now()}.jpg`;
+            await RNFS.writeFile(processedPath, processedBase64, 'base64');
+            apiImageFile = {
+              uri: processedPath.startsWith('file://') ? processedPath : `file://${processedPath}`,
+              name: `bw_${Date.now()}.jpg`,
+              type: 'image/jpeg',
+            };
+            console.log('[ImagePick] B&W processing succeeded');
+          } catch (processErr) {
+            console.log('[ImagePick] B&W processing failed, using original:', processErr?.message || processErr);
+            apiImageFile = {
+              uri: cropped.path.startsWith('file://') ? cropped.path : `file://${cropped.path}`,
+              name: cropped.filename || `image_${Date.now()}.jpg`,
+              type: cropped.mime || 'image/jpeg',
+            };
+          }
         }
 
         const newImageFile = apiImageFile;
