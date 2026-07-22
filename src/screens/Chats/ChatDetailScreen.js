@@ -6011,7 +6011,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 12,
-    overflow: 'hidden', // Ensure content doesn't overflow
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     flexDirection: 'column', // Ensure flex layout for proper scrolling
   },
   readReceiptModalHeader: {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Image, InteractionManager } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Image, InteractionManager, Platform } from 'react-native';
 import Video from 'react-native-video';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../../constants/colors';
@@ -1711,7 +1711,7 @@ const styles = StyleSheet.create({
     elevation: 3,
     borderWidth: 1,
     borderColor: colors.borderLight,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
   },
   compactEnquiryCardTablet: {
     width: '31%',

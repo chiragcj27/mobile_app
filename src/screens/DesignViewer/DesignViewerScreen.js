@@ -2625,6 +2625,14 @@ const DesignViewerScreen = ({ route, navigation }) => {
             </View>
           </View>
         </View>
+        <BrandedAlert
+          visible={alertConfig.visible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          type={alertConfig.type}
+          buttons={alertConfig.buttons}
+          onClose={hideAlert}
+        />
       </Modal>
 
       {/* Full Screen Image/Video Modal */}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal,
-  ActivityIndicator, Platform, TextInput,
+  ActivityIndicator, Platform, TextInput, KeyboardAvoidingView,
 } from 'react-native';
 import Share from 'react-native-share';
 import RNFS from 'react-native-fs';
@@ -32,6 +32,7 @@ const FinalLookModal = ({
   shareExcelMode = false,
   onShareExcel,
   headerTitle,
+  children,
 }) => {
   const { data: fullEnquiryData, isFetching, refetch } = useGetEnquiryByIdQuery(enquiryId, {
     skip: !visible || !enquiryId,
@@ -145,6 +146,7 @@ const FinalLookModal = ({
       <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
         <View style={s.overlay}>
           <View style={s.sheet}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <View style={s.header}>
               <View style={{ flex: 1 }}>
                 <Text style={s.headerTitle} numberOfLines={1}>{headerTitle || 'Final Look'}</Text>
@@ -255,14 +257,16 @@ const FinalLookModal = ({
                 <Text style={s.loaderText}>No data available</Text>
               </View>
             )}
+          </KeyboardAvoidingView>
           </View>
         </View>
-      </Modal>
 
-      <BrandedAlert
-        visible={alertCfg.visible} title={alertCfg.title} message={alertCfg.message}
-        type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
-      />
+        <BrandedAlert
+          visible={alertCfg.visible} title={alertCfg.title} message={alertCfg.message}
+          type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
+        />
+        {children}
+      </Modal>
     </>
   );
 };

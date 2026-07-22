@@ -1,4 +1,5 @@
 import { getStoneCategory, getStoneCategoryLabel } from './stoneTypeMapping';
+import { extraChargesValue, extraChargesType } from './extraCharges';
 
 export const groupStoneDataByCategory = (rawMultiData, categoryMap = {}) => {
   const grouped = {};
@@ -66,7 +67,8 @@ export const regroupApiResults = (apiResults, existingGroupedData, categoryMap =
       editableCharges: {
         Loss: result.Client?.Loss ?? 0,
         Labour: result.Client?.Labour ?? 0,
-        ExtraCharges: result.Client?.ExtraCharges ?? 0,
+        ExtraCharges: extraChargesValue(result.Client?.ExtraCharges),
+        ExtraChargesType: extraChargesType(result.Client?.ExtraCharges),
         GoldDuties: result.Client?.GoldDuties ?? 0,
         SilverAndLabsDuties: result.Client?.SilverAndLabsDuties ?? 0,
         LossAndLabourDuties: result.Client?.LossAndLabourDuties ?? 0,

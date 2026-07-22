@@ -39,7 +39,8 @@ import {
   useGetEnquiryByIdQuery,
   useGetClientByIdQuery,
 } from '../../store/api';
-import { LOGO_BASE64 } from '../../screens/Pricing/previewScreen';
+import { LOGO_BASE64, buildCombinedHtml } from '../../screens/Pricing/previewScreen';
+import { normalizeExtraCharges, extraChargesValue, extraChargesType } from '../../utils/extraCharges';
 import CompareRefrences from './CompareRefrences';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 
@@ -150,7 +151,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
 
     const extraChargesHtml = num(PR.ExtraChargesPercent) > 0 || num(PR.ExtraChargesAmount) > 0 ? `
     <div style="margin-top:12px;padding:8px;background:#FFF8E1;border:1px solid #D4AF37;border-radius:4px;display:flex;justify-content:space-between;font-size:11px;font-weight:600;">
-      <span>Extra Charges (${num(PR.ExtraChargesPercent).toFixed(0)}%)</span>
+      <span>Extra Charges ${PR.ExtraChargesType === 'fixed' ? '(Fixed)' : `(${num(PR.ExtraChargesPercent).toFixed(0)}%)`}</span>
       <span>$${num(PR.ExtraChargesAmount).toFixed(2)}</span>
     </div>` : '';
 
@@ -241,7 +242,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
       <thead><tr><th>Final Metal Price</th><th>Diamond Price</th><th>Duties Total</th><th>Total Price</th></tr></thead>
       <tbody>
         <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
-          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.GoldAmount).toFixed(2)}</td>
+          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.MetalPrice).toFixed(2)}</td>
           <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DiamondsPrice).toFixed(2)}</td>
           <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DutiesAmount).toFixed(2)}</td>
           <td style="padding:10px 6px;border:1px solid #E6F0F1;color:#143F45;font-size:13px;">$${num(PR.TotalPrice).toFixed(2)}</td>
@@ -282,10 +283,10 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
     </tbody>
   </table>` : '';
 
-  const extraCharges = num(charges.ExtraCharges);
-  const extraChargesHtml = extraCharges > 0 ? `
+  const extraChargesHtml = num(PR.ExtraChargesPercent) > 0 || num(PR.ExtraChargesAmount) > 0 ? `
   <div style="margin-top:12px;padding:8px;background:#FFF8E1;border:1px solid #D4AF37;border-radius:4px;display:flex;justify-content:space-between;font-size:11px;font-weight:600;">
-    <span>Extra Charges (${extraCharges}%)</span>
+    <span>Extra Charges ${PR.ExtraChargesType === 'fixed' ? '(Fixed)' : `(${num(PR.ExtraChargesPercent).toFixed(0)}%)`}</span>
+    <span>$${num(PR.ExtraChargesAmount).toFixed(2)}</span>
   </div>` : '';
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=0.6, maximum-scale=3.0, user-scalable=yes">
@@ -425,6 +426,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const [pdfHtml,       setPdfHtml]       = useState(null);
   const [showPdf,       setShowPdf]       = useState(false);
   const [isSharing,     setIsSharing]     = useState(false);
+  const [pdfPreviewMode, setPdfPreviewMode] = useState('admin');
+  // Keep the latest toggle value readable inside async recalc callbacks so a background
+  // recalc rebuilds the HTML for the mode the user is actually viewing (no flip to admin).
+  const pdfPreviewModeRef = useRef('admin');
+  useEffect(() => { pdfPreviewModeRef.current = pdfPreviewMode; }, [pdfPreviewMode]);
 
   const [showCompareModal, setShowCompareModal] = useState(false);
 
@@ -480,9 +486,10 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       const q = p.Metal?.Quality || enq?.Metal?.Quality || '10K';
       if (/silver\s*925/i.test(q)) return String(prices.silver?.price ?? 0);
       if (/platinum/i.test(q))     return String(prices.platinum?.price ?? 0);
+      // Send the 24K full gold rate — the backend derives the KT rate itself
+      // (metalRate = goldRate * KT / 24). Sending the KT rate reduces it a second time.
       const base = prices.gold?.price || 0;
-      const m = q.match(/(\d+)K/i);
-      if (m && base) return String((base * parseInt(m[1], 10) / 24).toFixed(2));
+      if (base) return String(base);
       return '0';
     })();
     setMetalRate(autoRate);
@@ -513,6 +520,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     setShowPdf(false);
     setShowCompareModal(false);
     setCopied(false);
+    setPdfPreviewMode('admin');
 
   }, [visible, isFetchingEnquiry, fullEnquiry, enquiryId, sourcePricing, metalPricesData]);
 
@@ -636,7 +644,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       })).filter(st => st.Type),
       Loss:                num(sourcePricing?.Loss ?? 0),
       Labour:              num(sourcePricing?.Labour ?? 0),
-      ExtraCharges:        num(sourcePricing?.ExtraCharges ?? 0),
+      ExtraCharges:        normalizeExtraCharges(sourcePricing?.ExtraCharges),
       UndercutPrice:       num(sourcePricing?.UndercutPrice ?? 0),
       NaturalDuties:       num(sourcePricing?.NaturalDuties ?? 0),
       LabDuties:           num(sourcePricing?.LabDuties ?? 0),
@@ -731,7 +739,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       editableCharges: {
         Loss: num(sourcePricing?.Loss ?? 0),
         Labour: num(sourcePricing?.Labour ?? 0),
-        ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0),
+        ExtraCharges: extraChargesValue(sourcePricing?.ExtraCharges),
+        ExtraChargesType: extraChargesType(sourcePricing?.ExtraCharges),
         GoldDuties: num(sourcePricing?.GoldDuties ?? 0),
         SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
         LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
@@ -788,7 +797,9 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         Metal: {
           Weight:  num(metalWeight),
           Quality: metalQuality,
-          Rate:    num(metalRate),
+          // Only send Rate when > 0 — the backend uses `metalRateOverride ?? todaysRate`,
+          // and 0 is not nullish, so sending 0 would force the metal price (and total) to 0.
+          ...(num(metalRate) > 0 ? { Rate: num(metalRate) } : {}),
         },
         Stones: mergedDiamonds.map(d => ({
           Type:      d.Type      || '',
@@ -804,7 +815,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         })).filter(st => st.Type),
         Loss:                num(sourcePricing?.Loss ?? 0),
         Labour:              num(sourcePricing?.Labour ?? 0),
-        ExtraCharges:        num(sourcePricing?.ExtraCharges ?? 0),
+        ExtraCharges:        normalizeExtraCharges(sourcePricing?.ExtraCharges),
         UndercutPrice:       num(sourcePricing?.UndercutPrice ?? 0),
         NaturalDuties:       num(sourcePricing?.NaturalDuties ?? 0),
         LabDuties:           num(sourcePricing?.LabDuties ?? 0),
@@ -822,6 +833,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       const result = await calculatePricing(payload).unwrap();
       console.log('=== calculatePricing raw response ===', JSON.stringify(result, null, 2));
       setPricingResult(result);
+      // Reflect the rate the backend actually used when we didn't send one (was 0/empty).
+      if (num(metalRate) <= 0 && result.Metal?.Rate) setMetalRate(String(result.Metal.Rate));
 
       setClientMsg(prev => {
         if (result.ClientPricingMessage) return result.ClientPricingMessage;
@@ -842,6 +855,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         sourcePricing: sourcePricing || {},
       });
       setPdfHtml(html);
+      setPdfPreviewMode('admin');
       setShowPdf(true);
     } catch (e) {
       showAlert('Calculation Failed', e?.data?.message || 'Failed to calculate pricing. Please try again.', 'error', [{ text: 'OK' }]);
@@ -869,14 +883,15 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       const payload = {
         details: {
           isOnlyMetalDesign,
-          Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+          // Omit Rate when 0 so the backend falls back to today's rate (0 is not nullish).
+          Metal: { Weight: num(metalWeight), Quality: metalQuality, ...(num(metalRate) > 0 ? { Rate: num(metalRate) } : {}) },
           Stones: merged.map(d => ({
             Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
             MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
             CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)), Price: num(d.Price), Markup: num(d.Markup),
           })).filter(st => st.Type),
           Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0),
-          ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+          ExtraCharges: normalizeExtraCharges(sourcePricing?.ExtraCharges), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
           NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0), LabDuties: num(sourcePricing?.LabDuties ?? 0),
           GoldDuties: num(sourcePricing?.GoldDuties ?? 0), SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
           LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0), Quantity: enq?.Quantity || 1,
@@ -886,13 +901,30 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       };
       calculatePricing(payload).unwrap().then(result => {
         setPricingResult(result);
+        if (num(metalRate) <= 0 && result.Metal?.Rate) setMetalRate(String(result.Metal.Rate));
         setClientMsg(prev => result.ClientPricingMessage || prev);
-        const html = buildHtml({
-          pricingResult: result, stones: merged,
-          metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-          charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
-          clientName: resolvedClientName, sourcePricing: sourcePricing || {},
-        });
+        // Rebuild the HTML for whichever preview the user is currently viewing so a
+        // background recalc doesn't flip a Client preview back to Admin.
+        let html;
+        if (pdfPreviewModeRef.current === 'client') {
+          const clientEntry = {
+            ...result,
+            Stones: merged.map(d => ({
+              Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
+              MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
+              CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)),
+              Price: num(d.Price), Markup: num(d.Markup),
+            })).filter(st => st.Type),
+          };
+          html = buildCombinedHtml([clientEntry], resolvedClientName, metalQuality, null, true);
+        } else {
+          html = buildHtml({
+            pricingResult: result, stones: merged,
+            metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+            charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
+            clientName: resolvedClientName, sourcePricing: sourcePricing || {},
+          });
+        }
         setPdfHtml(html);
 
         if ((isQRPhase || isCMPhase) && !autoSaveInProgress.current) {
@@ -921,7 +953,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                     Price: num(d.Price), Markup: num(d.Markup),
                   })).filter(st => st.Type),
                   Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0),
-                  ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+                  ExtraCharges: normalizeExtraCharges(sourcePricing?.ExtraCharges), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
                   NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0), LabDuties: num(sourcePricing?.LabDuties ?? 0),
                   GoldDuties: num(sourcePricing?.GoldDuties ?? 0), SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
                   LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
@@ -1026,6 +1058,23 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     const t3 = hasMissingStones ? setTimeout(() => triggerHaptic('notificationWarning'), 1300) : null;
     return () => { clearTimeout(t1); if (t2) clearTimeout(t2); if (t3) clearTimeout(t3); };
   }, [visible, isQRPhase, enquiryId, hasMissingMetal, hasMissingStones]);
+
+  const buildClientPreviewHtml = useCallback(() => {
+    if (!pricingResult) return '';
+    const merged = diamonds.map((d, i) =>
+      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
+    );
+    const entry = {
+      ...pricingResult,
+      Stones: merged.map(d => ({
+        Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
+        MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
+        CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)),
+        Price: num(d.Price), Markup: num(d.Markup),
+      })).filter(st => st.Type),
+    };
+    return buildCombinedHtml([entry], resolvedClientName, metalQuality, null, true);
+  }, [pricingResult, diamonds, editedPrices, resolvedClientName, metalQuality]);
 
   const handleCopyMsg = useCallback(() => {
     if (!clientMsg) return;
@@ -1154,9 +1203,37 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     );
   };
 
+  // Metal quality picker rendered as an in-modal absolute overlay (NOT a nested <Modal>,
+  // which is unreliable on iOS/Android when the parent is already a Modal). Used by both
+  // the QR-phase and Update-Quotation renders.
+  const renderQualityPicker = () => {
+    if (!showQualityPicker) return null;
+    return (
+      <View style={s.pickerAbsOverlay}>
+        <TouchableOpacity style={s.pickerOverlay} activeOpacity={1} onPress={() => setShowQualityPicker(false)}>
+          <TouchableOpacity activeOpacity={1} style={s.pickerSheet}>
+            <Text style={s.pickerTitle}>Select Metal Quality</Text>
+            {METAL_QUALITY_OPTIONS.map(opt => (
+              <TouchableOpacity
+                key={opt}
+                style={[s.pickerOption, metalQuality === opt && s.pickerOptionSelected]}
+                onPress={() => { setMetalQuality(opt); setShowQualityPicker(false); }}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.pickerOptionText, metalQuality === opt && s.pickerOptionTextSelected]}>{opt}</Text>
+                {metalQuality === opt && <Icon name="check" size={16} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
   // ── QR Phase render ────────────────────────────────────────────────
   const renderQRPhase = () => (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (showPdf) { setShowPdf(false); } else { onClose(); } }}>
+      <>
       <View style={s.overlay}>
         <View style={s.sheet}>
           <View style={s.header}>
@@ -1178,6 +1255,42 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                   <Icon name="arrow-back" size={18} color="#fff" />
                   <Text style={s.pdfBarBtnText}>Back</Text>
                 </TouchableOpacity>
+                <View style={s.pdfPreviewToggle}>
+                  <TouchableOpacity
+                    style={[s.pdfPreviewBtn, pdfPreviewMode === 'admin' && s.pdfPreviewBtnActive]}
+                    onPress={() => {
+                      if (pdfPreviewMode !== 'admin') {
+                        setPdfPreviewMode('admin');
+                        const merged = diamonds.map((d, i) =>
+                          editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
+                        );
+                        const html = buildHtml({
+                          pricingResult, stones: merged,
+                          metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+                          charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
+                          clientName: resolvedClientName, sourcePricing: sourcePricing || {},
+                        });
+                        if (html) setPdfHtml(html);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[s.pdfPreviewBtnText, pdfPreviewMode === 'admin' && s.pdfPreviewBtnTextActive]}>Admin</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.pdfPreviewBtn, pdfPreviewMode === 'client' && s.pdfPreviewBtnActive]}
+                    onPress={() => {
+                      if (pdfPreviewMode !== 'client') {
+                        setPdfPreviewMode('client');
+                        const html = buildClientPreviewHtml();
+                        if (html) setPdfHtml(html);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[s.pdfPreviewBtnText, pdfPreviewMode === 'client' && s.pdfPreviewBtnTextActive]}>Client</Text>
+                  </TouchableOpacity>
+                </View>
                 <TouchableOpacity
                   style={[s.pdfBarBtn, s.shareBtn]}
                   onPress={async () => { await handleSaveQuotation(); handleSharePdf(); }}
@@ -1217,7 +1330,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                     </TouchableOpacity>
                   </View>
                   <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Rate ($/g)</Text>
+                    <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
                     <TextInput style={s.chargeInput} value={metalRate} onChangeText={setMetalRate} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
                   </View>
                 </View>
@@ -1302,12 +1415,27 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           )}
         </View>
       </View>
+
+        <CompareRefrences
+          visible={showCompareModal}
+          onClose={() => setShowCompareModal(false)}
+          fullEnquiry={fullEnquiry}
+          isFetchingEnquiry={isFetchingEnquiry}
+        />
+
+        <BrandedAlert
+          visible={alertCfg.visible} title={alertCfg.title} message={alertCfg.message}
+          type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
+        />
+        {renderQualityPicker()}
+      </>
     </Modal>
   );
 
   // ── Update Quotation render ────────────────────────────────────────
   const renderUpdateQuotation = () => (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (showPdf) { setShowPdf(false); } else { onClose(); } }}>
+      <>
       <View style={s.overlay}>
         <View style={s.sheet}>
           <View style={s.header}>
@@ -1369,6 +1497,42 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                   <Icon name="arrow-back" size={18} color="#fff" />
                   <Text style={s.pdfBarBtnText}>Go Back</Text>
                 </TouchableOpacity>
+                <View style={s.pdfPreviewToggle}>
+                  <TouchableOpacity
+                    style={[s.pdfPreviewBtn, pdfPreviewMode === 'admin' && s.pdfPreviewBtnActive]}
+                    onPress={() => {
+                      if (pdfPreviewMode !== 'admin') {
+                        setPdfPreviewMode('admin');
+                        const merged = diamonds.map((d, i) =>
+                          editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
+                        );
+                        const html = buildHtml({
+                          pricingResult, stones: merged,
+                          metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+                          charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
+                          clientName: resolvedClientName, sourcePricing: sourcePricing || {},
+                        });
+                        if (html) setPdfHtml(html);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[s.pdfPreviewBtnText, pdfPreviewMode === 'admin' && s.pdfPreviewBtnTextActive]}>Admin</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.pdfPreviewBtn, pdfPreviewMode === 'client' && s.pdfPreviewBtnActive]}
+                    onPress={() => {
+                      if (pdfPreviewMode !== 'client') {
+                        setPdfPreviewMode('client');
+                        const html = buildClientPreviewHtml();
+                        if (html) setPdfHtml(html);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[s.pdfPreviewBtnText, pdfPreviewMode === 'client' && s.pdfPreviewBtnTextActive]}>Client</Text>
+                  </TouchableOpacity>
+                </View>
                 <TouchableOpacity
                   style={[s.pdfBarBtn, s.shareBtn]}
                   onPress={async () => { await handleSaveQuotation(); handleSharePdf(); }}
@@ -1421,7 +1585,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                     </TouchableOpacity>
                   </View>
                   <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Rate ($/g)</Text>
+                    <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
                     <TextInput
                       style={[s.chargeInput, num(metalRate) <= 0 && s.inputErrorHighlight]}
                       value={metalRate}
@@ -1454,49 +1618,26 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         </View>
       </View>
 
-      <Modal visible={showQualityPicker} transparent animationType="fade" onRequestClose={() => setShowQualityPicker(false)}>
-        <TouchableOpacity style={s.pickerOverlay} activeOpacity={1} onPress={() => setShowQualityPicker(false)}>
-          <TouchableOpacity activeOpacity={1} style={s.pickerSheet}>
-            <Text style={s.pickerTitle}>Select Metal Quality</Text>
-            {METAL_QUALITY_OPTIONS.map(opt => (
-              <TouchableOpacity
-                key={opt}
-                style={[s.pickerOption, metalQuality === opt && s.pickerOptionSelected]}
-                onPress={() => { setMetalQuality(opt); setShowQualityPicker(false); }}
-                activeOpacity={0.8}
-              >
-                <Text style={[s.pickerOptionText, metalQuality === opt && s.pickerOptionTextSelected]}>{opt}</Text>
-                {metalQuality === opt && <Icon name="check" size={16} color={colors.primary} />}
-              </TouchableOpacity>
-            ))}
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        {renderQualityPicker()}
+
+        <CompareRefrences
+          visible={showCompareModal}
+          onClose={() => setShowCompareModal(false)}
+          fullEnquiry={fullEnquiry}
+          isFetchingEnquiry={isFetchingEnquiry}
+        />
+
+        <BrandedAlert
+          visible={alertCfg.visible} title={alertCfg.title} message={alertCfg.message}
+          type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
+        />
+      </>
     </Modal>
   );
 
   return (
     <>
       {isQRPhase ? renderQRPhase() : renderUpdateQuotation()}
-
-      <CompareRefrences
-        visible={showCompareModal}
-        onClose={() => setShowCompareModal(false)}
-        fullEnquiry={fullEnquiry}
-        isFetchingEnquiry={isFetchingEnquiry}
-      />
-
-      {/* <DiamondEditModal
-        visible={editModalVisible}
-        diamond={selectedDiamondData}
-        onClose={() => { setEditModalVisible(false); setSelectedIndex(null); }}
-        onSave={handleDiamondSave}
-      /> */}
-
-      <BrandedAlert
-        visible={alertCfg.visible} title={alertCfg.title} message={alertCfg.message}
-        type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
-      />
     </>
   );
 };
@@ -1709,7 +1850,7 @@ const s = StyleSheet.create({
   },
   backEditText: { fontFamily: fonts.medium, fontSize: fonts.sm || 13, color: colors.primary },
 
-  pdfBar: { flexDirection: 'row', gap: 10, padding: 10, backgroundColor: 'rgba(0,0,0,0.75)' },
+  pdfBar: { flexDirection: 'row', gap: 8, padding: 10, backgroundColor: 'rgba(0,0,0,0.75)' },
   pdfBarBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 6, backgroundColor: 'rgba(255,255,255,0.2)',
@@ -1717,6 +1858,27 @@ const s = StyleSheet.create({
   },
   pdfBarBtnText: { fontFamily: fonts.medium, fontSize: fonts.xs || 12, color: '#fff' },
   shareBtn: { backgroundColor: colors.primary },
+  pdfPreviewToggle: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  pdfPreviewBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  pdfPreviewBtnActive: {
+    backgroundColor: colors.primary,
+  },
+  pdfPreviewBtnText: {
+    fontFamily: fonts.medium,
+    fontSize: fonts.xs || 12,
+    color: 'rgba(255,255,255,0.6)',
+  },
+  pdfPreviewBtnTextActive: {
+    color: '#fff',
+  },
 
   qualityBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -1726,6 +1888,12 @@ const s = StyleSheet.create({
   },
   qualityBtnText: { fontFamily: fonts.regular, fontSize: fonts.sm || 13, color: colors.textPrimary, flex: 1 },
 
+  pickerAbsOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    zIndex: 1000,
+    elevation: 1000,
+  },
   pickerOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end',
   },

@@ -60,6 +60,7 @@ export default function JwelleryEstimate() {
   // PDF Preview States
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
+  const [previewMode, setPreviewMode] = useState('admin');
 
   const clientOptions = clients.map(c => ({
     label: c.name || 'Unknown Client',
@@ -119,6 +120,11 @@ export default function JwelleryEstimate() {
   const buildPricingHtml = useCallback(() => {
     if (!selectedMatrixMatch) return '';
     return buildCombinedHtml([selectedMatrixMatch.pricing], selectedClientName, metalKt);
+  }, [selectedMatrixMatch, selectedClientName, metalKt]);
+
+  const buildClientPricingHtml = useCallback(() => {
+    if (!selectedMatrixMatch) return '';
+    return buildCombinedHtml([selectedMatrixMatch.pricing], selectedClientName, metalKt, null, true);
   }, [selectedMatrixMatch, selectedClientName, metalKt]);
 
   const handleImagePick = setImageFn => {
@@ -385,26 +391,44 @@ export default function JwelleryEstimate() {
               {selectedMatrixMatch ? (
                 <>
                   <Text style={styles.priceValue}>${estimatedPrice}</Text>
-                  <TouchableOpacity
-                    style={styles.breakdownPdfButton}
-                    onPress={() => {
-                      const html = buildPricingHtml();
-                      if (html) {
-                        setPdfHtml(html);
-                        setShowPdfModal(true);
-                      } else {
-                        Alert.alert(
-                          'Error',
-                          'Unable to generate breakdown PDF',
-                        );
-                      }
-                    }}
-                  >
-                    <Icon name="picture-as-pdf" size={20} color="#ffffff" />
-                    <Text style={styles.breakdownPdfButtonText}>
-                      View Breakdown
-                    </Text>
-                  </TouchableOpacity>
+                  <View style={styles.breakdownBtnRow}>
+                    <TouchableOpacity
+                      style={[styles.breakdownPdfButton, previewMode === 'admin' && styles.breakdownPdfButtonActive]}
+                      onPress={() => {
+                        setPreviewMode('admin');
+                        const html = buildPricingHtml();
+                        if (html) {
+                          setPdfHtml(html);
+                          setShowPdfModal(true);
+                        } else {
+                          Alert.alert('Error', 'Unable to generate breakdown PDF');
+                        }
+                      }}
+                    >
+                      <Icon name="picture-as-pdf" size={20} color="#ffffff" />
+                      <Text style={styles.breakdownPdfButtonText}>
+                        Admin Preview
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.clientPreviewBtn, previewMode === 'client' && styles.clientPreviewBtnActive]}
+                      onPress={() => {
+                        setPreviewMode('client');
+                        const html = buildClientPricingHtml();
+                        if (html) {
+                          setPdfHtml(html);
+                          setShowPdfModal(true);
+                        } else {
+                          Alert.alert('Error', 'Unable to generate client preview');
+                        }
+                      }}
+                    >
+                      <Icon name="visibility" size={18} color="#ffffff" />
+                      <Text style={styles.clientPreviewBtnText}>
+                        Client Preview
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </>
               ) : (
                 <Text style={styles.priceUnavailable}>
@@ -1078,18 +1102,47 @@ const styles = StyleSheet.create({
     color: colors.error || '#d9534f',
     fontStyle: 'italic',
   },
+  breakdownBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+  },
   breakdownPdfButton: {
+    flex: 1,
     flexDirection: 'row',
     backgroundColor: colors.primary || '#002626',
     paddingVertical: 10,
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
     borderRadius: 8,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    gap: 6,
+  },
+  breakdownPdfButtonActive: {
+    backgroundColor: '#0F3236',
   },
   breakdownPdfButtonText: {
     color: colors.textWhite || '#ffffff',
-    fontSize: 14,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  clientPreviewBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#7C3AED',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  clientPreviewBtnActive: {
+    backgroundColor: '#5B21B6',
+  },
+  clientPreviewBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
     fontWeight: '700',
   },
   resetButton: {

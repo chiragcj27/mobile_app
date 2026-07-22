@@ -1383,7 +1383,7 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     borderWidth: 1,
     borderColor: 'rgba(192,200,201,0.3)',
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
   },
   imgCommentHeader: {
     flexDirection: 'row',

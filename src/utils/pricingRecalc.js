@@ -1,12 +1,15 @@
+import { makeExtraCharges } from './extraCharges';
+
 const CHARGE_KEYS = ['Loss', 'Labour', 'ExtraCharges'];
 const DUTY_KEYS = ['UndercutPrice', 'NaturalDuties', 'LabDuties', 'GoldDuties', 'SilverAndLabsDuties', 'LossAndLabourDuties'];
 
 function resolveCharges(data, commonCharges = {}) {
   const src = data?.editableCharges ?? commonCharges ?? {};
   return {
-    Loss:           parseFloat(src.Loss) || 0,
-    Labour:         parseFloat(src.Labour) || 0,
-    ExtraCharges:   parseFloat(src.ExtraCharges) || 0,
+    Loss:             parseFloat(src.Loss) || 0,
+    Labour:           parseFloat(src.Labour) || 0,
+    ExtraCharges:     parseFloat(src.ExtraCharges) || 0,
+    ExtraChargesType: src.ExtraChargesType || 'percentage',
   };
 }
 
@@ -61,18 +64,23 @@ export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selecte
   const previousCharges = resolveCharges(data, commonCharges);
   const previousDutyRates = resolveDutyRates(data, selectedClient, commonCharges);
 
+  const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
+  const metalPayload = {
+    Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
+    Quality: data?.editableMetal?.Quality || metalKt,
+  };
+  if (metalRate > 0) {
+    metalPayload.Rate = metalRate;
+  }
+
   const payload = {
     details: {
-      Metal: {
-        Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
-        Quality: data?.editableMetal?.Quality || metalKt,
-        Rate: parseFloat(data?.editableMetal?.Rate || commonMetal.Rate || 0) || 0,
-      },
+      Metal: metalPayload,
       Stones: formattedStones,
       Quantity: 1,
       Loss: previousCharges.Loss,
       Labour: previousCharges.Labour,
-      ExtraCharges: previousCharges.ExtraCharges,
+      ExtraCharges: makeExtraCharges(previousCharges.ExtraCharges, previousCharges.ExtraChargesType),
       UndercutPrice: previousDutyRates.UndercutPrice,
       NaturalDuties: previousDutyRates.NaturalDuties,
       LabDuties: previousDutyRates.LabDuties,
