@@ -41,6 +41,7 @@ import {
   useGetClientByIdQuery,
 } from '../../store/api';
 import { buildCombinedHtml } from './previewScreen';
+import CropBoxSelector from './CropBoxSelector';
 
 let generatePDFModule = null;
 try {
@@ -90,6 +91,9 @@ export default function PricingCalci({ route, navigation }) {
   const [singleStoneCatData, setSingleStoneCatData] = useState(null);
   const [singleStoneModalKey, setSingleStoneModalKey] = useState(0);
   const [extractPhase, setExtractPhase] = useState('');
+  // Crop-box selection: the picked original waits here while the user marks the chart region.
+  const [cropSelectorVisible, setCropSelectorVisible] = useState(false);
+  const [pendingImage, setPendingImage] = useState(null);
 
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
@@ -676,202 +680,204 @@ export default function PricingCalci({ route, navigation }) {
 
   handleRecalculateAllRef.current = handleRecalculateAll;
 
+  // Runs the extraction on the ORIGINAL image plus the selected crop region (fractions 0..1).
+  // The backend crops full-resolution from those fractions — the device never crops, so iOS
+  // and Android behave identically.
+  const runExtraction = async (imageFile, crop) => {
+    resetToFresh();
+    setImageFile(imageFile);
+    setIsExtracting(true);
+    setExtractPhase('extracting');
+
+    try {
+      const firstType = selectedStoneTypes[0];
+      console.log('[ImagePick] Firing single Gemini extraction for firstType:', firstType, '| crop:', crop);
+      const extractionResponse = await GetimagepriceData({
+        image: imageFile,
+        clientId: clientId,
+        stoneType: firstType,
+        metalQuality: metalKt,
+        cropX: crop?.x,
+        cropY: crop?.y,
+        cropW: crop?.w,
+        cropH: crop?.h,
+      }).unwrap();
+
+      const rawMultiData = {};
+      const p = extractionResponse.pricing || extractionResponse.extractedData || extractionResponse;
+
+      console.log('[ImagePick] Extraction response:', { stones: p.Stones?.length, metalWeight: p.Metal?.Weight, totalPieces: p.TotalPieces });
+      const hasData =
+        (p.Stones && p.Stones.length > 0) ||
+        (p.Metal && parseFloat(p.Metal.Weight) > 0) ||
+        p.TotalPieces > 0;
+
+      if (hasData) {
+        const buildTypeData = (type) => ({
+          imageData: extractionResponse,
+          editableStones: (p.Stones || []).map(s => ({
+            ...s,
+            Type: type,
+          })),
+          editableMetal: {
+            Weight: p.Metal?.Weight || 0,
+            Quality: p.Metal?.Quality || metalKt,
+            Rate: p.Metal?.Rate || '',
+            Ounce: p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '',
+          },
+          editableCharges: {
+            Loss: p.Client?.Loss ?? 10,
+            Labour: p.Client?.Labour ?? 7,
+            ExtraCharges: extraChargesValue(p.Client?.ExtraCharges),
+            ExtraChargesType: extraChargesType(p.Client?.ExtraCharges),
+            GoldDuties: p.Client?.GoldDuties ?? 0,
+            SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
+            LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
+          },
+          dutyRates: {
+            UndercutPrice: p.Client?.UndercutPrice ?? undefined,
+            UndercutPriceTouched: false,
+            NaturalDuties: p.Client?.NaturalDuties ?? 0,
+            LabDuties: p.Client?.LabDuties ?? 0,
+          },
+          pricingResult: p,
+        });
+
+        rawMultiData[firstType] = buildTypeData(firstType);
+        selectedStoneTypes.slice(1).forEach(type => {
+          rawMultiData[type] = buildTypeData(type);
+        });
+      }
+
+      console.log('[ImagePick] rawMultiData types built:', Object.keys(rawMultiData));
+      if (Object.keys(rawMultiData).length === 0) {
+        showAlert('No Data Found', 'No pricing data was extracted from the image.', 'warning');
+        resetToFresh();
+      } else {
+        const grouped = groupStoneDataByCategory(rawMultiData, stoneCategoryMap);
+        setGroupedData(grouped);
+        const allTypes = [];
+        Object.values(grouped).forEach((catData) => {
+          catData.types.forEach((type) => allTypes.push(type));
+        });
+        const firstGroupType = allTypes[0];
+        if (firstGroupType) {
+          let firstData = null;
+          Object.values(grouped).forEach((catData) => {
+            if (catData.byType[firstGroupType]) firstData = catData.byType[firstGroupType];
+          });
+          if (firstData) {
+            const m = firstData.editableMetal;
+            setCommonMetal({
+              Weight: m.Weight ? String(m.Weight) : commonMetal.Weight,
+              Rate: m.Rate ? String(m.Rate) : commonMetal.Rate,
+              Ounce: firstData.pricingResult?.GoldRatePerOunce ? firstData.pricingResult.GoldRatePerOunce.toString() : commonMetal.Ounce,
+            });
+          }
+        }
+        setExtractPhase('calculating');
+        needsAutoRecalcRef.current = true;
+      }
+    } catch (apiError) {
+      if (apiError?.status === 429 || apiError?.data?.statusCode === 429) {
+        showAlert('Rate Limit', 'Too many requests. Please try again later.', 'error', [
+          { text: 'Try Again', onPress: () => runExtraction(imageFile, crop) },
+        ]);
+      } else {
+        showAlert('Extraction Error', 'Failed to extract pricing data. Check configuration.', 'error');
+      }
+      resetToFresh();
+    }
+  };
+
+  const handleCropConfirm = (crop) => {
+    setCropSelectorVisible(false);
+    const img = pendingImage;
+    setPendingImage(null);
+    if (!img) return;
+    console.log('[crop][calculator] confirm', {
+      crop,
+      image: { width: img.width, height: img.height, type: img.type },
+    });
+    runExtraction({ uri: img.uri, name: img.name, type: img.type }, crop);
+  };
+
+  const handleCropCancel = () => {
+    setCropSelectorVisible(false);
+    setPendingImage(null);
+  };
+
   const handleImagePick = async () => {
     if (!clientId) {
       showAlert('Validation Error', 'Please select a client first', 'warning');
       return;
     }
     if (selectedStoneTypes.length === 0) {
-      showAlert(
-        'Validation Error',
-        'Please select at least one stone type',
-        'warning',
-      );
+      showAlert('Validation Error', 'Please select at least one stone type', 'warning');
       return;
     }
 
     try {
-      // Step 1: Pick original image (pre-crop) and save to AsyncStorage
-      let originalUri;
+      // Pick the ORIGINAL image with NO on-device cropping (that was the iOS-degrading step).
+      // forceJpg converts HEIC → JPEG and bakes in EXIF orientation so the box the user draws
+      // matches what the backend will decode. The user then marks the chart region and the
+      // backend crops full-resolution from those fractions.
+      let picked;
       try {
-        const picked = await ImageCropPicker.openPicker({
+        picked = await ImageCropPicker.openPicker({
           mediaType: 'photo',
+          cropping: false,
+          forceJpg: true,
+          compressImageQuality: 1,
         });
-        if (!picked?.path) {
-          showAlert('Error', 'Failed to pick image.', 'error');
-          return;
-        }
-        originalUri = picked.path;
       } catch (pickErr) {
         if (pickErr?.code === 'E_PICKER_CANCELLED') return;
         throw pickErr;
       }
+      if (!picked?.path) {
+        showAlert('Error', 'Failed to pick image.', 'error');
+        return;
+      }
+      if (picked.size && picked.size > 20 * 1024 * 1024) {
+        showAlert('File too large', 'Maximum allowed image size is 20MB.', 'warning');
+        return;
+      }
 
-      // Save pre-crop image to AsyncStorage
+      const uri = picked.path.startsWith('file://') ? picked.path : `file://${picked.path}`;
+
+      // Save the original for the in-app preview.
       try {
-        const filePath = originalUri.replace(/^file:\/\//, '');
-        const base64 = await RNFS.readFile(filePath, 'base64');
+        const base64 = await RNFS.readFile(picked.path.replace(/^file:\/\//, ''), 'base64');
         await AsyncStorage.setItem('@pre_crop_image', base64);
       } catch (e) {
-        // Non-critical - continue even if saving fails
+        // Non-critical
       }
 
-      // Step 2: Open cropper on the original image
-      let cropped;
       try {
-        cropped = await ImageCropPicker.openCropper({
-          path: originalUri,
-          freeStyleCropEnabled: true,
-          // iOS downscales the cropped output to the crop-view resolution unless an explicit
-          // max size is given, which made the uploaded image blurry vs Android. Pinning these
-          // forces both platforms to output the same high resolution so the API sees the same
-          // level of detail (crucial for reading small stone/Excel text).
-          compressImageMaxWidth: 2400,
-          compressImageMaxHeight: 2400,
-          compressImageQuality: 0.9,
-          forceJpg: true,
-          cropperToolbarTitle: 'Crop the stones excel for accuracy',
-          cropperStatusBarColor: colors.primary,
-          cropperToolbarColor: colors.primary,
-          cropperActiveWidgetColor: colors.primary,
-          cropperToolbarWidgetColor: '#ffffff',
+        const stat = await RNFS.stat(uri.replace(/^file:\/\//, ''));
+        console.log('[ImagePick][DIAG] picked original', {
+          platform: Platform.OS,
+          width: picked.width,
+          height: picked.height,
+          mime: picked.mime,
+          pickedSize: picked.size,
+          onDiskBytes: stat.size,
         });
-      } catch (cropErr) {
-        if (cropErr?.code === 'E_PICKER_CANCELLED') return;
-        throw cropErr;
+      } catch (diagErr) {
+        console.log('[ImagePick][DIAG] stat failed', diagErr?.message || diagErr);
       }
 
-      if (cropped) {
-        if (cropped.size && cropped.size > 20 * 1024 * 1024) {
-          showAlert(
-            'File too large',
-            'Maximum allowed image size is 20MB.',
-            'warning',
-          );
-          resetToFresh();
-          return;
-        }
-
-        // Upload the native-cropped image directly. The whole pipeline (pick → crop → upload)
-        // is now native, so iOS and Android send an identical image to the extraction API.
-        const newImageFile = {
-          uri: cropped.path.startsWith('file://') ? cropped.path : `file://${cropped.path}`,
-          name: cropped.filename || `image_${Date.now()}.jpg`,
-          type: cropped.mime || 'image/jpeg',
-        };
-        // A new image means a fresh design — wipe everything from the previous image first,
-        // then set the new image and start extraction.
-        resetToFresh();
-        setImageFile(newImageFile);
-        setIsExtracting(true);
-        setExtractPhase('extracting');
-
-        try {
-          const firstType = selectedStoneTypes[0];
-          console.log('[ImagePick] Firing single Gemini extraction for firstType:', firstType, '| totalTypes:', selectedStoneTypes.length);
-          const extractionResponse = await GetimagepriceData({
-            image: newImageFile,
-            clientId: clientId,
-            stoneType: firstType,
-            metalQuality: metalKt,
-          }).unwrap();
-
-          const rawMultiData = {};
-          const p = extractionResponse.pricing || extractionResponse.extractedData || extractionResponse;
-
-          console.log('[ImagePick] Extraction response:', { stones: p.Stones?.length, metalWeight: p.Metal?.Weight, totalPieces: p.TotalPieces });
-          const hasData =
-            (p.Stones && p.Stones.length > 0) ||
-            (p.Metal && parseFloat(p.Metal.Weight) > 0) ||
-            p.TotalPieces > 0;
-
-          if (hasData) {
-            const buildTypeData = (type) => ({
-              imageData: extractionResponse,
-              editableStones: (p.Stones || []).map(s => ({
-                ...s,
-                Type: type,
-              })),
-              editableMetal: {
-                Weight: p.Metal?.Weight || 0,
-                Quality: p.Metal?.Quality || metalKt,
-                Rate: p.Metal?.Rate || '',
-                Ounce: p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '',
-              },
-              editableCharges: {
-                Loss: p.Client?.Loss ?? 10,
-                Labour: p.Client?.Labour ?? 7,
-                ExtraCharges: extraChargesValue(p.Client?.ExtraCharges),
-                ExtraChargesType: extraChargesType(p.Client?.ExtraCharges),
-                GoldDuties: p.Client?.GoldDuties ?? 0,
-                SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
-                LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
-              },
-              dutyRates: {
-                UndercutPrice: p.Client?.UndercutPrice ?? undefined,
-                UndercutPriceTouched: false,
-                NaturalDuties: p.Client?.NaturalDuties ?? 0,
-                LabDuties: p.Client?.LabDuties ?? 0,
-              },
-              pricingResult: p,
-            });
-
-            rawMultiData[firstType] = buildTypeData(firstType);
-            selectedStoneTypes.slice(1).forEach(type => {
-              rawMultiData[type] = buildTypeData(type);
-            });
-          }
-
-          console.log('[ImagePick] rawMultiData types built:', Object.keys(rawMultiData));
-          if (Object.keys(rawMultiData).length === 0) {
-            showAlert(
-              'No Data Found',
-              'No pricing data was extracted from the image.',
-              'warning',
-            );
-            // No usable data — reset to a clean slate (also re-enables the upload button).
-            resetToFresh();
-          } else {
-            const grouped = groupStoneDataByCategory(rawMultiData, stoneCategoryMap);
-            setGroupedData(grouped);
-            const allTypes = [];
-            Object.values(grouped).forEach((catData) => {
-              catData.types.forEach((type) => allTypes.push(type));
-            });
-            const firstType = allTypes[0];
-            if (firstType) {
-              let firstData = null;
-              Object.values(grouped).forEach((catData) => {
-                if (catData.byType[firstType]) firstData = catData.byType[firstType];
-              });
-              if (firstData) {
-                const m = firstData.editableMetal;
-                setCommonMetal({
-                  Weight: m.Weight ? String(m.Weight) : commonMetal.Weight,
-                  Rate: m.Rate ? String(m.Rate) : commonMetal.Rate,
-                  Ounce: firstData.pricingResult?.GoldRatePerOunce ? firstData.pricingResult.GoldRatePerOunce.toString() : commonMetal.Ounce,
-                });
-              }
-            }
-            setExtractPhase('calculating');
-            needsAutoRecalcRef.current = true;
-          }
-      } catch (apiError) {
-        if (apiError?.status === 429 || apiError?.data?.statusCode === 429) {
-          showAlert('Rate Limit', 'Too many requests. Please try again later.', 'error', [
-            { text: 'Try Again', onPress: () => handleImagePick() },
-          ]);
-        } else {
-          showAlert(
-            'Extraction Error',
-            'Failed to extract pricing data. Check configuration.',
-            'error',
-          );
-        }
-        // Extraction failed — reset to a clean slate, don't keep stale data.
-        resetToFresh();
-        }
-      }
+      // Hold the original and let the user mark the chart region.
+      setPendingImage({
+        uri,
+        name: picked.filename || `image_${Date.now()}.jpg`,
+        type: picked.mime || 'image/jpeg',
+        width: picked.width,
+        height: picked.height,
+      });
+      // Delay presenting our Modal so iOS has finished dismissing the image picker first —
+      // presenting a Modal while another is still dismissing is silently dropped on iOS.
+      setTimeout(() => setCropSelectorVisible(true), Platform.OS === 'ios' ? 400 : 0);
     } catch (error) {
       showAlert('Error', 'Failed to pick image.', 'error');
       resetToFresh();
@@ -1140,6 +1146,14 @@ export default function PricingCalci({ route, navigation }) {
 
   return (
     <View style={styles.container}>
+      <CropBoxSelector
+        visible={cropSelectorVisible}
+        imageUri={pendingImage?.uri}
+        imageWidth={pendingImage?.width}
+        imageHeight={pendingImage?.height}
+        onConfirm={handleCropConfirm}
+        onCancel={handleCropCancel}
+      />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
