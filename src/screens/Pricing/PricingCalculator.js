@@ -17,7 +17,6 @@ import PdfViewer from '../../components/common/PdfViewer';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { launchImageLibrary } from 'react-native-image-picker';
 import ImageCropPicker from 'react-native-image-crop-picker';
 
 import { Card } from '../../components/cards/Cards';
@@ -663,18 +662,16 @@ export default function PricingCalci({ route, navigation }) {
       // Step 1: Pick original image (pre-crop) and save to AsyncStorage
       let originalUri;
       try {
-        const pickResult = await launchImageLibrary({
+        const picked = await ImageCropPicker.openPicker({
           mediaType: 'photo',
-          quality: 1,
         });
-        if (pickResult.didCancel) return;
-        const picked = pickResult.assets?.[0];
-        if (!picked?.uri) {
+        if (!picked?.path) {
           showAlert('Error', 'Failed to pick image.', 'error');
           return;
         }
-        originalUri = picked.uri;
+        originalUri = picked.path;
       } catch (pickErr) {
+        if (pickErr?.code === 'E_PICKER_CANCELLED') return;
         throw pickErr;
       }
 
