@@ -19,6 +19,7 @@ import DiamondRow from './components/DiamondRow';
 import DiamondEditModal from './components/DiamondEditModal';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
 import { DUTY_FIELDS } from '../../utils/pricingDuties';
+import { normalizeExtraCharges, makeExtraCharges } from '../../utils/extraCharges';
 
 // DocumentPicker is optional
 let DocumentPicker;
@@ -33,6 +34,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
   const [loss, setLoss] = useState('0');
   const [labour, setLabour] = useState('0');
   const [extraCharges, setExtraCharges] = useState('0');
+  const [extraChargesType, setExtraChargesType] = useState('percentage');
   const [naturalDuties, setNaturalDuties] = useState('0');
   const [labDuties, setLabDuties] = useState('0');
   const [goldDuties, setGoldDuties] = useState('0');
@@ -104,7 +106,9 @@ const ClientPricingScreen = ({ route, navigation }) => {
       const pricing = clientData.Pricing || clientData.pricing || {};
       setLoss(pricing.Loss?.toString() || pricing.loss?.toString() || '0');
       setLabour(pricing.Labour?.toString() || pricing.labour?.toString() || '0');
-      setExtraCharges(pricing.ExtraCharges?.toString() || pricing.extraCharges?.toString() || '0');
+      const ec = normalizeExtraCharges(pricing.ExtraCharges ?? pricing.extraCharges);
+      setExtraCharges(ec.Value.toString());
+      setExtraChargesType(ec.Type);
       setNaturalDuties(pricing.NaturalDuties?.toString() ?? pricing.naturalDuties?.toString() ?? '0');
       setLabDuties(pricing.LabDuties?.toString() ?? pricing.labDuties?.toString() ?? '0');
       setGoldDuties(pricing.GoldDuties?.toString() ?? pricing.goldDuties?.toString() ?? '0');
@@ -420,7 +424,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
         Pricing: {
           Loss: parseFloat(loss) || 0,
           Labour: parseFloat(labour) || 0,
-          ExtraCharges: parseFloat(extraCharges) || 0,
+          ExtraCharges: makeExtraCharges(parseFloat(extraCharges) || 0, extraChargesType),
           NaturalDuties: parseFloat(naturalDuties) || 0,
           LabDuties: parseFloat(labDuties) || 0,
           GoldDuties: parseFloat(goldDuties) || 0,
@@ -486,7 +490,25 @@ const ClientPricingScreen = ({ route, navigation }) => {
             </View>
             <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
               <Text style={styles.label}>Extra Charges*</Text>
-              <Input value={extraCharges} onChangeText={setExtraCharges} keyboardType="numeric" placeholder="0" />
+              <View style={styles.extraChargesRow}>
+                <View style={styles.extraChargesInput}>
+                  <Input value={extraCharges} onChangeText={setExtraCharges} keyboardType="numeric" placeholder="0" />
+                </View>
+                <View style={styles.extraChargesToggle}>
+                  <TouchableOpacity
+                    style={[styles.extraChargesToggleBtn, extraChargesType === 'percentage' && styles.extraChargesToggleBtnActive]}
+                    onPress={() => setExtraChargesType('percentage')}
+                  >
+                    <Text style={[styles.extraChargesToggleText, extraChargesType === 'percentage' && styles.extraChargesToggleTextActive]}>%</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.extraChargesToggleBtn, extraChargesType === 'fixed' && styles.extraChargesToggleBtnActive]}
+                    onPress={() => setExtraChargesType('fixed')}
+                  >
+                    <Text style={[styles.extraChargesToggleText, extraChargesType === 'fixed' && styles.extraChargesToggleTextActive]}>$</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
             <View style={[styles.fieldContainer, isTablet && styles.fieldContainerTablet]}>
               <Text style={styles.label}>Undercut Price</Text>
@@ -602,7 +624,7 @@ const ClientPricingScreen = ({ route, navigation }) => {
         </View>
       </View>
     </View>
-  ), [clientData, clientName, loss, labour, extraCharges, naturalDuties, labDuties, goldDuties, silverAndLabsDuties, lossAndLabourDuties, undercutPrice, pricingMessageFormat, applicableStoneTypes, stoneTypesData, isDownloadingExcel, isImportingExcel, handleAddDiamond, isTablet]);
+  ), [clientData, clientName, loss, labour, extraCharges, extraChargesType, naturalDuties, labDuties, goldDuties, silverAndLabsDuties, lossAndLabourDuties, undercutPrice, pricingMessageFormat, applicableStoneTypes, stoneTypesData, isDownloadingExcel, isImportingExcel, handleAddDiamond, isTablet]);
 
   // Render type sections
   const renderTypeSection = useCallback(({ item: [type, rows] }) => {
@@ -955,6 +977,39 @@ const styles = StyleSheet.create({
   messageFormatInput: {
     minHeight: 200,
     textAlignVertical: 'top',
+  },
+  extraChargesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  
+  },
+  extraChargesInput: {
+    flex: 1,
+  },
+  extraChargesToggle: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 18,
+  },
+  extraChargesToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.white,
+  },
+  extraChargesToggleBtnActive: {
+    backgroundColor: colors.primary,
+  },
+  extraChargesToggleText: {
+    fontSize: fonts.base,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+  },
+  extraChargesToggleTextActive: {
+    color: colors.textWhite,
   },
 });
 

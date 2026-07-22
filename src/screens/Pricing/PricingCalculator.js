@@ -16,6 +16,7 @@ import BrandedAlert from '../../components/common/BrandedAlert';
 import PdfViewer from '../../components/common/PdfViewer';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { launchImageLibrary } from 'react-native-image-picker';
 import ImageCropPicker from 'react-native-image-crop-picker';
 
@@ -26,12 +27,14 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
+import { useImageProcessor } from '../../utils/imageProcessor';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
   regroupApiResults,
 } from '../../utils/stoneDataGrouper';
 import { getClientStoneOptions, buildStoneCategoryMap } from '../../utils/stoneTypeMapping';
+import { extraChargesValue, extraChargesType } from '../../utils/extraCharges';
 import {
   useGetStoneTypesQuery,
   useGetMetalPricesQuery,
@@ -89,6 +92,7 @@ export default function PricingCalci({ route, navigation }) {
   const [singleStoneCatData, setSingleStoneCatData] = useState(null);
   const [singleStoneModalKey, setSingleStoneModalKey] = useState(0);
   const [extractPhase, setExtractPhase] = useState('');
+  const { processImage, processor } = useImageProcessor();
 
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
@@ -112,6 +116,15 @@ export default function PricingCalci({ route, navigation }) {
   const [GetimagepriceData, { isLoading: isImageLoading }] =
     useImagepriceDataMutation();
 
+  // Client objects come from two sources with different name casing: the list from
+  // useClients() uses `.name`, the fetched client (getClientById) uses `.Name`.
+  const resolvedClientName =
+    selectedClient?.Name ||
+    selectedClient?.name ||
+    clients.find(c => c.id === clientId || c._id === clientId)?.name ||
+    clients.find(c => c.id === clientId || c._id === clientId)?.Name ||
+    'Client';
+
   // Auto-fill stone types when client is selected
   useEffect(() => {
     if (clientId && selectedClient?.ApplicableStoneTypes) {
@@ -129,6 +142,8 @@ export default function PricingCalci({ route, navigation }) {
     setIsRecalculating(false);
     setPdfHtml(null);
     setShowPdfModal(false);
+    setSingleStoneCatData(null);
+    setShowSingleStoneModal(false);
   }, [clientId, selectedClient]);
 
   // Count missing stones — optionally filter by a specific type
@@ -358,12 +373,13 @@ export default function PricingCalci({ route, navigation }) {
       editableMetal: {
         Weight: p.Metal?.Weight || 0,
         Quality: p.Metal?.Quality || metalKt,
-        Rate: p.Metal?.Rate || 0,
+        Rate: p.Metal?.Rate || '',
       },
       editableCharges: {
         Loss: p.Client?.Loss ?? 10,
         Labour: p.Client?.Labour ?? 7,
-        ExtraCharges: p.Client?.ExtraCharges ?? 0,
+        ExtraCharges: extraChargesValue(p.Client?.ExtraCharges),
+        ExtraChargesType: extraChargesType(p.Client?.ExtraCharges),
         GoldDuties: p.Client?.GoldDuties ?? 0,
         SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
         LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
@@ -380,8 +396,7 @@ export default function PricingCalci({ route, navigation }) {
 
   const handleMetalKtChange = (newKt) => {
     setMetalKt(newKt);
-    const updated = { ...commonMetal, Rate: '' };
-    setCommonMetal(updated);
+    setCommonMetal({ ...commonMetal, Rate: '' });
     setGroupedData((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((cat) => {
@@ -645,12 +660,38 @@ export default function PricingCalci({ route, navigation }) {
     }
 
     try {
-      // Pick from the gallery and immediately open the cropper — only the cropped image is used.
+      // Step 1: Pick original image (pre-crop) and save to AsyncStorage
+      let originalUri;
+      try {
+        const pickResult = await launchImageLibrary({
+          mediaType: 'photo',
+          quality: 1,
+        });
+        if (pickResult.didCancel) return;
+        const picked = pickResult.assets?.[0];
+        if (!picked?.uri) {
+          showAlert('Error', 'Failed to pick image.', 'error');
+          return;
+        }
+        originalUri = picked.uri;
+      } catch (pickErr) {
+        throw pickErr;
+      }
+
+      // Save pre-crop image to AsyncStorage
+      try {
+        const filePath = originalUri.replace(/^file:\/\//, '');
+        const base64 = await RNFS.readFile(filePath, 'base64');
+        await AsyncStorage.setItem('@pre_crop_image', base64);
+      } catch (e) {
+        // Non-critical - continue even if saving fails
+      }
+
+      // Step 2: Open cropper on the original image
       let cropped;
       try {
-        cropped = await ImageCropPicker.openPicker({
-          mediaType: 'photo',
-          cropping: true,
+        cropped = await ImageCropPicker.openCropper({
+          path: originalUri,
           freeStyleCropEnabled: true,
           compressImageQuality: 0.8,
           forceJpg: true,
@@ -660,10 +701,9 @@ export default function PricingCalci({ route, navigation }) {
           cropperActiveWidgetColor: colors.primary,
           cropperToolbarWidgetColor: '#ffffff',
         });
-      } catch (pickErr) {
-        // User backed out of the picker or the crop screen — nothing to extract.
-        if (pickErr?.code === 'E_PICKER_CANCELLED') return;
-        throw pickErr;
+      } catch (cropErr) {
+        if (cropErr?.code === 'E_PICKER_CANCELLED') return;
+        throw cropErr;
       }
 
       if (cropped) {
@@ -676,15 +716,39 @@ export default function PricingCalci({ route, navigation }) {
           return;
         }
 
-        const newImageFile = {
-          uri: cropped.path,
-          name: cropped.filename || `image_${Date.now()}.jpg`,
-          type: cropped.mime || 'image/jpeg',
-        };
+        // Process cropped image with B&W + sharpen for better API accuracy
+        let apiImageFile;
+        try {
+          const croppedBase64 = await RNFS.readFile(cropped.path.replace(/^file:\/\//, ''), 'base64');
+          const processedBase64 = await processImage(croppedBase64);
+          const processedPath = `${RNFS.CachesDirectoryPath}/bw_${Date.now()}.jpg`;
+          await RNFS.writeFile(processedPath, processedBase64, 'base64');
+          apiImageFile = {
+            uri: processedPath.startsWith('file://') ? processedPath : `file://${processedPath}`,
+            name: `bw_${Date.now()}.jpg`,
+            type: 'image/jpeg',
+          };
+        } catch (processErr) {
+          apiImageFile = {
+            uri: cropped.path,
+            name: cropped.filename || `image_${Date.now()}.jpg`,
+            type: cropped.mime || 'image/jpeg',
+          };
+        }
+
+        const newImageFile = apiImageFile;
+        // A new image means a fresh design — clear all previous pricing state so nothing
+        // from the last image lingers (avoids the "stuck" data when re-picking an image).
         setImageFile(newImageFile);
+        setGroupedData({});
+        setStoneRecalcStatus({});
+        setCommonMetal({ Weight: '', Rate: '' });
+        setPdfHtml(null);
+        setShowPdfModal(false);
+        setSingleStoneCatData(null);
+        setShowSingleStoneModal(false);
         setIsExtracting(true);
         setExtractPhase('extracting');
-        setStoneRecalcStatus({});
 
         try {
           const firstType = selectedStoneTypes[0];
@@ -715,12 +779,13 @@ export default function PricingCalci({ route, navigation }) {
               editableMetal: {
                 Weight: p.Metal?.Weight || 0,
                 Quality: p.Metal?.Quality || metalKt,
-                Rate: p.Metal?.Rate || 0,
+                Rate: p.Metal?.Rate || '',
               },
               editableCharges: {
                 Loss: p.Client?.Loss ?? 10,
                 Labour: p.Client?.Labour ?? 7,
-                ExtraCharges: p.Client?.ExtraCharges ?? 0,
+                ExtraCharges: extraChargesValue(p.Client?.ExtraCharges),
+                ExtraChargesType: extraChargesType(p.Client?.ExtraCharges),
                 GoldDuties: p.Client?.GoldDuties ?? 0,
                 SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
                 LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
@@ -750,6 +815,11 @@ export default function PricingCalci({ route, navigation }) {
             setImageFile(null);
             setGroupedData({});
             setStoneRecalcStatus({});
+            // Clear the extracting state here too — otherwise the upload button stays
+            // disabled (disabled={isExtracting}) and a re-upload does nothing until the
+            // screen is reopened.
+            setIsExtracting(false);
+            setExtractPhase('');
           } else {
             const grouped = groupStoneDataByCategory(rawMultiData, stoneCategoryMap);
             setGroupedData(grouped);
@@ -1060,6 +1130,7 @@ export default function PricingCalci({ route, navigation }) {
 
   return (
     <View style={styles.container}>
+      {processor}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -1216,7 +1287,7 @@ export default function PricingCalci({ route, navigation }) {
                       (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && styles.fieldLabelError,
                     ]}
                   >
-                    Rate ($/g) *
+                    24K Rate ($/g) *
                   </Text>
                   <TextInput
                     style={[
@@ -1275,8 +1346,34 @@ export default function PricingCalci({ route, navigation }) {
                 >
                   <Icon name="diamond" size={20} color={colors.primary} />
                   <Text style={styles.accordionTitle}>{catData.label} Pricing</Text>
-                </View>
-                {!hasMissing ? <TouchableOpacity
+                  </View>
+                  {!hasMissing ? <>
+                  <TouchableOpacity
+                    style={styles.previewSummaryBtnAdmin}
+                  onPress={() => {
+                    const entries = catData.types
+                      .map(type => catData.byType[type]?.pricingResult)
+                      .filter(Boolean);
+                    navigation.navigate('PricingPreview', {
+                      pricingEntries: entries,
+                      clientName: resolvedClientName,
+                      metalKt,
+                      preCropImageKey: '@pre_crop_image',
+                    });
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Icon name="visibility" size={16} color={colors.textWhite} />
+                  <Text style={styles.previewSummaryBtnText}>Admin Preview</Text>
+                </TouchableOpacity> 
+
+                
+                </>: <Text style={{color: colors.error}}>$0.00</Text>}
+                <Icon name="chevron-right" size={22} color={colors.textSecondary} style={{marginLeft: 8}}/>
+              </TouchableOpacity>
+                  {!hasMissing && (
+                    <>
+                     <TouchableOpacity
                   style={styles.previewSummaryBtn}
                   onPress={() => {
                     const entries = catData.types
@@ -1284,17 +1381,19 @@ export default function PricingCalci({ route, navigation }) {
                       .filter(Boolean);
                     navigation.navigate('PricingPreview', {
                       pricingEntries: entries,
-                      clientName: clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client',
+                      clientName: resolvedClientName,
                       metalKt,
+                      preCropImageKey: '@pre_crop_image',
+                      isClientPreview: true,
                     });
                   }}
                   activeOpacity={0.8}
                 >
                   <Icon name="visibility" size={16} color={colors.textWhite} />
-                  <Text style={styles.previewSummaryBtnText}>Preview</Text>
-                </TouchableOpacity> : <Text style={{color: colors.error}}>$0.00</Text>}
-                <Icon name="chevron-right" size={22} color={colors.textSecondary} style={{marginLeft: 8}}/>
-              </TouchableOpacity>
+                  <Text style={styles.previewSummaryBtnText}>Client Preview</Text>
+                </TouchableOpacity> 
+                    </>
+                  )}
             </Card>
           );
         })}
@@ -1643,6 +1742,7 @@ export default function PricingCalci({ route, navigation }) {
             </View>
           </View>
         </View>
+      <BrandedAlert {...alertConfig} onClose={hideAlert} />
       </Modal>
 
       <SingleStonePricing
@@ -1692,8 +1792,23 @@ export default function PricingCalci({ route, navigation }) {
             ?.filter(Boolean) || [];
           navigation.navigate('PricingPreview', {
             pricingEntries: entries,
-            clientName: clients.find(c => c.id === clientId || c._id === clientId)?.name || 'Client',
+            clientName: resolvedClientName,
             metalKt,
+            preCropImageKey: '@pre_crop_image',
+          });
+        }}
+        onClientPreview={() => {
+          setShowSingleStoneModal(false);
+          const cat = singleStoneCatDataRef.current;
+          const entries = cat?.types
+            ?.map(type => cat.byType[type]?.pricingResult)
+            ?.filter(Boolean) || [];
+          navigation.navigate('PricingPreview', {
+            pricingEntries: entries,
+            clientName: resolvedClientName,
+            metalKt,
+            preCropImageKey: '@pre_crop_image',
+            isClientPreview: true,
           });
         }}
         onRequestRecalculate={() => {
@@ -1729,7 +1844,7 @@ const styles = StyleSheet.create({
   accordionCard: {
     marginTop: 16,
     padding: 0,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
@@ -1787,7 +1902,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     minWidth: 280,
     maxHeight: '60%',
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     elevation: 5,
   },
   dropdownOption: {
@@ -1882,7 +1997,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 6,
+    justifyContent: 'center',
   },
+  previewSummaryBtnAdmin: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#EF4444',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    justifyContent: 'center',
+  },
+  
   previewSummaryBtnText: {
     fontFamily: fonts.bold,
     fontSize: 12,

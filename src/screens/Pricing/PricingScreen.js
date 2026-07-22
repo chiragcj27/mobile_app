@@ -29,6 +29,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as XLSX from 'xlsx';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
 import { DUTY_FIELDS, computeApplicable, readDutyRates } from '../../utils/pricingDuties';
+import { extraChargesValue, extraChargesType, makeExtraCharges, formatExtraChargesLabel } from '../../utils/extraCharges';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -158,7 +159,8 @@ const PricingScreen = ({ route, navigation }) => {
         silverAndLabsDuties: rates.SilverAndLabsDuties.toString(),
         lossAndLabourDuties: rates.LossAndLabourDuties.toString(),
         dutiesAmount: (pricingEntry?.DutiesAmount || pricingEntry?.dutiesAmount || 0).toString(),
-        extraCharges: (pricingEntry?.ExtraCharges || pricingEntry?.extraCharges || 0).toString(),
+        extraCharges: extraChargesValue(pricingEntry?.ExtraCharges ?? pricingEntry?.extraCharges).toString(),
+        extraChargesType: extraChargesType(pricingEntry?.ExtraCharges ?? pricingEntry?.extraCharges),
         undercutPrice: (pricingEntry?.UndercutPrice || pricingEntry?.undercutPrice || 0).toString(),
         clientPricingMessage: pricingEntry?.ClientPricingMessage || '',
         metalQuality: entryMetalQuality,
@@ -530,7 +532,7 @@ const PricingScreen = ({ route, navigation }) => {
           Stones: transformedStones,
           Loss: Math.max(0, loss),
           Labour: Math.max(0, labour),
-          ExtraCharges: Math.max(0, extraCharges),
+          ExtraCharges: makeExtraCharges(Math.max(0, extraCharges), formData.extraChargesType),
           UndercutPrice: Math.max(0, undercutPriceValue),
           NaturalDuties: Math.max(0, dutyRates.NaturalDuties),
           LabDuties: Math.max(0, dutyRates.LabDuties),
@@ -547,7 +549,7 @@ const PricingScreen = ({ route, navigation }) => {
       if (!isFinite(payload.details.Metal.Weight) ||
           !isFinite(payload.details.Loss) ||
           !isFinite(payload.details.Labour) ||
-          !isFinite(payload.details.ExtraCharges) ||
+          !isFinite(payload.details.ExtraCharges.Value) ||
           !isFinite(payload.details.NaturalDuties) ||
           !isFinite(payload.details.LabDuties) ||
           !isFinite(payload.details.GoldDuties) ||
@@ -646,7 +648,8 @@ const PricingScreen = ({ route, navigation }) => {
             updates.labour = response.Client.Labour.toString();
           }
           if (response.Client.ExtraCharges !== undefined) {
-            updates.extraCharges = response.Client.ExtraCharges.toString();
+            updates.extraCharges = extraChargesValue(response.Client.ExtraCharges).toString();
+            updates.extraChargesType = extraChargesType(response.Client.ExtraCharges);
           }
           if (response.Client.UndercutPrice !== undefined) {
             updates.undercutPrice = response.Client.UndercutPrice.toString();
@@ -1192,7 +1195,7 @@ const PricingScreen = ({ route, navigation }) => {
               Quality: entryMetalQuality,
               Rate: entryMetalRate,
           },
-          ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
+          ExtraCharges: makeExtraCharges(parseFloat(entryFormData.extraCharges) || 0, entryFormData.extraChargesType),
           NaturalDuties: parseFloat(entryFormData.naturalDuties) || 0,
           LabDuties: parseFloat(entryFormData.labDuties) || 0,
           GoldDuties: parseFloat(entryFormData.goldDuties) || 0,
@@ -1683,7 +1686,7 @@ const PricingScreen = ({ route, navigation }) => {
           Stones: transformedStones,
           Loss: parseFloat(entryFormData.lossPercent) || 0,
           Labour: parseFloat(entryFormData.labour) || 0,
-          ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
+          ExtraCharges: makeExtraCharges(parseFloat(entryFormData.extraCharges) || 0, entryFormData.extraChargesType),
           UndercutPrice: parseFloat(entryFormData.undercutPrice) || 0,
           NaturalDuties: parseFloat(entryFormData.naturalDuties) || 0,
           LabDuties: parseFloat(entryFormData.labDuties) || 0,
@@ -1835,7 +1838,8 @@ const PricingScreen = ({ route, navigation }) => {
 
             // Extra Charges (can be negative)
             if (response.Client.ExtraCharges !== undefined && response.Client.ExtraCharges !== null) {
-              updatedFormData.extraCharges = parseFloat(response.Client.ExtraCharges).toString();
+              updatedFormData.extraCharges = extraChargesValue(response.Client.ExtraCharges).toString();
+              updatedFormData.extraChargesType = extraChargesType(response.Client.ExtraCharges);
             }
 
             // Undercut price (per-carat cap)
@@ -2078,7 +2082,8 @@ const PricingScreen = ({ route, navigation }) => {
             updatePricingEntryFormData(entryIndex, 'labour', response.Client.Labour.toString());
           }
           if (response.Client.ExtraCharges !== undefined) {
-            updatePricingEntryFormData(entryIndex, 'extraCharges', response.Client.ExtraCharges.toString());
+            updatePricingEntryFormData(entryIndex, 'extraCharges', extraChargesValue(response.Client.ExtraCharges).toString());
+            updatePricingEntryFormData(entryIndex, 'extraChargesType', extraChargesType(response.Client.ExtraCharges));
           }
           if (response.Client.UndercutPrice !== undefined) {
             updatePricingEntryFormData(entryIndex, 'undercutPrice', response.Client.UndercutPrice.toString());
@@ -2363,13 +2368,29 @@ const PricingScreen = ({ route, navigation }) => {
               keyboardType="numeric"
               style={[styles.gridInputQuarter, styles.compactInputField]}
             />
-            <Input
-              label="Extra Charges"
-              value={entryFormData.extraCharges}
-              onChangeText={(value) => updatePricingEntryFormData(index, 'extraCharges', value)}
-              keyboardType="numeric"
-              style={[styles.gridInputQuarter, styles.compactInputField]}
-            />
+            <View style={styles.gridInputQuarter}>
+              <Input
+                label={`Extra (${(entryFormData.extraChargesType || 'percentage') === 'fixed' ? '$' : '%'})`}
+                value={entryFormData.extraCharges}
+                onChangeText={(value) => updatePricingEntryFormData(index, 'extraCharges', value)}
+                keyboardType="numeric"
+                style={styles.compactInputField}
+              />
+              <View style={styles.extraChargesTypeRow}>
+                <TouchableOpacity
+                  style={[styles.extraChargesTypeBtn, (entryFormData.extraChargesType || 'percentage') === 'percentage' && styles.extraChargesTypeBtnActive]}
+                  onPress={() => updatePricingEntryFormData(index, 'extraChargesType', 'percentage')}
+                >
+                  <CustomText variant="label" style={[styles.extraChargesTypeText, (entryFormData.extraChargesType || 'percentage') === 'percentage' && styles.extraChargesTypeTextActive]}>%</CustomText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.extraChargesTypeBtn, entryFormData.extraChargesType === 'fixed' && styles.extraChargesTypeBtnActive]}
+                  onPress={() => updatePricingEntryFormData(index, 'extraChargesType', 'fixed')}
+                >
+                  <CustomText variant="label" style={[styles.extraChargesTypeText, entryFormData.extraChargesType === 'fixed' && styles.extraChargesTypeTextActive]}>$</CustomText>
+                </TouchableOpacity>
+              </View>
+            </View>
             <Input
               label="Undercut Price"
               value={entryFormData.undercutPrice}
@@ -2828,7 +2849,7 @@ const PricingScreen = ({ route, navigation }) => {
             <View style={styles.gridInputThird}>
               <CustomText variant="label" style={styles.pricingEntryLabel}>Extra Charges</CustomText>
               <CustomText variant="body" style={styles.pricingEntryValue}>
-                ${(pricingEntry?.ExtraCharges || pricingEntry?.extraCharges || 0).toFixed(2)}
+                {formatExtraChargesLabel(pricingEntry?.ExtraCharges ?? pricingEntry?.extraCharges)}
               </CustomText>
             </View>
           </View>
@@ -3081,7 +3102,7 @@ const PricingScreen = ({ route, navigation }) => {
                 SilverAndLabsDuties: parseFloat(entryFormData.silverAndLabsDuties) || 0,
                 LossAndLabourDuties: parseFloat(entryFormData.lossAndLabourDuties) || 0,
                 UndercutPrice: parseFloat(entryFormData.undercutPrice) || 0,
-                ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
+                ExtraCharges: makeExtraCharges(parseFloat(entryFormData.extraCharges) || 0, entryFormData.extraChargesType),
                 ClientPricingMessage: entryFormData.clientPricingMessage || '',
                 Stones: entryStones.map(stone => ({
                   Type: stone.Type || '',
@@ -3336,6 +3357,14 @@ const PricingScreen = ({ route, navigation }) => {
               </View>
             </View>
           </View>
+          <BrandedAlert
+            visible={alertConfig.visible}
+            title={alertConfig.title}
+            message={alertConfig.message}
+            type={alertConfig.type}
+            buttons={alertConfig.buttons}
+            onClose={hideAlert}
+          />
         </Modal>
 
         {/* Modal for Adding New Pricing Entry */}
@@ -3462,6 +3491,14 @@ const PricingScreen = ({ route, navigation }) => {
               </View>
             </View>
           </View>
+          <BrandedAlert
+            visible={alertConfig.visible}
+            title={alertConfig.title}
+            message={alertConfig.message}
+            type={alertConfig.type}
+            buttons={alertConfig.buttons}
+            onClose={hideAlert}
+          />
         </Modal>
 
         {/* Pricing Input Fields - REMOVED (only shown in modals now) */}
@@ -3588,6 +3625,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     fontSize: 10,
     minHeight: 28,
+  },
+  extraChargesTypeRow: {
+    flexDirection: 'row',
+    gap: 4,
+    marginTop: 4,
+  },
+  extraChargesTypeBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  extraChargesTypeBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  extraChargesTypeText: {
+    fontSize: 11,
+    color: colors.textPrimary,
+  },
+  extraChargesTypeTextActive: {
+    color: colors.textWhite,
   },
   undercutCard: {
     marginBottom: 16,

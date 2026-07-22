@@ -19,6 +19,7 @@ import {
   FlatList,
   Image,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Video from 'react-native-video';
@@ -963,6 +964,7 @@ export default function NewEnquiryCard({
         animationType="slide"
         onRequestClose={closeQuotationActions}
       >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <TouchableOpacity
           style={styles.qaOverlay}
           activeOpacity={1}
@@ -1172,6 +1174,16 @@ export default function NewEnquiryCard({
             </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
+
+        <BrandedAlert
+          visible={alertCfg.visible}
+          title={alertCfg.title}
+          message={alertCfg.message}
+          type={alertCfg.type}
+          buttons={alertCfg.buttons}
+          onClose={hideAlert}
+        />
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -1469,7 +1481,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
     marginBottom: 8,
     padding: 10,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
@@ -1584,7 +1596,7 @@ const styles = StyleSheet.create({
   toggleBtn: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
   toggleTrack: { width: 36, height: 20, borderRadius: 10, backgroundColor: colors.border, justifyContent: 'center', paddingHorizontal: 2 },
   toggleTrackOn: { backgroundColor: colors.primary },
-  toggleThumb: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#fff', elevation: 2, alignSelf: 'flex-start' },
+  toggleThumb: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#fff', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, alignSelf: 'flex-start' },
   toggleThumbOn: { alignSelf: 'flex-end' },
   ImageContainer: { width: '100%', padding: 10 },
   StatusContainerStart: { marginTop: 5, flexDirection: 'row', justifyContent: 'space-between', marginLeft: 5 },

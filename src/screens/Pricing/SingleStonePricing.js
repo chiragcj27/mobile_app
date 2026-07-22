@@ -10,11 +10,13 @@ import {
   Animated,
   Keyboard,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { splitGroupedDataForRecalc } from '../../utils/stoneDataGrouper';
+import { extraChargesSuffix } from '../../utils/extraCharges';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
@@ -40,6 +42,7 @@ export default function SingleStonePricing({
   onRecalculated,
   onModifyPricing,
   onPreviewSummary,
+  onClientPreview,
   onRequestRecalculate,
 }) {
   const [localGrouped, setLocalGrouped] = useState({});
@@ -113,6 +116,7 @@ export default function SingleStonePricing({
             Loss: ch.Loss !== undefined && ch.Loss !== '' ? ch.Loss : data.editableCharges?.Loss,
             Labour: ch.Labour !== undefined && ch.Labour !== '' ? ch.Labour : data.editableCharges?.Labour,
             ExtraCharges: ch.ExtraCharges !== undefined && ch.ExtraCharges !== '' ? ch.ExtraCharges : data.editableCharges?.ExtraCharges,
+            ExtraChargesType: ch.ExtraChargesType ?? data.editableCharges?.ExtraChargesType ?? 'percentage',
             GoldDuties: ch.GoldDuties !== undefined && ch.GoldDuties !== '' ? ch.GoldDuties : data.editableCharges?.GoldDuties,
             SilverAndLabsDuties: ch.SilverAndLabsDuties !== undefined && ch.SilverAndLabsDuties !== '' ? ch.SilverAndLabsDuties : data.editableCharges?.SilverAndLabsDuties,
             LossAndLabourDuties: ch.LossAndLabourDuties !== undefined && ch.LossAndLabourDuties !== '' ? ch.LossAndLabourDuties : data.editableCharges?.LossAndLabourDuties,
@@ -258,6 +262,12 @@ export default function SingleStonePricing({
       ...prev,
       [type]: { ...(prev[type] || {}), [field]: value },
     }));
+    // The extra-charges type is toggled with a button (no keyboard blur to trigger the
+    // keyboardDidHide recalc), so kick off a recalculation once the parent charge state syncs.
+    if (field === 'ExtraChargesType') {
+      setIsCalculating(true);
+      setTimeout(() => onRequestRecalculateRef.current?.(), 0);
+    }
   }, []);
 
   // Common Metal Weight & Rate — one value applied to every stone type (same as PricingCalculator).
@@ -311,6 +321,7 @@ export default function SingleStonePricing({
           Loss: ch.Loss !== undefined && ch.Loss !== '' ? ch.Loss : data.editableCharges?.Loss,
           Labour: ch.Labour !== undefined && ch.Labour !== '' ? ch.Labour : data.editableCharges?.Labour,
           ExtraCharges: ch.ExtraCharges !== undefined && ch.ExtraCharges !== '' ? ch.ExtraCharges : data.editableCharges?.ExtraCharges,
+          ExtraChargesType: ch.ExtraChargesType ?? data.editableCharges?.ExtraChargesType ?? 'percentage',
           GoldDuties: ch.GoldDuties !== undefined && ch.GoldDuties !== '' ? ch.GoldDuties : data.editableCharges?.GoldDuties,
           SilverAndLabsDuties: ch.SilverAndLabsDuties !== undefined && ch.SilverAndLabsDuties !== '' ? ch.SilverAndLabsDuties : data.editableCharges?.SilverAndLabsDuties,
           LossAndLabourDuties: ch.LossAndLabourDuties !== undefined && ch.LossAndLabourDuties !== '' ? ch.LossAndLabourDuties : data.editableCharges?.LossAndLabourDuties,
@@ -366,6 +377,45 @@ export default function SingleStonePricing({
               : field.key === 'GoldDuties'
                 ? (metalKt?.includes('Silver') ? 'Silver Duty' : metalKt?.includes('Platinum') ? 'Platinum Duty' : 'Gold Duty')
                 : field.label;
+
+            if (field.key === 'ExtraCharges') {
+              const ecType = ch.ExtraChargesType
+                ?? localGrouped[type]?.editableCharges?.ExtraChargesType
+                ?? 'percentage';
+              return (
+                <View key={field.key} style={s.chargeField}>
+                  <Text style={s.chargeLabel}>{label}</Text>
+                  <View style={s.extraChargeRow}>
+                    <View style={[s.chargeInputWrap, { flex: 1 }]}>
+                      <TextInput
+                        style={s.chargeInput}
+                        value={rawValue !== undefined ? String(rawValue) : ''}
+                        onChangeText={(v) => updateLocalCharge(type, field.key, v)}
+                        keyboardType="decimal-pad"
+                        placeholder={String(placeholder)}
+                        placeholderTextColor={colors.textLight}
+                      />
+                      <Text style={s.chargeSuffix}>{extraChargesSuffix(ecType)}</Text>
+                    </View>
+                    <View style={s.ecToggle}>
+                      <TouchableOpacity
+                        style={[s.ecToggleBtn, ecType === 'percentage' && s.ecToggleBtnActive]}
+                        onPress={() => updateLocalCharge(type, 'ExtraChargesType', 'percentage')}
+                      >
+                        <Text style={[s.ecToggleText, ecType === 'percentage' && s.ecToggleTextActive]}>%</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.ecToggleBtn, ecType === 'fixed' && s.ecToggleBtnActive]}
+                        onPress={() => updateLocalCharge(type, 'ExtraChargesType', 'fixed')}
+                      >
+                        <Text style={[s.ecToggleText, ecType === 'fixed' && s.ecToggleTextActive]}>$</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              );
+            }
+
             return (
               <View key={field.key} style={s.chargeField}>
                 <Text style={s.chargeLabel}>{label}</Text>
@@ -588,7 +638,7 @@ export default function SingleStonePricing({
                   </View>
                 </View>
                 <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>Rate ($/g)</Text>
+                  <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
                   <View style={s.chargeInputWrap}>
                     <TextInput
                       style={s.chargeInput}
@@ -631,19 +681,30 @@ export default function SingleStonePricing({
 
           <View style={s.bottomBar}>
             <TouchableOpacity
-              style={s.bottomBarBtnOutline}
-              onPress={onModifyPricing}
+              style={s.clientPreviewBtn}
+              onPress={onClientPreview}
               activeOpacity={0.85}
             >
-              <Text style={s.bottomBarBtnOutlineText}>Modify Pricing</Text>
+              <Icon name="visibility" size={18} color="#fff" />
+              <Text style={s.clientPreviewBtnText}>Client Preview</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={s.bottomBarBtnPrimary}
-              onPress={onPreviewSummary}
-              activeOpacity={0.85}
-            >
-              <Text style={s.bottomBarBtnPrimaryText}>Preview Summary</Text>
-            </TouchableOpacity>
+            <View style={s.bottomBarRow}>
+              <TouchableOpacity
+                style={s.bottomBarBtnOutline}
+                onPress={onModifyPricing}
+                activeOpacity={0.85}
+              >
+                <Text style={s.bottomBarBtnOutlineText}>Modify Pricing</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={s.adminPreviewBtn}
+                onPress={onPreviewSummary}
+                activeOpacity={0.85}
+              >
+                <Icon name="visibility" size={16} color="#fff" />
+                <Text style={s.adminPreviewBtnText}>Admin Preview</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </View>
@@ -841,11 +902,39 @@ const s = StyleSheet.create({
     color: colors.textSecondary,
     fontFamily: fonts.medium,
   },
+  extraChargeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  ecToggle: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: colors.border || '#E5E7EB',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  ecToggleBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: colors.backgroundSecondary || '#F8F9FB',
+  },
+  ecToggleBtnActive: {
+    backgroundColor: colors.primary,
+  },
+  ecToggleText: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.sm || 14,
+    color: colors.textPrimary,
+  },
+  ecToggleTextActive: {
+    color: '#fff',
+  },
 
   typeCard: {
     backgroundColor: colors.primaryExtraLight || '#E6F0F1',
     borderRadius: 12,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     marginBottom: 12,
     elevation: 2,
     shadowColor: '#000',
@@ -916,13 +1005,46 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border || '#E5E7EB',
     padding: 16,
-    flexDirection: 'row',
-    gap: 12,
+    flexDirection: 'column',
+    gap: 10,
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.05,
     shadowRadius: 12,
+  },
+  bottomBarRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  clientPreviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 15,
+  },
+  clientPreviewBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.base || 15,
+    color: '#fff',
+  },
+  adminPreviewBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#EF4444',
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  adminPreviewBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.sm || 14,
+    color: '#fff',
   },
   bottomBarBtnOutline: {
     flex: 1,

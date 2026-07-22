@@ -5034,6 +5034,15 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
             </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
+
+        <BrandedAlert
+          visible={alertConfig.visible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          type={alertConfig.type}
+          buttons={alertConfig.buttons}
+          onClose={hideAlert}
+        />
       </Modal>
 
       {/* Assign Modal */}
@@ -5172,7 +5181,16 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
               setIsActionLoading(false);
             }
           }}
-        />
+        >
+          <BrandedAlert
+            visible={alertConfig.visible}
+            title={alertConfig.title}
+            message={alertConfig.message}
+            type={alertConfig.type}
+            buttons={alertConfig.buttons}
+            onClose={hideAlert}
+          />
+        </FinalLookModal>
       )}
 
       {showApprovalModal && renderApprovalModal()}
@@ -5227,6 +5245,15 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
             </ScrollView>
           </View>
         </View>
+
+        <BrandedAlert
+          visible={alertConfig.visible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          type={alertConfig.type}
+          buttons={alertConfig.buttons}
+          onClose={hideAlert}
+        />
       </Modal>
 
       <EnquiryHistoryModal
