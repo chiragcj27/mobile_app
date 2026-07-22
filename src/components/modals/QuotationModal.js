@@ -218,18 +218,18 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
       <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
       <tbody>${stonesHtml}</tbody>
     </table>
-    <div style="display:flex;justify-content:flex-end;gap:12px;margin:8px 0;flex-wrap:wrap;">
-      <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
-        <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Total Pieces</div>
-        <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(PR.TotalPieces).toFixed(0)}</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;flex-wrap:wrap;">
+      <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+        <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Total Pieces</div>
+        <div style="font-size:13px;font-weight:700;color:#fff;">${num(PR.TotalPieces).toFixed(0)}</div>
       </div>
-      <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
-        <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Total Diamond Wt</div>
-        <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(PR.DiamondWeight).toFixed(3)}</div>
+      <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+        <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Dia Wt</div>
+        <div style="font-size:13px;font-weight:700;color:#fff;">${num(PR.DiamondWeight).toFixed(3)}</div>
       </div>
-      <div style="background:#D4AF37;padding:6px 12px;border-radius:4px;text-align:center;min-width:120px;">
-        <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Diamond Price</div>
-        <div style="font-size:16px;font-weight:700;color:#1A1A1A;">$${num(PR.DiamondsPrice).toFixed(2)}</div>
+      <div style="background:#D4AF37;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+        <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Dia Price</div>
+        <div style="font-size:13px;font-weight:700;color:#1A1A1A;">$${num(PR.DiamondsPrice).toFixed(0)}</div>
       </div>
     </div>` : ''}
 
@@ -237,18 +237,24 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
 
     ${extraChargesHtml}
 
-
-    <table style="margin-top:12px;">
-      <thead><tr><th>Final Metal Price</th><th>Diamond Price</th><th>Duties Total</th><th>Total Price</th></tr></thead>
-      <tbody>
-        <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
-          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.MetalPrice).toFixed(2)}</td>
-          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DiamondsPrice).toFixed(2)}</td>
-          <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DutiesAmount).toFixed(2)}</td>
-          <td style="padding:10px 6px;border:1px solid #E6F0F1;color:#143F45;font-size:13px;">$${num(PR.TotalPrice).toFixed(2)}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div style="display:flex;justify-content:flex-end;align-items:center;margin-top:10px;gap:8px;padding:6px 10px;background:#143F45;border-radius:6px;">
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Metal</div>
+        <div style="font-size:11px;font-weight:700;color:#fff;">$${num(PR.MetalPrice).toFixed(0)}</div>
+      </div>
+      <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+        <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Dia Price</div>
+        <div style="font-size:11px;font-weight:700;color:#fff;">$${num(PR.DiamondsPrice).toFixed(0)}</div>
+      </div>
+      <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+        <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Duties</div>
+        <div style="font-size:11px;font-weight:700;color:#fff;">$${num(PR.DutiesAmount).toFixed(0)}</div>
+      </div>
+      <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);background:#D4AF37;border-radius:4px;padding:4px 6px;">
+        <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Total</div>
+        <div style="font-size:13px;font-weight:800;color:#1A1A1A;">$${num(PR.TotalPrice).toFixed(0)}</div>
+      </div>
+    </div>
     </body></html>`;
   }
 
@@ -342,10 +348,18 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
     <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
     <tbody>${stonesHtml}</tbody>
   </table>
-  <div style="display:flex;justify-content:flex-end;gap:12px;margin:8px 0;flex-wrap:wrap;">
-    <div style="background:#D4AF37;padding:6px 12px;border-radius:4px;text-align:center;min-width:120px;">
-      <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Diamond Price</div>
-      <div style="font-size:16px;font-weight:700;color:#1A1A1A;">$${num(PR.DiamondsPrice).toFixed(2)}</div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;flex-wrap:wrap;">
+    <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+      <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Total Pieces</div>
+      <div style="font-size:13px;font-weight:700;color:#fff;">${num(PR.TotalPieces).toFixed(0)}</div>
+    </div>
+    <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+      <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Dia Wt</div>
+      <div style="font-size:13px;font-weight:700;color:#fff;">${num(PR.DiamondWeight).toFixed(3)}</div>
+    </div>
+    <div style="background:#D4AF37;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+      <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Dia Price</div>
+      <div style="font-size:13px;font-weight:700;color:#1A1A1A;">$${num(PR.DiamondsPrice).toFixed(0)}</div>
     </div>
   </div>` : ''}
 
@@ -358,17 +372,24 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
     <span>Undercut Price</span><span>$${num(charges.UndercutPrice).toFixed(2)}/ct</span>
   </div>` : ''}
 
-  <table style="margin-top:12px;">
-    <thead><tr><th>Metal Price</th><th>Diamond Price</th><th>Duties Total</th><th>Total Price</th></tr></thead>
-    <tbody>
-      <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
-        <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.MetalPrice).toFixed(2)}</td>
-        <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DiamondsPrice).toFixed(2)}</td>
-        <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(PR.DutiesAmount).toFixed(2)}</td>
-        <td style="padding:10px 6px;border:1px solid #E6F0F1;color:#143F45;font-size:13px;">$${num(PR.TotalPrice).toFixed(2)}</td>
-      </tr>
-    </tbody>
-  </table>
+  <div style="display:flex;justify-content:flex-end;align-items:center;margin-top:10px;gap:8px;padding:6px 10px;background:#143F45;border-radius:6px;">
+    <div style="text-align:center;flex:1;">
+      <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Metal</div>
+      <div style="font-size:11px;font-weight:700;color:#fff;">$${num(PR.MetalPrice).toFixed(0)}</div>
+    </div>
+    <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+      <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Dia Price</div>
+      <div style="font-size:11px;font-weight:700;color:#fff;">$${num(PR.DiamondsPrice).toFixed(0)}</div>
+    </div>
+    <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+      <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:.05em;">Duties</div>
+      <div style="font-size:11px;font-weight:700;color:#fff;">$${num(PR.DutiesAmount).toFixed(0)}</div>
+    </div>
+    <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);background:#D4AF37;border-radius:4px;padding:4px 6px;">
+      <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:.05em;">Total</div>
+      <div style="font-size:13px;font-weight:800;color:#1A1A1A;">$${num(PR.TotalPrice).toFixed(0)}</div>
+    </div>
+  </div>
   </body></html>`;
 };
 
@@ -410,6 +431,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const [metalWeight,       setMetalWeight]       = useState('0');
   const [metalQuality,      setMetalQuality]      = useState('10K');
   const [metalRate,         setMetalRate]         = useState('0');
+  const [metalOunce,        setMetalOunce]        = useState('0');
   const [showQualityPicker, setShowQualityPicker] = useState(false);
 
   const [diamonds,            setDiamonds]            = useState([]);
@@ -493,6 +515,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       return '0';
     })();
     setMetalRate(autoRate);
+    setMetalOunce(p.Metal?.Ounce != null ? String(p.Metal.Ounce) : (p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '0'));
 
     const rawStones = Array.isArray(p.Stones) ? p.Stones : [];
     setDiamonds(rawStones.length > 0
@@ -835,6 +858,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       setPricingResult(result);
       // Reflect the rate the backend actually used when we didn't send one (was 0/empty).
       if (num(metalRate) <= 0 && result.Metal?.Rate) setMetalRate(String(result.Metal.Rate));
+      if (result.GoldRatePerOunce) setMetalOunce(String(result.GoldRatePerOunce));
 
       setClientMsg(prev => {
         if (result.ClientPricingMessage) return result.ClientPricingMessage;
@@ -844,7 +868,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       const html = buildHtml({
         pricingResult: result,
         stones: mergedDiamonds,
-        metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+        metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate), Ounce: num(metalOunce) },
         charges: {
           Loss: num(sourcePricing?.Loss ?? 0),
           Labour: num(sourcePricing?.Labour ?? 0),
@@ -902,6 +926,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       calculatePricing(payload).unwrap().then(result => {
         setPricingResult(result);
         if (num(metalRate) <= 0 && result.Metal?.Rate) setMetalRate(String(result.Metal.Rate));
+        if (result.GoldRatePerOunce) setMetalOunce(String(result.GoldRatePerOunce));
         setClientMsg(prev => result.ClientPricingMessage || prev);
         // Rebuild the HTML for whichever preview the user is currently viewing so a
         // background recalc doesn't flip a Client preview back to Admin.
@@ -1333,6 +1358,10 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                     <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
                     <TextInput style={s.chargeInput} value={metalRate} onChangeText={setMetalRate} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
                   </View>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Per Ounce ($)</Text>
+                    <TextInput style={s.chargeInput} value={metalOunce} onChangeText={setMetalOunce} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                  </View>
                 </View>
               </View>
 
@@ -1590,6 +1619,17 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                       style={[s.chargeInput, num(metalRate) <= 0 && s.inputErrorHighlight]}
                       value={metalRate}
                       onChangeText={setMetalRate}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textSecondary}
+                    />
+                  </View>
+                  <View style={s.metalField}>
+                    <Text style={s.chargeLabel}>Per Ounce ($)</Text>
+                    <TextInput
+                      style={s.chargeInput}
+                      value={metalOunce}
+                      onChangeText={setMetalOunce}
                       keyboardType="decimal-pad"
                       placeholder="0"
                       placeholderTextColor={colors.textSecondary}

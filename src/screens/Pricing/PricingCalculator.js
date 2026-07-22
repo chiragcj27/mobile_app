@@ -26,7 +26,6 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
-import { useImageProcessor } from '../../utils/imageProcessor';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -85,13 +84,12 @@ export default function PricingCalci({ route, navigation }) {
     index: null,
   });
   const [isRecalculating, setIsRecalculating] = useState(false);
-  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '' });
+  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '', Ounce: '' });
   const [stoneRecalcStatus, setStoneRecalcStatus] = useState({});
   const [showSingleStoneModal, setShowSingleStoneModal] = useState(false);
   const [singleStoneCatData, setSingleStoneCatData] = useState(null);
   const [singleStoneModalKey, setSingleStoneModalKey] = useState(0);
   const [extractPhase, setExtractPhase] = useState('');
-  const { processImage, processor } = useImageProcessor();
 
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
@@ -101,6 +99,9 @@ export default function PricingCalci({ route, navigation }) {
   const groupedDataRef = useRef(groupedData);
   const handleRecalculateAllRef = useRef(null);
   const needsAutoRecalcRef = useRef(false);
+  // Fire exactly one automatic follow-up recalculation after a successful calc/recalc.
+  // The follow-up run sets this false so it never triggers a third pass (no loop).
+  const isFollowUpRecalcRef = useRef(false);
   useEffect(() => { singleStoneCatDataRef.current = singleStoneCatData; }, [singleStoneCatData]);
   useEffect(() => { groupedDataRef.current = groupedData; }, [groupedData]);
 
@@ -133,7 +134,7 @@ export default function PricingCalci({ route, navigation }) {
     }
     setGroupedData({});
     setStoneRecalcStatus({});
-    setCommonMetal({ Weight: '', Rate: '' });
+    setCommonMetal({ Weight: '', Rate: '', Ounce: '' });
     setMetalKt('18K');
     setImageFile(null);
     setEditModalVisible(false);
@@ -144,6 +145,25 @@ export default function PricingCalci({ route, navigation }) {
     setSingleStoneCatData(null);
     setShowSingleStoneModal(false);
   }, [clientId, selectedClient]);
+
+  // Wipe all extraction/pricing state back to a clean slate (keeps the selected client,
+  // stone types and metal KT). Used whenever the image changes/removes or an extraction
+  // error occurs, so nothing stale from a previous image survives.
+  const resetToFresh = useCallback(() => {
+    setImageFile(null);
+    setGroupedData({});
+    setStoneRecalcStatus({});
+    setCommonMetal({ Weight: '', Rate: '', Ounce: '' });
+    setPdfHtml(null);
+    setShowPdfModal(false);
+    setSingleStoneCatData(null);
+    setShowSingleStoneModal(false);
+    setEditModalVisible(false);
+    setEditingContext({ type: null, index: 0 });
+    setIsRecalculating(false);
+    setIsExtracting(false);
+    setExtractPhase('');
+  }, []);
 
   // Count missing stones — optionally filter by a specific type
   const countMissingStones = useCallback((filterType) => {
@@ -373,6 +393,7 @@ export default function PricingCalci({ route, navigation }) {
         Weight: p.Metal?.Weight || 0,
         Quality: p.Metal?.Quality || metalKt,
         Rate: p.Metal?.Rate || '',
+        Ounce: p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '',
       },
       editableCharges: {
         Loss: p.Client?.Loss ?? 10,
@@ -445,6 +466,9 @@ export default function PricingCalci({ route, navigation }) {
 
   const handleRecalculateAll = async () => {
     dataChangedRef.current = false;
+    // Consume the follow-up flag: if this run IS the auto follow-up, it must not queue another.
+    const isFollowUp = isFollowUpRecalcRef.current;
+    isFollowUpRecalcRef.current = false;
     const selectedTypes = [...(selectedStoneTypes.length > 0 ? selectedStoneTypes : [])];
     Object.values(groupedData).forEach((catData) => {
       catData.types.forEach((type) => {
@@ -625,11 +649,19 @@ export default function PricingCalci({ route, navigation }) {
         setCommonMetal({
           Weight: first.result.Metal?.Weight ? first.result.Metal.Weight.toString() : commonMetal.Weight,
           Rate: first.result.Metal?.Rate ? first.result.Metal.Rate.toString() : commonMetal.Rate,
+          Ounce: first.result.GoldRatePerOunce ? first.result.GoldRatePerOunce.toString() : commonMetal.Ounce,
         });
       }
     }
 
     setIsRecalculating(false);
+
+    // When a complete result has arrived, automatically run the recalculation once more
+    // (single guarded follow-up) so the final totals settle. The follow-up won't re-trigger.
+    if (!isFollowUp && succeededTypes.length > 0) {
+      isFollowUpRecalcRef.current = true;
+      setTimeout(() => { handleRecalculateAllRef.current?.(); }, 0);
+    }
 
     if (failedTypes.length > 0) {
       if (hasRateLimit) {
@@ -690,7 +722,13 @@ export default function PricingCalci({ route, navigation }) {
         cropped = await ImageCropPicker.openCropper({
           path: originalUri,
           freeStyleCropEnabled: true,
-          compressImageQuality: 0.8,
+          // iOS downscales the cropped output to the crop-view resolution unless an explicit
+          // max size is given, which made the uploaded image blurry vs Android. Pinning these
+          // forces both platforms to output the same high resolution so the API sees the same
+          // level of detail (crucial for reading small stone/Excel text).
+          compressImageMaxWidth: 2400,
+          compressImageMaxHeight: 2400,
+          compressImageQuality: 0.9,
           forceJpg: true,
           cropperToolbarTitle: 'Crop the stones excel for accuracy',
           cropperStatusBarColor: colors.primary,
@@ -710,45 +748,21 @@ export default function PricingCalci({ route, navigation }) {
             'Maximum allowed image size is 20MB.',
             'warning',
           );
+          resetToFresh();
           return;
         }
 
-        // Process cropped image with B&W + sharpen for better API accuracy
-        let apiImageFile;
-        try {
-          const croppedBase64 = await RNFS.readFile(cropped.path.replace(/^file:\/\//, ''), 'base64');
-          const processedBase64 = await processImage(croppedBase64);
-          if (!processedBase64 || processedBase64.length < 100) {
-            throw new Error('Processed image is too small or empty');
-          }
-          const processedPath = `${RNFS.CachesDirectoryPath}/bw_${Date.now()}.jpg`;
-          await RNFS.writeFile(processedPath, processedBase64, 'base64');
-          apiImageFile = {
-            uri: processedPath.startsWith('file://') ? processedPath : `file://${processedPath}`,
-            name: `bw_${Date.now()}.jpg`,
-            type: 'image/jpeg',
-          };
-          console.log('[ImagePick] B&W processing succeeded');
-        } catch (processErr) {
-          console.log('[ImagePick] B&W processing failed, using original:', processErr?.message || processErr);
-          apiImageFile = {
-            uri: cropped.path.startsWith('file://') ? cropped.path : `file://${cropped.path}`,
-            name: cropped.filename || `image_${Date.now()}.jpg`,
-            type: cropped.mime || 'image/jpeg',
-          };
-        }
-
-        const newImageFile = apiImageFile;
-        // A new image means a fresh design — clear all previous pricing state so nothing
-        // from the last image lingers (avoids the "stuck" data when re-picking an image).
+        // Upload the native-cropped image directly. The whole pipeline (pick → crop → upload)
+        // is now native, so iOS and Android send an identical image to the extraction API.
+        const newImageFile = {
+          uri: cropped.path.startsWith('file://') ? cropped.path : `file://${cropped.path}`,
+          name: cropped.filename || `image_${Date.now()}.jpg`,
+          type: cropped.mime || 'image/jpeg',
+        };
+        // A new image means a fresh design — wipe everything from the previous image first,
+        // then set the new image and start extraction.
+        resetToFresh();
         setImageFile(newImageFile);
-        setGroupedData({});
-        setStoneRecalcStatus({});
-        setCommonMetal({ Weight: '', Rate: '' });
-        setPdfHtml(null);
-        setShowPdfModal(false);
-        setSingleStoneCatData(null);
-        setShowSingleStoneModal(false);
         setIsExtracting(true);
         setExtractPhase('extracting');
 
@@ -782,6 +796,7 @@ export default function PricingCalci({ route, navigation }) {
                 Weight: p.Metal?.Weight || 0,
                 Quality: p.Metal?.Quality || metalKt,
                 Rate: p.Metal?.Rate || '',
+                Ounce: p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '',
               },
               editableCharges: {
                 Loss: p.Client?.Loss ?? 10,
@@ -814,14 +829,8 @@ export default function PricingCalci({ route, navigation }) {
               'No pricing data was extracted from the image.',
               'warning',
             );
-            setImageFile(null);
-            setGroupedData({});
-            setStoneRecalcStatus({});
-            // Clear the extracting state here too — otherwise the upload button stays
-            // disabled (disabled={isExtracting}) and a re-upload does nothing until the
-            // screen is reopened.
-            setIsExtracting(false);
-            setExtractPhase('');
+            // No usable data — reset to a clean slate (also re-enables the upload button).
+            resetToFresh();
           } else {
             const grouped = groupStoneDataByCategory(rawMultiData, stoneCategoryMap);
             setGroupedData(grouped);
@@ -840,6 +849,7 @@ export default function PricingCalci({ route, navigation }) {
                 setCommonMetal({
                   Weight: m.Weight ? String(m.Weight) : commonMetal.Weight,
                   Rate: m.Rate ? String(m.Rate) : commonMetal.Rate,
+                  Ounce: firstData.pricingResult?.GoldRatePerOunce ? firstData.pricingResult.GoldRatePerOunce.toString() : commonMetal.Ounce,
                 });
               }
             }
@@ -858,15 +868,13 @@ export default function PricingCalci({ route, navigation }) {
             'error',
           );
         }
-        setImageFile(null);
-        setIsExtracting(false);
-        setExtractPhase('');
+        // Extraction failed — reset to a clean slate, don't keep stale data.
+        resetToFresh();
         }
       }
     } catch (error) {
       showAlert('Error', 'Failed to pick image.', 'error');
-      setIsExtracting(false);
-      setExtractPhase('');
+      resetToFresh();
     }
   };
 
@@ -1132,7 +1140,6 @@ export default function PricingCalci({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      {processor}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -1222,10 +1229,7 @@ export default function PricingCalci({ route, navigation }) {
                     {imageFile.name}
                   </Text>
                   <TouchableOpacity
-                    onPress={() => {
-                      setImageFile(null);
-                      setGroupedData({});
-                    }}
+                    onPress={resetToFresh}
                   >
                     <Icon name="close" size={20} color={colors.error} />
                   </TouchableOpacity>
@@ -1299,6 +1303,16 @@ export default function PricingCalci({ route, navigation }) {
                     keyboardType="decimal-pad"
                     value={String(commonMetal.Rate || '')}
                     onChangeText={v => updateCommonMetal('Rate', v)}
+                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
+                  />
+                </View>
+                <View style={styles.chargeField}>
+                  <Text style={styles.fieldLabel}>Per Ounce ($)</Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    keyboardType="decimal-pad"
+                    value={String(commonMetal.Ounce || '')}
+                    onChangeText={v => updateCommonMetal('Ounce', v)}
                     onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                   />
                 </View>

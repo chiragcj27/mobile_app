@@ -47,7 +47,7 @@ export default function SingleStonePricing({
 }) {
   const [localGrouped, setLocalGrouped] = useState({});
   const [localCharges, setLocalCharges] = useState({});
-  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '' });
+  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '', Ounce: '' });
   const metalTouchedRef = useRef(false);
   const [isCalculating, setIsCalculating] = useState(false);
 
@@ -88,9 +88,11 @@ export default function SingleStonePricing({
       // Seed the common Metal Weight & Rate from the first type (same idea as PricingCalculator)
       const firstType = Object.keys(grouped)[0];
       const m = firstType ? grouped[firstType]?.editableMetal : null;
+      const r = firstType ? grouped[firstType]?.pricingResult : null;
       setCommonMetal({
         Weight: m?.Weight != null && m.Weight !== '' ? String(m.Weight) : '',
         Rate: m?.Rate != null && m.Rate !== '' ? String(m.Rate) : '',
+        Ounce: m?.Ounce != null && m.Ounce !== '' ? String(m.Ounce) : r?.GoldRatePerOunce ? String(r.GoldRatePerOunce) : '',
       });
       metalTouchedRef.current = false;
     }
@@ -299,6 +301,7 @@ export default function SingleStonePricing({
           ...data.editableMetal,
           Weight: commonMetal.Weight !== '' ? commonMetal.Weight : data.editableMetal?.Weight,
           Rate: commonMetal.Rate !== '' ? commonMetal.Rate : data.editableMetal?.Rate,
+          Ounce: commonMetal.Ounce !== '' ? commonMetal.Ounce : data.editableMetal?.Ounce,
         },
       };
       onRecalculatedRef.current(type, mergedData);
@@ -649,6 +652,20 @@ export default function SingleStonePricing({
                       placeholderTextColor={colors.textLight}
                     />
                     <Text style={s.chargeSuffix}>$/g</Text>
+                  </View>
+                </View>
+                <View style={s.chargeField}>
+                  <Text style={s.chargeLabel}>Per Ounce ($)</Text>
+                  <View style={s.chargeInputWrap}>
+                    <TextInput
+                      style={s.chargeInput}
+                      value={String(commonMetal.Ounce ?? '')}
+                      onChangeText={(v) => updateCommonMetal('Ounce', v)}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textLight}
+                    />
+                    <Text style={s.chargeSuffix}>$/oz</Text>
                   </View>
                 </View>
               </View>
