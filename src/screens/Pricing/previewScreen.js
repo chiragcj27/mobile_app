@@ -198,7 +198,7 @@ const buildEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false, 
                 <th style="padding:4px;border:1px solid #0F3236;">MM SIZE</th>
                 <th style="padding:4px;border:1px solid #0F3236;">AVG CT</th>
                 <th style="padding:4px;border:1px solid #0F3236;">MARK UP</th>
-                <th style="padding:4px;border:1px solid #0F3236;">RATE</th>
+                <th style="padding:4px;border:1px solid #0F3236;">RATE /g</th>
                 <th style="padding:4px;border:1px solid #0F3236;">QTY</th>
               </tr>
             </thead>
@@ -207,18 +207,18 @@ const buildEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false, 
             </tbody>
           </table>
 
-          <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:8px;flex-wrap:wrap;">
-            <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
-              <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Total Pieces</div>
-              <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(p.TotalPieces).toFixed(0)}</div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;flex-wrap:wrap;">
+            <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+              <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Total Stones</div>
+              <div style="font-size:13px;font-weight:700;color:#fff;">${num(p.TotalPieces).toFixed(0)}</div>
             </div>
-            <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
-              <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Total Diamond Wt</div>
-              <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(p.DiamondWeight).toFixed(3)}</div>
+            <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+              <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Dia Wt</div>
+              <div style="font-size:13px;font-weight:700;color:#fff;">${num(p.DiamondWeight).toFixed(3)}</div>
             </div>
-            <div style="background:#D4AF37;padding:6px 12px;border-radius:4px;text-align:center;min-width:120px;">
-              <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Diamond Price</div>
-              <div style="font-size:16px;font-weight:700;color:#1A1A1A;">$${num(p.DiamondsPrice).toFixed(2)}</div>
+            <div style="background:#D4AF37;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+              <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Dia Price</div>
+              <div style="font-size:13px;font-weight:700;color:#1A1A1A;">$${num(p.DiamondsPrice).toFixed(0)}</div>
             </div>
           </div>
         </div>
@@ -228,27 +228,29 @@ const buildEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false, 
 
       ${extraChargesHtml}
 
-      <table style="width:100%;border-collapse:collapse;margin-top:12px;border:1px solid #E6F0F1;">
-        <thead>
-          <tr style="background-color:#235A63;color:#ffffff;text-align:center;font-size:10px;font-weight:700;">
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Final Metal Price</th>
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Diamond Price</th>
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Duties Total</th>
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Total Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(p.MetalPrice).toFixed(2)}</td>
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(p.DiamondsPrice).toFixed(2)}</td>
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(p.DutiesAmount).toFixed(2)}</td>
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;color:#143F45;font-size:13px;">$${num(p.TotalPrice).toFixed(2)}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div style="display:flex;justify-content:flex-end;align-items:center;margin-top:10px;gap:8px;padding:6px 10px;background:#143F45;border-radius:6px;">
+        <div style="text-align:center;flex:1;">
+          <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Metal</div>
+          <div style="font-size:11px;font-weight:700;color:#fff;">$${num(p.MetalPrice).toFixed(0)}</div>
+        </div>
+        <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+          <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Dia Price</div>
+          <div style="font-size:11px;font-weight:700;color:#fff;">$${num(p.DiamondsPrice).toFixed(0)}</div>
+        </div>
+        <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+          <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Duties</div>
+          <div style="font-size:11px;font-weight:700;color:#fff;">$${num(p.DutiesAmount).toFixed(0)}</div>
+        </div>
+        <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);background:#D4AF37;border-radius:4px;padding:4px 6px;">
+          <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Total</div>
+          <div style="font-size:13px;font-weight:800;color:#1A1A1A;">$${num(p.TotalPrice).toFixed(0)}</div>
+        </div>
+      </div>
     </div>
   `;
 };
+
+// client preview version of the entry html
 
 // client preview version of the entry html
 const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false) => {
@@ -411,7 +413,7 @@ const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = f
                 <th style="padding:4px;border:1px solid #0F3236;">MM SIZE</th>
                 <th style="padding:4px;border:1px solid #0F3236;">AVG CT</th>
                 <th style="padding:4px;border:1px solid #0F3236;">MARK UP</th>
-                <th style="padding:4px;border:1px solid #0F3236;">RATE</th>
+                <th style="padding:4px;border:1px solid #0F3236;">RATE /g</th>
                 <th style="padding:4px;border:1px solid #0F3236;">QTY</th>
               </tr>
             </thead>
@@ -421,18 +423,18 @@ const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = f
           </table>
           ${extraChargesHtml}
 
-          <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:8px;flex-wrap:wrap;">
-            <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
-              <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Total Pieces</div>
-              <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(p.TotalPieces).toFixed(0)}</div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;flex-wrap:wrap;">
+            <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+              <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Total Stones</div>
+              <div style="font-size:13px;font-weight:700;color:#fff;">${num(p.TotalPieces).toFixed(0)}</div>
             </div>
-            <div style="background:#E5E7EB;padding:8px 12px;border-radius:4px;text-align:center;min-width:120px;">
-              <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Total Diamond Wt</div>
-              <div style="font-size:16px;font-weight:700;color:#1A1A1A;">${num(p.DiamondWeight).toFixed(3)}</div>
+            <div style="background:#143F45;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+              <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Dia Wt</div>
+              <div style="font-size:13px;font-weight:700;color:#fff;">${num(p.DiamondWeight).toFixed(3)}</div>
             </div>
-            <div style="background:#D4AF37;padding:6px 12px;border-radius:4px;text-align:center;min-width:120px;">
-              <div style="font-size:8px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Diamond Price</div>
-              <div style="font-size:16px;font-weight:700;color:#1A1A1A;">$${num(p.DiamondsPrice).toFixed(2)}</div>
+            <div style="background:#D4AF37;padding:4px 10px;border-radius:4px;text-align:center;min-width:80px;">
+              <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Dia Price</div>
+              <div style="font-size:13px;font-weight:700;color:#1A1A1A;">$${num(p.DiamondsPrice).toFixed(0)}</div>
             </div>
           </div>
         </div>
@@ -440,25 +442,24 @@ const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = f
 
       ${dutiesHtml}
 
-
-      <table style="width:100%;border-collapse:collapse;margin-top:12px;border:1px solid #E6F0F1;">
-        <thead>
-          <tr style="background-color:#235A63;color:#ffffff;text-align:center;font-size:10px;font-weight:700;">
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Final Metal Price</th>
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Diamond Price</th>
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Duties Total</th>
-            <th style="padding:8px 6px;border:1px solid #0F3236;">Total Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style="text-align:center;font-size:12px;font-weight:700;color:#1A1A1A;">
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(p.MetalPrice).toFixed(2)}</td>
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(p.DiamondsPrice).toFixed(2)}</td>
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;">$${num(p.DutiesAmount).toFixed(2)}</td>
-            <td style="padding:10px 6px;border:1px solid #E6F0F1;color:#143F45;font-size:13px;">$${num(p.TotalPrice).toFixed(2)}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div style="display:flex;justify-content:flex-end;align-items:center;margin-top:10px;gap:8px;padding:6px 10px;background:#143F45;border-radius:6px;">
+        <div style="text-align:center;flex:1;">
+          <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Metal</div>
+          <div style="font-size:11px;font-weight:700;color:#fff;">$${num(p.MetalPrice).toFixed(0)}</div>
+        </div>
+        <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+          <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Dia Price</div>
+          <div style="font-size:11px;font-weight:700;color:#fff;">$${num(p.DiamondsPrice).toFixed(0)}</div>
+        </div>
+        <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);">
+          <div style="font-size:7px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.05em;">Duties</div>
+          <div style="font-size:11px;font-weight:700;color:#fff;">$${num(p.DutiesAmount).toFixed(0)}</div>
+        </div>
+        <div style="text-align:center;flex:1;border-left:1px solid rgba(255,255,255,0.2);background:#D4AF37;border-radius:4px;padding:4px 6px;">
+          <div style="font-size:7px;color:#1A1A1A;text-transform:uppercase;letter-spacing:0.05em;">Total</div>
+          <div style="font-size:13px;font-weight:800;color:#1A1A1A;">$${num(p.TotalPrice).toFixed(0)}</div>
+        </div>
+      </div>
     </div>
   `;
 };
