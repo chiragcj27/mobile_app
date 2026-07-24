@@ -2,9 +2,9 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   FlatList,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -14,24 +14,7 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { colors } from '../../constants/colors';
 import catalogApi from '../../services/catalogApi';
 
-const STATUS_FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'order_received', label: 'Received' },
-  { key: 'order_confirmed', label: 'Confirmed' },
-  { key: 'order_in_production', label: 'Production' },
-  { key: 'order_shipped', label: 'Shipped' },
-  { key: 'order_delivered', label: 'Delivered' },
-  { key: 'order_cancelled', label: 'Cancelled' },
-];
-
-const STATUS_CONFIG = {
-  order_received:    { bg: '#FEF3C7', text: '#92400E', accent: '#F59E0B', label: 'Received' },
-  order_confirmed:   { bg: '#DBEAFE', text: '#1D4ED8', accent: '#3B82F6', label: 'Confirmed' },
-  order_in_production:{ bg: '#EDE9FE', text: '#5B21B6', accent: '#8B5CF6', label: 'Production' },
-  order_shipped:     { bg: '#D1FAE5', text: '#065F46', accent: '#10B981', label: 'Shipped' },
-  order_delivered:   { bg: '#CFFAFE', text: '#155E75', accent: '#06B6D4', label: 'Delivered' },
-  order_cancelled:   { bg: '#FEE2E2', text: '#991B1B', accent: '#EF4444', label: 'Cancelled' },
-};
+const ACTIVE_STATUSES = ['order_received', 'order_confirmed', 'order_in_production', 'order_shipped'];
 
 const formatDate = (value) => {
   if (!value) return '';
@@ -40,45 +23,42 @@ const formatDate = (value) => {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
 };
 
-function AdminOrderCard({ order, onPress }) {
-  const cfg = STATUS_CONFIG[order.status] || { bg: '#F3F4F6', text: '#374151', accent: '#9CA3AF', label: order.status };
-  const itemCount = order.items?.length || 0;
-  const totalPieces = order.items?.reduce((s, i) => s + Number(i.quantity || 0), 0) || 0;
-  const clientLabel = order.clientName || order.clientUsername || 'Unknown Client';
+const getInitials = (name) => {
+  const clean = String(name || '').trim();
+  if (!clean) return '?';
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+};
 
+function ClientCard({ client, onPress }) {
   return (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => onPress(order)}
-      activeOpacity={0.75}>
-      {/* Status accent bar */}
-      <View style={[styles.cardAccent, { backgroundColor: cfg.accent }]} />
+    <TouchableOpacity style={styles.card} onPress={() => onPress(client)} activeOpacity={0.7}>
+      <View style={styles.avatar}>
+        <Text style={styles.avatarText}>{getInitials(client.clientName)}</Text>
+      </View>
 
       <View style={styles.cardBody}>
-        {/* Top row: client name + status badge */}
         <View style={styles.cardTopRow}>
-          <Text style={styles.clientName} numberOfLines={1}>{clientLabel}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: cfg.bg }]}>
-            <Text style={[styles.statusBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
-          </View>
+          <Text style={styles.clientName} numberOfLines={1}>{client.clientName}</Text>
+          <Text style={styles.lastOrderDate}>{formatDate(client.lastOrderAt)}</Text>
         </View>
 
-        {/* Order number + date */}
-        <View style={styles.cardMidRow}>
-          <Text style={styles.orderNum} numberOfLines={1}>{order.orderNumber || order._id}</Text>
-          <Text style={styles.cardDate}>{formatDate(order.createdAt)}</Text>
-        </View>
-
-        {/* Footer: meta + chevron */}
-        <View style={styles.cardFooter}>
+        <View style={styles.cardBottomRow}>
           <Text style={styles.cardMeta}>
-            {itemCount} item{itemCount !== 1 ? 's' : ''}
+            {client.orderCount} order{client.orderCount !== 1 ? 's' : ''}
             {'  ·  '}
-            {totalPieces} pcs
+            {client.totalPieces} pcs
           </Text>
-          <MaterialIcons name="chevron-right" size={20} color="#9BAAB3" />
+          {client.pendingCount > 0 && (
+            <View style={styles.pendingBadge}>
+              <Text style={styles.pendingBadgeText}>{client.pendingCount} active</Text>
+            </View>
+          )}
         </View>
       </View>
+
+      <MaterialIcons name="chevron-right" size={20} color="#B9C4CC" />
     </TouchableOpacity>
   );
 }
@@ -88,7 +68,7 @@ const AdminOrdersListScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchText, setSearchText] = useState('');
 
   const loadOrders = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -114,22 +94,66 @@ const AdminOrdersListScreen = ({ navigation }) => {
     }, [loadOrders]),
   );
 
-  const filteredOrders = useMemo(() => {
-    if (statusFilter === 'all') return orders;
-    return orders.filter((o) => o.status === statusFilter);
-  }, [orders, statusFilter]);
-
-  const countByStatus = useMemo(() => {
-    const counts = {};
-    orders.forEach((o) => {
-      counts[o.status] = (counts[o.status] || 0) + 1;
+  const clients = useMemo(() => {
+    const map = new Map();
+    orders.forEach((order) => {
+      const key = order.clientId || order.clientUsername || order.clientName || 'unknown';
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          clientId: order.clientId,
+          clientName: order.clientName || order.clientUsername || 'Unknown Client',
+          clientUsername: order.clientUsername,
+          orders: [],
+        });
+      }
+      map.get(key).orders.push(order);
     });
-    return counts;
+
+    return Array.from(map.values())
+      .map((group) => {
+        const totalPieces = group.orders.reduce(
+          (sum, o) => sum + (o.items || []).reduce((s, i) => s + Number(i.quantity || 0), 0),
+          0,
+        );
+        const pendingCount = group.orders.filter((o) => ACTIVE_STATUSES.includes(o.status)).length;
+        const lastOrderAt = group.orders.reduce((max, o) => {
+          const t = new Date(o.createdAt).getTime();
+          return Number.isFinite(t) && t > max ? t : max;
+        }, 0);
+        return {
+          ...group,
+          orderCount: group.orders.length,
+          totalPieces,
+          pendingCount,
+          lastOrderAt,
+        };
+      })
+      .sort((a, b) => b.lastOrderAt - a.lastOrderAt);
   }, [orders]);
 
-  const handleOrderPress = useCallback(
-    (order) => {
-      navigation.navigate('AdminOrderDetails', { orderId: order._id, order });
+  const filteredClients = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    if (!query) return clients;
+    return clients.filter(
+      (c) =>
+        c.clientName.toLowerCase().includes(query) ||
+        String(c.clientUsername || '').toLowerCase().includes(query),
+    );
+  }, [clients, searchText]);
+
+  const totalActiveOrders = useMemo(
+    () => orders.filter((o) => ACTIVE_STATUSES.includes(o.status)).length,
+    [orders],
+  );
+
+  const handleClientPress = useCallback(
+    (client) => {
+      navigation.navigate('AdminClientOrders', {
+        clientId: client.clientId,
+        clientName: client.clientName,
+        clientUsername: client.clientUsername,
+      });
     },
     [navigation],
   );
@@ -138,59 +162,41 @@ const AdminOrdersListScreen = ({ navigation }) => {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={navigation.goBack} style={styles.iconBtn} activeOpacity={0.8}>
-          <MaterialIcons name="chevron-left" size={26} color="#1A1A1A" />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>All Orders</Text>
+        <View>
+          <Text style={styles.headerTitle}>Orders</Text>
+          <Text style={styles.headerSubtitle}>
+            {clients.length} client{clients.length !== 1 ? 's' : ''}
+            {totalActiveOrders > 0 ? `  ·  ${totalActiveOrders} active` : ''}
+          </Text>
         </View>
         <TouchableOpacity onPress={() => loadOrders(true)} style={styles.iconBtn} activeOpacity={0.8}>
-          <MaterialIcons name="refresh" size={22} color="#4B6E78" />
+          <MaterialIcons name="refresh" size={22} color={colors.primary} />
         </TouchableOpacity>
       </View>
 
-      {/* Filter bar */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterBar}
-        contentContainerStyle={styles.filterBarContent}>
-        {STATUS_FILTERS.map((f) => {
-          const count = f.key === 'all' ? orders.length : (countByStatus[f.key] || 0);
-          const isActive = statusFilter === f.key;
-          return (
-            <TouchableOpacity
-              key={f.key}
-              style={[styles.filterPill, isActive && styles.filterPillActive]}
-              onPress={() => setStatusFilter(f.key)}
-              activeOpacity={0.75}>
-              <Text style={[styles.filterPillLabel, isActive && styles.filterPillLabelActive]}>
-                {f.label}
-              </Text>
-              {count > 0 && (
-                <Text style={[styles.filterPillCount, isActive && styles.filterPillCountActive]}>
-                  {count}
-                </Text>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {/* Total line */}
-      {!loading && !error && (
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryText}>
-            {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
-            {statusFilter !== 'all' ? ` · ${orders.length} total` : ''}
-          </Text>
-        </View>
-      )}
+      {/* Search */}
+      <View style={styles.searchBar}>
+        <MaterialIcons name="search" size={18} color="#8A97A3" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search clients"
+          placeholderTextColor="#9AA6B0"
+          value={searchText}
+          onChangeText={setSearchText}
+          autoCapitalize="none"
+          returnKeyType="search"
+        />
+        {searchText.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchText('')} activeOpacity={0.7}>
+            <MaterialIcons name="close" size={18} color="#8A97A3" />
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* Content */}
       {loading && !refreshing ? (
         <View style={styles.center}>
-          <Text style={styles.loadingText}>Loading orders…</Text>
+          <Text style={styles.loadingText}>Loading clients…</Text>
         </View>
       ) : error ? (
         <View style={styles.center}>
@@ -201,17 +207,15 @@ const AdminOrdersListScreen = ({ navigation }) => {
         </View>
       ) : (
         <FlatList
-          data={filteredOrders}
-          keyExtractor={(item) => item._id || item.orderNumber}
-          renderItem={({ item }) => <AdminOrderCard order={item} onPress={handleOrderPress} />}
+          data={filteredClients}
+          keyExtractor={(item) => item.key}
+          renderItem={({ item }) => <ClientCard client={item} onPress={handleClientPress} />}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <MaterialIcons name="inbox" size={44} color="#C8D5DC" />
               <Text style={styles.emptyText}>
-                {statusFilter === 'all'
-                  ? 'No orders yet.'
-                  : `No ${STATUS_FILTERS.find(f => f.key === statusFilter)?.label?.toLowerCase() || ''} orders.`}
+                {searchText ? 'No clients match your search.' : 'No orders yet.'}
               </Text>
             </View>
           }
@@ -227,176 +231,133 @@ const AdminOrdersListScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F0F3F5',
+    backgroundColor: colors.backgroundSecondary,
   },
 
-  // Header
   header: {
-    height: 56,
+    paddingTop: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    backgroundColor: '#FFFFFF',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    backgroundColor: colors.background,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#DDE4EA',
-  },
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
+    borderBottomColor: colors.border,
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#111827',
-    letterSpacing: -0.2,
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    marginTop: 3,
+    fontSize: 13,
+    color: colors.textSecondary,
   },
   iconBtn: {
-    width: 38,
-    height: 38,
+    width: 34,
+    height: 34,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  // Filter bar
-  filterBar: {
-    backgroundColor: '#E8EDF1',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#D0D9E0',
-    height: 56,
-  },
-  filterBarContent: {
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+  // Search
+  searchBar: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 12,
     gap: 8,
   },
-  filterPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 13,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#C8D3DA',
-  },
-  filterPillActive: {
-    backgroundColor: '#1A5560',
-    borderColor: '#1A5560',
-  },
-  filterPillLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#2A3D4A',
-  },
-  filterPillLabelActive: {
-    color: '#FFFFFF',
-  },
-  filterPillCount: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#7A8F9A',
-  },
-  filterPillCountActive: {
-    color: 'rgba(255,255,255,0.65)',
-  },
-
-  // Summary
-  summaryRow: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  summaryText: {
-    fontSize: 12,
-    color: '#7A8F9A',
-    fontWeight: '500',
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.textPrimary,
+    padding: 0,
   },
 
   // List
   listContent: {
-    paddingHorizontal: 12,
-    paddingTop: 2,
+    paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 28,
-    gap: 8,
+    gap: 10,
   },
 
   // Card
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
     flexDirection: 'row',
-    overflow: 'hidden',
-    // shadow
-    shadowColor: '#1A3040',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.07,
-    shadowRadius: 4,
-    elevation: 2,
+    alignItems: 'center',
+    padding: 12,
+    gap: 12,
   },
-  cardAccent: {
-    width: 4,
-    borderTopLeftRadius: 14,
-    borderBottomLeftRadius: 14,
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.primaryExtraLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  avatarText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.primary,
   },
   cardBody: {
     flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 5,
+    gap: 4,
   },
   cardTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
   },
   clientName: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '700',
-    color: '#111827',
-    letterSpacing: -0.1,
+    fontWeight: '600',
+    color: colors.textPrimary,
   },
-  statusBadge: {
-    borderRadius: 6,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
+  lastOrderDate: {
+    fontSize: 12,
+    color: colors.textLight,
   },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-  },
-  cardMidRow: {
+  cardBottomRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
   },
-  orderNum: {
-    flex: 1,
-    fontSize: 12,
-    color: '#2D6172',
-    fontWeight: '500',
-  },
-  cardDate: {
-    fontSize: 12,
-    color: '#94A3AE',
-  },
-  cardFooter: {
-    marginTop: 6,
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#EDF0F3',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
   cardMeta: {
-    fontSize: 13,
-    color: '#4D6470',
-    fontWeight: '500',
+    fontSize: 12.5,
+    color: colors.textSecondary,
+  },
+  pendingBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    backgroundColor: colors.primaryExtraLight,
+  },
+  pendingBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.primary,
   },
 
   // States
@@ -408,11 +369,11 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: '#7A8F9A',
+    color: colors.textSecondary,
   },
   errorText: {
     fontSize: 14,
-    color: colors.error || '#C05252',
+    color: colors.error,
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -421,10 +382,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#1A5560',
+    backgroundColor: colors.primary,
   },
   retryBtnText: {
-    color: '#FFFFFF',
+    color: colors.textWhite,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -435,7 +396,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: '#94A3AE',
+    color: colors.textLight,
   },
 });
 

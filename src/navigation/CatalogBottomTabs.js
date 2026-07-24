@@ -20,6 +20,7 @@ import MyOrderDetailsScreen from '../screens/ClientApp/MyOrderDetailsScreen';
 import MyShipmentTrackingScreen from '../screens/ClientApp/MyShipmentTrackingScreen';
 import OrderInvoicesScreen from '../screens/ClientApp/OrderInvoicesScreen';
 import AdminOrdersListScreen from '../screens/ClientApp/AdminOrdersListScreen';
+import AdminClientOrdersScreen from '../screens/ClientApp/AdminClientOrdersScreen';
 import AdminOrderDetailsScreen from '../screens/ClientApp/AdminOrderDetailsScreen';
 import SearchScreen from '../screens/ClientApp/SearchScreen';
 import ProductImageViewerScreen from '../screens/ClientApp/ProductImageViewerScreen';
@@ -75,6 +76,7 @@ const OrdersStackScreen = () => {
       screenOptions={{ headerShown: false }}>
       {/* Admin order screens */}
       <OrdersStack.Screen name="AdminOrdersList" component={AdminOrdersListScreen} />
+      <OrdersStack.Screen name="AdminClientOrders" component={AdminClientOrdersScreen} />
       <OrdersStack.Screen name="AdminOrderDetails" component={AdminOrderDetailsScreen} />
       {/* Client order screens */}
       <OrdersStack.Screen name="MyOrdersList" component={MyOrdersScreen} />
