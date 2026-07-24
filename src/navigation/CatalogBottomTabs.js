@@ -1,8 +1,11 @@
 import React, { useMemo } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import CustomTabBar from '../components/common/CustomTabBar';
 import { CartProvider } from '../context/CartContext';
+import { OrderingAsClientProvider } from '../context/OrderingAsClientContext';
+import OrderingAsClientBanner from '../components/client/OrderingAsClientBanner';
 import { useAuth } from '../context/AuthContext';
 import HomeScreen from '../screens/ClientApp/HomeScreen';
 import FeaturedCollectionScreen from '../screens/ClientApp/FeaturedCollectionScreen';
@@ -22,6 +25,7 @@ import OrderInvoicesScreen from '../screens/ClientApp/OrderInvoicesScreen';
 import AdminOrdersListScreen from '../screens/ClientApp/AdminOrdersListScreen';
 import AdminClientOrdersScreen from '../screens/ClientApp/AdminClientOrdersScreen';
 import AdminOrderDetailsScreen from '../screens/ClientApp/AdminOrderDetailsScreen';
+import AdminSelectClientScreen from '../screens/ClientApp/AdminSelectClientScreen';
 import SearchScreen from '../screens/ClientApp/SearchScreen';
 import ProductImageViewerScreen from '../screens/ClientApp/ProductImageViewerScreen';
 
@@ -78,6 +82,7 @@ const OrdersStackScreen = () => {
       <OrdersStack.Screen name="AdminOrdersList" component={AdminOrdersListScreen} />
       <OrdersStack.Screen name="AdminClientOrders" component={AdminClientOrdersScreen} />
       <OrdersStack.Screen name="AdminOrderDetails" component={AdminOrderDetailsScreen} />
+      <OrdersStack.Screen name="AdminSelectClient" component={AdminSelectClientScreen} />
       {/* Client order screens */}
       <OrdersStack.Screen name="MyOrdersList" component={MyOrdersScreen} />
       <OrdersStack.Screen name="MyOrderDetails" component={MyOrderDetailsScreen} />
@@ -90,30 +95,41 @@ const OrdersStackScreen = () => {
 const CatalogBottomTabs = () => {
   return (
     <CartProvider>
-      <Tab.Navigator
-        tabBar={(props) => <CustomTabBar {...props} currentApp="catalog" />}
-        screenOptions={{
-          headerShown: false,
-        }}
-      >
-        <Tab.Screen
-          name="Dashboard"
-          component={DashboardStackScreen}
-          options={{ title: 'Dashboard' }}
-        />
-        <Tab.Screen
-          name="Cart"
-          component={CartStackScreen}
-          options={{ title: 'Cart' }}
-        />
-        <Tab.Screen
-          name="MyOrders"
-          component={OrdersStackScreen}
-          options={{ title: 'My Orders' }}
-        />
-      </Tab.Navigator>
+      <OrderingAsClientProvider>
+        <View style={styles.tabsWrap}>
+          <OrderingAsClientBanner />
+          <Tab.Navigator
+            tabBar={(props) => <CustomTabBar {...props} currentApp="catalog" />}
+            screenOptions={{
+              headerShown: false,
+            }}
+          >
+            <Tab.Screen
+              name="Dashboard"
+              component={DashboardStackScreen}
+              options={{ title: 'Dashboard' }}
+            />
+            <Tab.Screen
+              name="Cart"
+              component={CartStackScreen}
+              options={{ title: 'Cart' }}
+            />
+            <Tab.Screen
+              name="MyOrders"
+              component={OrdersStackScreen}
+              options={{ title: 'My Orders' }}
+            />
+          </Tab.Navigator>
+        </View>
+      </OrderingAsClientProvider>
     </CartProvider>
   );
 };
+
+const styles = StyleSheet.create({
+  tabsWrap: {
+    flex: 1,
+  },
+});
 
 export default CatalogBottomTabs;

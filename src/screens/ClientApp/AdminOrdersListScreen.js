@@ -169,9 +169,18 @@ const AdminOrdersListScreen = ({ navigation }) => {
             {totalActiveOrders > 0 ? `  ·  ${totalActiveOrders} active` : ''}
           </Text>
         </View>
-        <TouchableOpacity onPress={() => loadOrders(true)} style={styles.iconBtn} activeOpacity={0.8}>
-          <MaterialIcons name="refresh" size={22} color={colors.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('AdminSelectClient')}
+            style={styles.newOrderBtn}
+            activeOpacity={0.85}>
+            <MaterialIcons name="add" size={18} color={colors.textWhite} />
+            <Text style={styles.newOrderBtnText}>New Order</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => loadOrders(true)} style={styles.iconBtn} activeOpacity={0.8}>
+            <MaterialIcons name="refresh" size={22} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Search */}
@@ -261,6 +270,25 @@ const styles = StyleSheet.create({
     height: 34,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  newOrderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  newOrderBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textWhite,
   },
 
   // Search
