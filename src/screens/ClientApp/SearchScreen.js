@@ -21,6 +21,29 @@ const { width: SCREEN_W } = Dimensions.get('window');
 // 2-column grid: 16px side padding × 2, 10px gap between columns
 const PRODUCT_CARD_W = (SCREEN_W - 32 - 10) / 2;
 
+// Expands a word to include its likely singular/plural counterpart so filter
+// narrowing treats "ring"/"rings" (and similar) as the same term. Mirrors the
+// stemming applied on the backend (chandra_backend/src/routes/search.ts) so
+// "necklace"/"necklaces"-style mismatches don't reappear in this client-side
+// step.
+function singularize(word) {
+  if (/ies$/.test(word) && word.length > 3) return `${word.slice(0, -3)}y`;
+  if (/(s|x|z|ch|sh)es$/.test(word)) return word.slice(0, -2);
+  if (/s$/.test(word) && !/ss$/.test(word)) return word.slice(0, -1);
+  return word;
+}
+
+function pluralize(word) {
+  if (/[^aeiou]y$/.test(word)) return `${word.slice(0, -1)}ies`;
+  if (/(s|x|z|ch|sh)$/.test(word)) return `${word}es`;
+  return `${word}s`;
+}
+
+function wordVariants(word) {
+  const base = singularize(word);
+  return [...new Set([word, base, pluralize(base)])];
+}
+
 // ─── Type-pill colour themes ─────────────────────────────────────────────────
 const PILL = {
   category:    { bg: '#E6F0F1', text: '#143F45' },   // teal   — category
@@ -320,11 +343,15 @@ const SearchScreen = ({ navigation }) => {
       if (queryWords.length > 1 && allProducts.length > 0) {
         const matchesFilterValue = (product, word) => {
           const pFilters = Array.isArray(product.filter) ? product.filter : [];
+          const terms = wordVariants(word);
           return pFilters.some((f) => {
             const vals = Array.isArray(f.filterValue)
               ? f.filterValue
               : [f.filterValue];
-            return vals.some((v) => String(v || '').toLowerCase().includes(word));
+            return vals.some((v) => {
+              const val = String(v || '').toLowerCase();
+              return terms.some((term) => val.includes(term));
+            });
           });
         };
 

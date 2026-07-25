@@ -15,6 +15,7 @@ import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { colors } from '../../constants/colors';
 import { useCart } from '../../context/CartContext';
+import { useOrderingAsClient } from '../../context/OrderingAsClientContext';
 import { getCart, removeCartLine } from '../../services/cartStorage';
 import catalogApi from '../../services/catalogApi';
 
@@ -79,6 +80,7 @@ const OrderCartScreen = ({ navigation }) => {
   const SWIPE_BASE_SEGMENT_WIDTH = 104;
   const tabBarHeight = useBottomTabBarHeight();
   const { refreshCartCount } = useCart();
+  const { orderingClient, clearOrderingClient } = useOrderingAsClient();
 
   const [displayRows, setDisplayRows] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -189,13 +191,14 @@ const OrderCartScreen = ({ navigation }) => {
       currency,
       notes: sanitizedRemarks || undefined,
       totalAmount: totalAmount > 0 ? Number(totalAmount.toFixed(2)) : undefined,
+      clientId: orderingClient?.id || undefined,
       orderMeta: {
         source: 'mobile_cart_swipe_purchase',
         entryCount: entries.length,
         hasOrderLevelRemarks: Boolean(sanitizedRemarks),
       },
     });
-  }, [orderRemarks]);
+  }, [orderRemarks, orderingClient]);
 
   useFocusEffect(
     useCallback(() => {
@@ -234,6 +237,7 @@ const OrderCartScreen = ({ navigation }) => {
                 setSubmitError('');
                 try {
                   await createOrderFromCart();
+                  clearOrderingClient();
                   navigation.navigate('OrderPlaced');
                 } catch (error) {
                   const message =
@@ -262,7 +266,15 @@ const OrderCartScreen = ({ navigation }) => {
           }).start();
         },
       }),
-    [createOrderFromCart, displayRows.length, isSubmitting, maxSwipeDistance, navigation, swipeTranslateX],
+    [
+      clearOrderingClient,
+      createOrderFromCart,
+      displayRows.length,
+      isSubmitting,
+      maxSwipeDistance,
+      navigation,
+      swipeTranslateX,
+    ],
   );
 
   const onRemoveRow = async (entryId, productId) => {

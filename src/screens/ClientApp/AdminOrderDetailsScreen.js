@@ -81,6 +81,56 @@ const formatDateShort = (value) => {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+const COLOR_SWATCH = {
+  whiteQty: { label: 'White', swatch: '#E8EAED' },
+  yellowQty: { label: 'Yellow', swatch: '#D4AF37' },
+  roseQty: { label: 'Rose', swatch: '#C98A7A' },
+};
+
+const getItemDisplayTitle = (item) => {
+  const snapshot = item?.meta?.productSnapshot || {};
+  const subcategory = String(snapshot.subcategoryName || item?.meta?.subcategoryName || '').trim();
+  const category = String(snapshot.categoryName || item?.meta?.categoryName || '').trim();
+  if (subcategory && category) return `${subcategory} ${category}`;
+  if (subcategory) return subcategory;
+  if (category) return category;
+  return String(item?.title || item?.styleNo || 'Ordered Item').trim();
+};
+
+const getItemDisplaySubtitle = (item) => {
+  const snapshot = item?.meta?.productSnapshot || {};
+  return String(snapshot.subcategoryProfileName || item?.meta?.subcategoryProfileName || '').trim();
+};
+
+// Metal karat / stone selections captured at order time (e.g. "14 kt", "Lab Grown")
+const getItemFilterMeta = (item) => {
+  const filters = item?.meta?.selectedFilters;
+  if (!filters || typeof filters !== 'object') return { metal: '', stone: '' };
+  return {
+    metal: String(filters.metal || '').trim(),
+    stone: String(filters.stone || '').trim(),
+  };
+};
+
+// Per-color piece breakdown (white/yellow/rose gold) recorded on the order line
+const getItemColorBreakdown = (item) => {
+  const meta = item?.meta || {};
+  return Object.entries(COLOR_SWATCH)
+    .map(([key, cfg]) => ({ ...cfg, qty: Number(meta[key] || 0) }))
+    .filter((entry) => entry.qty > 0);
+};
+
+const getItemDiamondInfo = (item) => {
+  const meta = item?.meta || {};
+  const pointer = Number(meta.pointer || 0);
+  const totalCt = Number(meta.totalDiamondWeightCt || 0);
+  if (!pointer && !totalCt) return '';
+  const parts = [];
+  if (pointer) parts.push(`${pointer} pointer`);
+  if (totalCt) parts.push(`${totalCt} ct total`);
+  return parts.join('  ·  ');
+};
+
 // Upload a file to a presigned S3 URL using XMLHttpRequest (handles binary correctly in RN)
 function uploadToS3(uploadUrl, fileUri, contentType) {
   return new Promise((resolve, reject) => {
@@ -543,8 +593,10 @@ const AdminOrderDetailsScreen = ({ route, navigation }) => {
         {/* ---------------------------------------------------------------- */}
         <SectionCard>
           <Text style={sectionStyles.sectionTitle}>Client</Text>
-          <LabelValue label="Name" value={order.clientName} />
-          <LabelValue label="Username" value={order.clientUsername} />
+          <View style={sectionStyles.clientHeadRow}>
+            <Text style={sectionStyles.clientNameText}>{order.clientName || order.clientUsername || 'Unknown Client'}</Text>
+            {order.clientUsername ? <Text style={sectionStyles.clientUsernameText}>@{order.clientUsername}</Text> : null}
+          </View>
           <LabelValue label="Shipping Address" value={order.shippingAddress} />
           {order.notes ? <LabelValue label="Order Notes" value={order.notes} /> : null}
         </SectionCard>
@@ -573,9 +625,11 @@ const AdminOrderDetailsScreen = ({ route, navigation }) => {
             <Text style={sectionStyles.sectionCount}>{items.length} item{items.length !== 1 ? 's' : ''}</Text>
           </View>
           {items.map((item, idx) => {
-            const snapshot = item?.meta?.productSnapshot || {};
-            const title =
-              String(snapshot.subcategoryName || item?.meta?.subcategoryName || item.title || item.styleNo || `Item ${idx + 1}`).trim();
+            const title = getItemDisplayTitle(item);
+            const subtitle = getItemDisplaySubtitle(item);
+            const { metal, stone } = getItemFilterMeta(item);
+            const colorBreakdown = getItemColorBreakdown(item);
+            const diamondInfo = getItemDiamondInfo(item);
             return (
               <View key={`${item.productId || item.styleNo || idx}`} style={sectionStyles.itemRow}>
                 {item.imageUrl ? (
@@ -585,8 +639,38 @@ const AdminOrderDetailsScreen = ({ route, navigation }) => {
                 )}
                 <View style={sectionStyles.itemInfo}>
                   <Text style={sectionStyles.itemTitle} numberOfLines={2}>{title}</Text>
-                  {item.styleNo ? <Text style={sectionStyles.itemMeta}>Style: {item.styleNo}</Text> : null}
-                  <Text style={sectionStyles.itemMeta}>{Number(item.quantity || 0)} pcs</Text>
+                  {subtitle ? <Text style={sectionStyles.itemSubtitle} numberOfLines={1}>{subtitle}</Text> : null}
+
+                  {(metal || stone || colorBreakdown.length > 0) && (
+                    <View style={sectionStyles.itemChipRow}>
+                      {metal ? (
+                        <View style={sectionStyles.metalChip}>
+                          <Text style={sectionStyles.metalChipText}>{metal}</Text>
+                        </View>
+                      ) : null}
+                      {stone ? (
+                        <View style={sectionStyles.stoneChip}>
+                          <Text style={sectionStyles.stoneChipText}>{stone}</Text>
+                        </View>
+                      ) : null}
+                      {colorBreakdown.map((c) => (
+                        <View key={c.label} style={sectionStyles.colorChip}>
+                          <View style={[sectionStyles.colorSwatch, { backgroundColor: c.swatch }]} />
+                          <Text style={sectionStyles.colorChipText}>{c.label} · {c.qty}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {diamondInfo ? <Text style={sectionStyles.itemMeta}>{diamondInfo}</Text> : null}
+
+                  <View style={sectionStyles.itemFooterRow}>
+                    {item.styleNo ? (
+                      <Text style={sectionStyles.itemStyleNo} numberOfLines={1}>Style {item.styleNo}</Text>
+                    ) : <View />}
+                    <Text style={sectionStyles.itemQty}>{Number(item.quantity || 0)} pcs</Text>
+                  </View>
+
                   {item.remarks ? <Text style={sectionStyles.itemRemarks} numberOfLines={2}>{item.remarks}</Text> : null}
                 </View>
               </View>
@@ -883,16 +967,16 @@ const sectionStyles = StyleSheet.create({
     borderTopColor: '#EAEDF0',
   },
   itemImage: {
-    width: 56,
-    height: 56,
+    width: 64,
+    height: 64,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E7EAF0',
     backgroundColor: '#F8FAFB',
   },
   itemImagePlaceholder: {
-    width: 56,
-    height: 56,
+    width: 64,
+    height: 64,
     borderRadius: 8,
     backgroundColor: '#E8ECF0',
   },
@@ -901,19 +985,114 @@ const sectionStyles = StyleSheet.create({
   },
   itemTitle: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#1D2A34',
   },
-  itemMeta: {
-    marginTop: 3,
+  itemSubtitle: {
+    marginTop: 2,
     fontSize: 12,
     color: '#6B7780',
   },
+  itemChipRow: {
+    marginTop: 7,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  metalChip: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#FBF3DC',
+    borderWidth: 1,
+    borderColor: '#EEDDA6',
+  },
+  metalChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#8A6B10',
+  },
+  stoneChip: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#EDF3F4',
+    borderWidth: 1,
+    borderColor: '#D3E1E3',
+  },
+  stoneChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#3D6672',
+  },
+  colorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#F5F6F8',
+    borderWidth: 1,
+    borderColor: '#E3E7EB',
+  },
+  colorSwatch: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,0,0,0.15)',
+  },
+  colorChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#3D4952',
+  },
+  itemMeta: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#6B7780',
+  },
+  itemFooterRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  itemStyleNo: {
+    flex: 1,
+    fontSize: 11,
+    color: '#9AA6B0',
+  },
+  itemQty: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1D2A34',
+  },
   itemRemarks: {
-    marginTop: 3,
+    marginTop: 5,
     fontSize: 12,
     color: '#8A97A3',
     fontStyle: 'italic',
+  },
+  clientHeadRow: {
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#EAEDF0',
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  clientNameText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1D2A34',
+  },
+  clientUsernameText: {
+    fontSize: 12,
+    color: '#9AA6B0',
   },
   timelineRow: {
     flexDirection: 'row',
