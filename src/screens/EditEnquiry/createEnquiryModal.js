@@ -455,11 +455,21 @@ const generateStyleNumber = (qty, category) => {
               </View>
             );
           } else if (item.options.length > 0) {
+            const resolvedOptions = (item.field === 'StoneType' || item.field === 'Stone')
+              ? (() => {
+                  const cId = preSelectedClientIdResolved || missingFieldsData.ClientId;
+                  const selectedClient = clients.find(c => (c.id || c._id) === cId);
+                  const applicable = selectedClient?.applicableStoneTypes || [];
+                  if (applicable.length === 0) return item.options;
+                  const allowed = new Set(applicable);
+                  return item.options.filter(opt => allowed.has(opt.value));
+                })()
+              : item.options;
             return (
               <View key={index} style={styles.tileGroup}>
                 <Text style={styles.dropdownLabel}>{item.label}</Text>
                 <View style={styles.chipRowWrap}>
-                  {item.options.map(option => {
+                  {resolvedOptions.map(option => {
                     const selected = missingFieldsData[item.field] === option.value;
                     return (
                         <TouchableOpacity

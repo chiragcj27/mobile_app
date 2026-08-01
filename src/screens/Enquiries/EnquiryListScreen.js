@@ -135,48 +135,6 @@ const enrich = (rows, clientNameMap) =>
     return { ...e, clientId: idStr || e.clientId, clientName: name || 'Unknown Client' };
   });
 
-const renderMdSummary = (input, s) => {
-  if (!input) return null;
-  const text = (typeof input === 'string' ? input : String(input)).replace(/\\n/g, '\n');
-  const sections = [];
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (/^#{1,3}\s/.test(trimmed)) {
-      const level = trimmed.match(/^#+/)[0].length;
-      sections.push({ type: 'heading', text: trimmed.replace(/^#+\s*/, '').replace(/\*\*/g, ''), level });
-    } else if (/^\*\*.*\*\*:/.test(trimmed)) {
-      const parts = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
-      sections.push(parts ? { type: 'row', label: parts[1].replace(/\*\*/g, ''), val: (parts[2] || '').replace(/\*\*/g, '') } : { type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    } else if (/^[-*•]\s/.test(trimmed)) {
-      sections.push({ type: 'bullet', text: trimmed.replace(/^[-*•]\s*/, '').replace(/\*\*/g, '') });
-    } else if (/^[A-Z][^:]+:/.test(trimmed) && !/^https?:\/\//i.test(trimmed) && trimmed.indexOf(':') < 60) {
-      const colonIdx = trimmed.indexOf(':');
-      sections.push({ type: 'row', label: trimmed.slice(0, colonIdx).replace(/\*\*/g, ''), val: trimmed.slice(colonIdx + 1).trim().replace(/\*\*/g, '') });
-    } else {
-      sections.push({ type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    }
-  }
-  if (!sections.length) return null;
-  return (
-    <View style={s.mdContainer}>
-      {sections.map((sec, i) => {
-        switch (sec.type) {
-          case 'heading':
-            return <Text key={i} style={[s.mdHeading, sec.level <= 2 && s.mdHeadingLg]}>{sec.text}</Text>;
-          case 'row':
-            return <View key={i} style={s.mdRow}><Text style={s.mdKey} numberOfLines={2}>{sec.label}</Text><Text style={s.mdVal}>{sec.val}</Text></View>;
-          case 'bullet':
-            return <View key={i} style={s.mdBullet}><Text style={s.mdDot}>•</Text><Text style={s.mdBulletTxt}>{sec.text}</Text></View>;
-          default:
-            return <Text key={i} style={s.mdPara}>{sec.text}</Text>;
-        }
-      })}
-    </View>
-  );
-};
-
 const dedupeById = (rows) => {
   const seen = new Set();
   const out = [];
@@ -238,10 +196,6 @@ export default function EnquiryListScreen({ navigation }) {
   const [designerTab, setDesignerTab] = useState(DESIGNER_TAB.MINE);
   const [unassignedSubFilter, setUnassignedSubFilter] = useState('unassigned');
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [summaryEnquiryId, setSummaryEnquiryId] = useState(null);
-  const summaryTextRef = useRef('');
-  const { data: summaryData, isLoading: summaryLoading } = useGetEnquiryByIdQuery(summaryEnquiryId, { skip: !summaryEnquiryId });
-
   // When CH/Admin lands here via "ClientHandlerEnquiries" route with a selected client,
   // scope every query to that client only.
   const isUnassignedOnly = route.params?.filter === 'unassigned';
@@ -505,15 +459,11 @@ export default function EnquiryListScreen({ navigation }) {
   const [showSortModal, setShowSortModal] = useState(false);
 
   const sortOptions = [
-    { key: 'AssignedDate', label: 'Assigned Date', icon: 'schedule' },
     { key: 'CreatedDate', label: 'Date Created', icon: 'event' },
-    { key: 'Name', label: 'Name', icon: 'title' },
+    { key: 'ShippingDate', label: 'Shipping Date', icon: 'local-shipping' },
     { key: 'Priority', label: 'Priority', icon: 'priority-high' },
     { key: 'CurrentStatus', label: 'Status', icon: 'flag' },
     { key: 'Category', label: 'Category', icon: 'category' },
-    { key: 'ClientId', label: 'Client', icon: 'person' },
-    { key: 'StoneType', label: 'Stone Type', icon: 'diamond' },
-    { key: 'ShippingDate', label: 'Shipping Date', icon: 'local-shipping' },
   ];
 
   const currentSortLabel = useMemo(
@@ -526,7 +476,7 @@ export default function EnquiryListScreen({ navigation }) {
       const newOrder = sortOrder === 'asc' ? 'desc' : 'asc';
       dispatch(setSorting({ sortBy, sortOrder: newOrder }));
     } else {
-      const dateFields = ['AssignedDate', 'CreatedDate', 'ShippingDate'];
+      const dateFields = ['CreatedDate', 'ShippingDate'];
       const defaultOrder = dateFields.includes(newSortBy) ? 'desc' : 'asc';
       dispatch(setSorting({ sortBy: newSortBy, sortOrder: defaultOrder }));
     }
@@ -547,6 +497,7 @@ export default function EnquiryListScreen({ navigation }) {
       <TouchableOpacity
         style={[styles.tab, isActive && styles.tabActive]}
         onPress={() => handleTabChange(item.key)}
+        activeOpacity={0.8}
       >
         <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{item.label}</Text>
         <View style={[styles.countWrap, isActive && styles.countWrapActive]}>
@@ -580,7 +531,6 @@ export default function EnquiryListScreen({ navigation }) {
         })}
         onUpdateEnquiry={onUpdateEnquiry}
         onDeleteEnquiry={onDeleteEnquiry}
-        onSummary={(enq) => setSummaryEnquiryId(enq?._id || enq?.Id || enq?.id)}
         onShare={(enq) => {
           const id = enq?._id || enq?.Id || enq?.id;
           setShareEnquiryId(id);
@@ -711,6 +661,7 @@ export default function EnquiryListScreen({ navigation }) {
                     key={t.key}
                     style={[styles.tab, isActive && styles.tabActive]}
                     onPress={() => { setPage(1); setDesignerTab(t.key); }}
+                    activeOpacity={0.8}
                   >
                     <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{t.label}</Text>
                     <View style={[styles.countWrap, isActive && styles.countWrapActive]}>
@@ -939,56 +890,6 @@ export default function EnquiryListScreen({ navigation }) {
           isDesigner={isDesigner}
         />
       )}
-
-      <Modal visible={!!summaryEnquiryId} transparent animationType="slide" onRequestClose={() => setSummaryEnquiryId(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox2}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Enquiry Summary</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (summaryTextRef.current) {
-                      Clipboard.setString(summaryTextRef.current);
-                    }
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Icon name="content-copy" size={20} color={colors.primaryDark} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setSummaryEnquiryId(null)}>
-                  <Icon name="close" size={24} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            {summaryLoading ? (
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
-                {(() => {
-                  const summaryCandidates = [
-                    summaryData?.Summary,
-                    summaryData?.summary,
-                    summaryData?._originalData?.Summary,
-                    summaryData?._originalData?.summary,
-                    summaryData?.data?.Summary,
-                    summaryData?.data?.summary,
-                    summaryData?.enquiry?.Summary,
-                    summaryData?.enquiry?.summary,
-                  ];
-                  const sm = summaryCandidates.find(
-                    value => typeof value === 'string' && value.trim().length > 0,
-                  );
-                  summaryTextRef.current = sm || '';
-                  return renderMdSummary(sm, styles) || <Text style={styles.noSummary}>No summary available for this enquiry.</Text>;
-                })()}
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
 
       <CreateEnquiryModal
         visible={showCreateModal}
@@ -1254,72 +1155,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: fonts.bold,
     color: colors.textPrimary,
-  },
-  noSummary: {
-    padding: 20,
-    textAlign: 'center',
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm,
-    color: colors.textSecondary,
-  },
-  mdContainer: { padding: 16, paddingBottom: 8 },
-  mdHeading: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 13,
-    color: colors.primary,
-    marginTop: 14,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  mdHeadingLg: { fontSize: fonts.base || 14 },
-  mdRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || '#F0F0F0',
-  },
-  mdKey: {
-    flex: 1,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm || 13,
-    color: colors.textSecondary,
-    paddingRight: 8,
-  },
-  mdVal: {
-    flex: 1.5,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    textAlign: 'right',
-  },
-  mdBullet: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginVertical: 3,
-    paddingLeft: 4,
-  },
-  mdDot: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.base || 14,
-    color: colors.primary,
-    marginRight: 8,
-    lineHeight: 20,
-  },
-  mdBulletTxt: {
-    flex: 1,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  mdPara: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-    marginVertical: 4,
   },
 });

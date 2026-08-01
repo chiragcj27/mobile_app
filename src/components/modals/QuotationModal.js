@@ -87,6 +87,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
   const stonesHtml = stones.map(s => `
     <tr style="border-bottom:1px solid #E6F0F1;">
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Type || 'NATURAL'}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Color || '-'}</td>
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Shape || 'RD'}</td>
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.MmSize || '-'}</td>
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:right;">${num(s.Weight).toFixed(3)}</td>
@@ -215,7 +216,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
 
     ${stones.length ? `
     <table style="border:1px solid #E6F0F1;">
-      <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
+      <thead><tr><th>Type</th><th>Color</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
       <tbody>${stonesHtml}</tbody>
     </table>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;flex-wrap:wrap;">
@@ -345,7 +346,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
 
   ${stones.length ? `
   <table style="border:1px solid #E6F0F1;">
-    <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
+    <thead><tr><th>Type</th><th>Color</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
     <tbody>${stonesHtml}</tbody>
   </table>
   <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;flex-wrap:wrap;">
@@ -407,7 +408,7 @@ const ChargeInput = ({ label, value, onChangeText, placeholder = '0', keyboardTy
   </View>
 );
 
-export { num, getLatestPricing, buildHtml };
+export { num, makeId, getLatestPricing, buildHtml, METAL_QUALITY_OPTIONS };
 
 const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const { data: fullEnquiryData, isFetching: isFetchingEnquiry } = useGetEnquiryByIdQuery(enquiryId, {
@@ -814,15 +815,16 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
     const isOnlyMetalDesign = diamonds.length === 0;
 
+    const ounceVal = num(metalOunce);
     const payload = {
       details: {
         isOnlyMetalDesign,
         Metal: {
           Weight:  num(metalWeight),
           Quality: metalQuality,
-          // Only send Rate when > 0 — the backend uses `metalRateOverride ?? todaysRate`,
-          // and 0 is not nullish, so sending 0 would force the metal price (and total) to 0.
-          ...(num(metalRate) > 0 ? { Rate: num(metalRate) } : {}),
+          ...(ounceVal > 0
+            ? { GoldRatePerOunce: ounceVal }
+            : num(metalRate) > 0 ? { Rate: num(metalRate) } : {}),
         },
         Stones: mergedDiamonds.map(d => ({
           Type:      d.Type      || '',

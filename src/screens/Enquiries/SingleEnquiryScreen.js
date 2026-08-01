@@ -52,6 +52,8 @@ import BrandedAlert from '../../components/common/BrandedAlert';
 import {
   formatCurrency,
   formatDate,
+  formatDateTime,
+  objectIdToDate,
   getStatusColor,
   getPriorityColor,
   imageSizes,
@@ -62,54 +64,11 @@ import QuotationModal from '../../components/modals/QuotationModal';
 import FinalLookModal from '../../components/modals/FinalLookModal';
 import ShareEnquiryModal from '../../components/modals/ShareEnquiryModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Clipboard from '@react-native-clipboard/clipboard';
 import { API_BASE_URL } from '../../config/apiConfig';
 import { useUsers } from '../../features/users/usersHooks';
 import { getUserName, useUserName } from '../../utils/userUtils';
 import { actionsFor, resolveRoleCode, ROLE, ACTION, STATUS, SUBSTATUS } from '../../constants/enquiry';
 import { useEnquiryActions } from '../../hooks/useEnquiryActions';
-
-const renderMdSummary = (input, s) => {
-  if (!input) return null;
-  const text = (typeof input === 'string' ? input : String(input)).replace(/\\n/g, '\n');
-  const sections = [];
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (/^#{1,3}\s/.test(trimmed)) {
-      const level = trimmed.match(/^#+/)[0].length;
-      sections.push({ type: 'heading', text: trimmed.replace(/^#+\s*/, '').replace(/\*\*/g, ''), level });
-    } else if (/^\*\*.*\*\*:/.test(trimmed)) {
-      const parts = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
-      sections.push(parts ? { type: 'row', label: parts[1].replace(/\*\*/g, ''), val: (parts[2] || '').replace(/\*\*/g, '') } : { type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    } else if (/^[-*•]\s/.test(trimmed)) {
-      sections.push({ type: 'bullet', text: trimmed.replace(/^[-*•]\s*/, '').replace(/\*\*/g, '') });
-    } else if (/^[A-Z][^:]+:/.test(trimmed) && !/^https?:\/\//i.test(trimmed) && trimmed.indexOf(':') < 60) {
-      const colonIdx = trimmed.indexOf(':');
-      sections.push({ type: 'row', label: trimmed.slice(0, colonIdx).replace(/\*\*/g, ''), val: trimmed.slice(colonIdx + 1).trim().replace(/\*\*/g, '') });
-    } else {
-      sections.push({ type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    }
-  }
-  if (!sections.length) return null;
-  return (
-    <View style={s.mdContainer}>
-      {sections.map((sec, i) => {
-        switch (sec.type) {
-          case 'heading':
-            return <Text key={i} style={[s.mdHeading, sec.level <= 2 && s.mdHeadingLg]}>{sec.text}</Text>;
-          case 'row':
-            return <View key={i} style={s.mdRow}><Text style={s.mdKey} numberOfLines={2}>{sec.label}</Text><Text style={s.mdVal}>{sec.val}</Text></View>;
-          case 'bullet':
-            return <View key={i} style={s.mdBullet}><Text style={s.mdDot}>•</Text><Text style={s.mdBulletTxt}>{sec.text}</Text></View>;
-          default:
-            return <Text key={i} style={s.mdPara}>{sec.text}</Text>;
-        }
-      })}
-    </View>
-  );
-};
 
 const SingleEnquiryScreen = ({ route, navigation }) => {
   const { user } = useAuth();
@@ -462,8 +421,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const [showQuotationModal, setShowQuotationModal] = useState(false);
   const [showFinalLookModal, setShowFinalLookModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-  const [showSummaryModal, setShowSummaryModal] = useState(false);
-  const summaryTextRef = useRef('');
   const [imagesCommentModal, setImagesCommentModal] = useState(false);
   const [pendingRefImages, setPendingRefImages] = useState([]);
   const [refImageComments, setRefImageComments] = useState([]);
@@ -1021,9 +978,13 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     clientNameMap,
   ]);
 
-  // Get dates - check multiple possible fields
+  // Get dates - enquiries store no top-level CreatedDate, so the real creation
+  // time comes from the Mongo ObjectId; fall back to any explicit field.
   const createdAt =
-    enquiry?.createdAt || originalData?.createdAt || new Date().toISOString();
+    objectIdToDate(enquiryId) ||
+    enquiry?.createdAt ||
+    originalData?.createdAt ||
+    new Date().toISOString();
   const updatedAt =
     enquiry?.updatedAt ||
     originalData?.updatedAt ||
@@ -2538,14 +2499,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                   <Icon name="share" size={14} color={colors.primaryDark} />
                   <Text style={styles.shareBtnText}>Share</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.shareBtn}
-                  onPress={() => setShowSummaryModal(true)}
-                  activeOpacity={0.75}
-                >
-                  <Icon name="description" size={14} color={colors.primaryDark} />
-                  <Text style={styles.shareBtnText}>Summary</Text>
-                </TouchableOpacity>
               </View>
             </View>
           </View>
@@ -2581,30 +2534,14 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           <View style={styles.timelineRow}>
             <View style={styles.timelineItem}>
               <Text style={styles.timelineLabel}>Created</Text>
-              <Text style={styles.timelineValue}>{formatDate(createdAt)}</Text>
+              <Text style={styles.timelineValue}>{formatDateTime(createdAt)}</Text>
             </View>
             <View style={styles.timelineDivider} />
             <View style={styles.timelineItem}>
-              <Text style={styles.timelineLabel}>Last Updated</Text>
-              <Text style={styles.timelineValue}>{formatDate(updatedAt)}</Text>
+              <Text style={styles.timelineLabel}>Delivery Date</Text>
+              <Text style={styles.timelineValue}>{shippingDate ? formatDate(shippingDate) : 'Date not mentioned yet'}</Text>
             </View>
           </View>
-          {(shippingDate || (approvedDate && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4)) ? (
-            <View style={styles.timelineRow}>
-              {shippingDate ? (
-                <View style={styles.timelineItem}>
-                  <Text style={styles.timelineLabel}>Shipping</Text>
-                  <Text style={styles.timelineValue}>{formatDate(shippingDate)}</Text>
-                </View>
-              ) : null}
-              {approvedDate && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4 ? (
-                <View style={styles.timelineItem}>
-                  <Text style={styles.timelineLabel}>Approved</Text>
-                  <Text style={styles.timelineValue}>{formatDate(approvedDate)}</Text>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
         </View>
 
         {/* Description Card */}
@@ -5202,59 +5139,14 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         isDesigner={isDesigner}
       />
 
-      <Modal visible={showSummaryModal} transparent animationType="slide" onRequestClose={() => setShowSummaryModal(false)}>
-        <View style={styles.summaryOverlay}>
-          <View style={styles.summaryBox}>
-            <View style={styles.summaryHeader}>
-              <Text style={styles.summaryTitle}>Enquiry Summary</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (summaryTextRef.current) {
-                      Clipboard.setString(summaryTextRef.current);
-                      showAlert('Copied', 'Summary copied to clipboard', 'success', [{ text: 'OK' }]);
-                    }
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Icon name="content-copy" size={20} color={colors.primaryDark} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setShowSummaryModal(false)}>
-                  <Icon name="close" size={24} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
-              {(() => {
-                const summaryCandidates = [
-                  enquiry?.Summary,
-                  enquiry?.summary,
-                  enquiry?._originalData?.Summary,
-                  enquiry?._originalData?.summary,
-                  enquiry?.data?.Summary,
-                  enquiry?.data?.summary,
-                  originalData?.Summary,
-                  originalData?.summary,
-                ];
-                const sm = summaryCandidates.find(
-                  value => typeof value === 'string' && value.trim().length > 0,
-                );
-                summaryTextRef.current = sm || '';
-                return renderMdSummary(sm, styles) || <Text style={styles.noSummary}>No summary available for this enquiry.</Text>;
-              })()}
-            </ScrollView>
-          </View>
-        </View>
-
-        <BrandedAlert
-          visible={alertConfig.visible}
-          title={alertConfig.title}
-          message={alertConfig.message}
-          type={alertConfig.type}
-          buttons={alertConfig.buttons}
-          onClose={hideAlert}
-        />
-      </Modal>
+      <BrandedAlert
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        buttons={alertConfig.buttons}
+        onClose={hideAlert}
+      />
 
       <EnquiryHistoryModal
         visible={showHistoryModal}
@@ -6650,98 +6542,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: colors.textSecondary,
-  },
-  summaryOverlay: {
-    flex: 1,
-    backgroundColor: colors.modalOverlay,
-    justifyContent: 'flex-end',
-  },
-  summaryBox: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    width: '100%',
-  },
-  summaryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  summaryTitle: {
-    fontSize: 16,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  noSummary: {
-    padding: 20,
-    textAlign: 'center',
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm,
-    color: colors.textSecondary,
-  },
-  mdContainer: { padding: 16, paddingBottom: 8 },
-  mdHeading: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 13,
-    color: colors.primary,
-    marginTop: 14,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  mdHeadingLg: { fontSize: fonts.base || 14 },
-  mdRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || '#F0F0F0',
-  },
-  mdKey: {
-    flex: 1,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm || 13,
-    color: colors.textSecondary,
-    paddingRight: 8,
-  },
-  mdVal: {
-    flex: 1.5,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    textAlign: 'right',
-  },
-  mdBullet: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginVertical: 3,
-    paddingLeft: 4,
-  },
-  mdDot: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.base || 14,
-    color: colors.primary,
-    marginRight: 8,
-    lineHeight: 20,
-  },
-  mdBulletTxt: {
-    flex: 1,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  mdPara: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-    marginVertical: 4,
   },
 });
 

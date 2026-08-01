@@ -7,7 +7,6 @@ import {
   ScrollView,
   StyleSheet,
   Share as RNShare,
-  Clipboard,
   ActivityIndicator,
   Platform,
 } from 'react-native';
@@ -282,7 +281,6 @@ const buildEnquiryHtml = (enquiry, imageUris, isDesigner) => {
 };
 
 const ShareEnquiryModal = ({ visible, enquiry, onClose, isDesigner = false }) => {
-  const [copied, setCopied] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [sharingPdf, setSharingPdf] = useState(false);
   const [imageUris, setImageUris] = useState([]);
@@ -346,12 +344,6 @@ const ShareEnquiryModal = ({ visible, enquiry, onClose, isDesigner = false }) =>
   );
 
   const textContent = buildText(enquiry, isDesigner);
-
-  const handleCopy = () => {
-    Clipboard.setString(textContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const handleShare = async () => {
     setSharing(true);
@@ -439,35 +431,9 @@ const ShareEnquiryModal = ({ visible, enquiry, onClose, isDesigner = false }) =>
               <TouchableOpacity style={styles.actionBtnPrimary} onPress={handleSharePdf} activeOpacity={0.85} disabled={sharingPdf || fetchingImages}>
                 <Icon name="picture-as-pdf" size={22} color="#fff" />
                 <Text style={styles.actionBtnLabel}>{sharingPdf ? 'Generating...' : 'Share PDF'}</Text>
-                <Text style={styles.actionBtnSub}>Rich report</Text>
+                <Text style={styles.actionBtnSub}>Share Enquiry</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[styles.actionBtnSecondary, copied && styles.actionBtnCopied]}
-                onPress={handleCopy}
-                activeOpacity={0.85}
-              >
-                <Icon name={copied ? 'check-circle' : 'content-copy'} size={22} color={copied ? '#fff' : colors.textPrimary} />
-                <Text style={[styles.actionBtnLabelDark, copied && { color: '#fff' }]}>
-                  {copied ? 'Copied!' : 'Copy Text'}
-                </Text>
-                <Text style={[styles.actionBtnSubDark, copied && { color: 'rgba(255,255,255,0.7)' }]}>
-                  Plain text summary
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Text preview */}
-            <View style={styles.previewSection}>
-              <View style={styles.previewHeader}>
-                <Text style={styles.previewLabel}>TEXT PREVIEW</Text>
-                <TouchableOpacity onPress={handleCopy}>
-                  <Text style={styles.previewCopyBtn}>{copied ? 'Copied!' : 'Copy'}</Text>
-                </TouchableOpacity>
-              </View>
-              <ScrollView style={styles.previewScroll} nestedScrollEnabled>
-                <Text style={styles.previewText}>{textContent}</Text>
-              </ScrollView>
             </View>
           </ScrollView>
         </View>
@@ -547,26 +513,8 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: '#1a3c3c',
     borderRadius: 12, paddingVertical: 10, alignItems: 'center', gap: 4,
   },
-  actionBtnSecondary: {
-    flex: 1, backgroundColor: '#F3F4F6',
-    borderRadius: 12, paddingVertical: 10, alignItems: 'center', gap: 4,
-  },
-  actionBtnCopied: { backgroundColor: '#2d7a2d' },
   actionBtnLabel: { fontSize: 13, fontFamily: fonts.bold, color: '#fff' },
-  actionBtnLabelDark: { fontSize: 13, fontFamily: fonts.bold, color: colors.textPrimary },
   actionBtnSub: { fontSize: 10, color: 'rgba(255,255,255,0.6)', fontFamily: fonts.regular },
-  actionBtnSubDark: { fontSize: 10, color: colors.textSecondary, fontFamily: fonts.regular },
-
-  // Text preview
-  previewSection: { paddingHorizontal: 20, paddingBottom: 8 },
-  previewHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  previewLabel: { fontSize: 10, fontFamily: fonts.bold, color: colors.textSecondary, letterSpacing: 0.8 },
-  previewCopyBtn: { fontSize: 11, fontFamily: fonts.bold, color: '#1a3c3c' },
-  previewScroll: {
-    backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB',
-    borderRadius: 12, maxHeight: 192, padding: 12,
-  },
-  previewText: { fontSize: 11, fontFamily: fonts.regular, color: '#4B5563', lineHeight: 18 },
 });
 
 export default ShareEnquiryModal;

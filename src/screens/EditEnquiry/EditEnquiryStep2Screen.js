@@ -222,36 +222,14 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
         Id: enquiry.id,
         Name: formData.title,
         ClientId: clientIdForApi,
-        AssignedTo: formData.assignedTo || enquiry.AssignedTo || enquiry.assignedTo || null,
-        Status: formData.status || enquiry.Status || enquiry.status || 'Enquiry Created',
         Priority: priorityForAPI,
-        Quantity: formData.quantity && formData.quantity.trim() ? parseInt(formData.quantity) : null,
-        Metal: {
-          Color: formData.metalColor || null,
-          Quality: formData.metalQuality || '10K',
-        },
-        StyleNumber: formData.styleNumber && formData.styleNumber.trim() ? formData.styleNumber : null,
-        GatiOrderNumber: formData.gatiOrderNumber && formData.gatiOrderNumber.trim() ? formData.gatiOrderNumber : null,
         StoneType: formData.stoneType && formData.stoneType.trim() ? formData.stoneType.trim() : null,
-        MetalWeight: {
-          From: formData.metalWeightFrom && formData.metalWeightFrom.trim() ? formData.metalWeightFrom.toString() : null,
-          To: formData.metalWeightTo && formData.metalWeightTo.trim() ? formData.metalWeightTo.toString() : null,
-          Exact: formData.metalWeightExact && formData.metalWeightExact.trim() ? formData.metalWeightExact.toString() : null,
-        },
-        DiamondWeight: {
-          From: formData.diamondWeightFrom && formData.diamondWeightFrom.trim() ? formData.diamondWeightFrom.toString() : null,
-          To: formData.diamondWeightTo && formData.diamondWeightTo.trim() ? formData.diamondWeightTo.toString() : null,
-          Exact: formData.diamondWeightExact && formData.diamondWeightExact.trim() ? formData.diamondWeightExact.toString() : null,
-        },
-        Stamping: formData.stamping && formData.stamping.trim() ? formData.stamping : null,
         Remarks: formData.description && formData.description.trim() ? formData.description : null,
         ShippingDate: formData.deadline && formData.deadline.trim() ? formData.deadline : null,
         CoralCode: enquiry.CoralCode || enquiry.coralCode || null,
         CadCode: enquiry.CadCode || enquiry.cadCode || null,
-        Category: formData.category || 'Ring',
         Budget: formData.budget && formData.budget.trim() ? formData.budget.trim() : null,
         SpecialRemarks: formData.specialRemarks && formData.specialRemarks.trim() ? formData.specialRemarks.trim() : null,
-        ApprovedDate: formData.approvedDate && formData.approvedDate.trim() ? formData.approvedDate : null,
       };
 
       // Add uploaded images to existing images if any
@@ -272,58 +250,23 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
         description: formData.description,
         priority: formData.priority,
         deadline: formData.deadline || null,
-        category: formData.category,
         stoneType: formData.stoneType,
-        metalType: formData.metalColor ? `${formData.metalColor} (${formData.metalQuality || '10K'})` : null,
         updatedAt: new Date().toISOString(),
         Name: formData.title,
         Remarks: formData.description,
         Priority: priorityForAPI,
         ShippingDate: formData.deadline || null,
-        Category: formData.category,
         StoneType: formData.stoneType,
-        Quantity: formData.quantity ? parseInt(formData.quantity) : null,
-        Metal: {
-          Color: formData.metalColor || null,
-          Quality: formData.metalQuality || '10K',
-        },
-        MetalWeight: {
-          From: formData.metalWeightFrom || null,
-          To: formData.metalWeightTo || null,
-          Exact: formData.metalWeightExact || null,
-        },
-        DiamondWeight: {
-          From: formData.diamondWeightFrom || null,
-          To: formData.diamondWeightTo || null,
-          Exact: formData.diamondWeightExact || null,
-        },
-        Stamping: formData.stamping || null,
-        StyleNumber: formData.styleNumber || null,
-        GatiOrderNumber: formData.gatiOrderNumber || null,
         ClientId: clientIdForApi,
-        AssignedTo: formData.assignedTo || enquiry.AssignedTo || enquiry.assignedTo,
-        Status: formData.status || enquiry.Status || enquiry.status,
         CoralCode: enquiry.CoralCode || enquiry.coralCode,
         CadCode: enquiry.CadCode || enquiry.cadCode,
         clientName: enquiry.clientName,
         clientId: clientIdForApi,
         createdAt: enquiry.createdAt,
-        status: enquiry.status,
         budget: formData.budget && formData.budget.trim() ? parseFloat(formData.budget) || null : (enquiry.budget || null),
         specialRemarks: formData.specialRemarks && formData.specialRemarks.trim() ? formData.specialRemarks.trim() : (enquiry.specialRemarks || enquiry.SpecialRemarks || null),
-        approvedDate: formData.approvedDate && formData.approvedDate.trim() ? formData.approvedDate : (enquiry.approvedDate || enquiry.ApprovedDate || null),
       };
       
-      if (__DEV__) {
-        console.log('updatedEnquiry:', {
-          id: updatedEnquiry.id,
-          StoneType: updatedEnquiry.StoneType,
-          StyleNumber: updatedEnquiry.StyleNumber,
-          GatiOrderNumber: updatedEnquiry.GatiOrderNumber,
-          MetalWeight: updatedEnquiry.MetalWeight,
-          DiamondWeight: updatedEnquiry.DiamondWeight,
-        });
-      }
       
       showAlert(
         'Enquiry Updated',
@@ -363,10 +306,6 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
           <BodyText style={styles.summaryLabel}>Title:</BodyText>
           <BodyText style={styles.summaryValue}>{formData.title}</BodyText>
         </View>
-        <View style={styles.summaryRow}>
-          <BodyText style={styles.summaryLabel}>Category:</BodyText>
-          <BodyText style={styles.summaryValue}>{formData.category}</BodyText>
-        </View>
         {!isClient && (
           <View style={styles.summaryRow}>
             <BodyText style={styles.summaryLabel}>Priority:</BodyText>
@@ -385,14 +324,6 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
           <View style={styles.summaryRow}>
             <BodyText style={styles.summaryLabel}>Special Remarks:</BodyText>
             <BodyText style={styles.summaryValue}>{formData.specialRemarks}</BodyText>
-          </View>
-        )}
-        {formData.approvedDate && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4 && (
-          <View style={styles.summaryRow}>
-            <BodyText style={styles.summaryLabel}>Approved Date:</BodyText>
-            <BodyText style={styles.summaryValue}>
-              {formData.approvedDate ? formatDate(formData.approvedDate) : 'Not specified'}
-            </BodyText>
           </View>
         )}
         {existingImages.length > 0 && (

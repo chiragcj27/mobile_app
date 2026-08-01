@@ -124,11 +124,11 @@ const EnquiryFiltersModal = ({
 
   // Create assigned-to options from users (exclude clients by role)
   const assignedToOptions = [
-    { label: 'All Users', value: 'all' },
+    { label: 'All Designers', value: 'all' },
     ...users
       .filter(userItem => {
         const roleString = String(userItem.role || '').toLowerCase();
-        return roleString !== 'client';
+        return roleString === 'coral' || roleString === 'cad';
       })
       .map(userItem => ({
         label: userItem.name || userItem.email || 'Unknown',
@@ -387,13 +387,7 @@ const EnquiryFiltersModal = ({
       if (localFilters.clientId && localFilters.clientId !== 'all') count++;
       if (localFilters.assignedTo && localFilters.assignedTo !== 'all') count++;
       if (localFilters.stoneType && localFilters.stoneType !== 'all') count++;
-      if (localFilters.shippingDateFrom) count++;
-      if (localFilters.shippingDateTo) count++;
     }
-    if (localFilters.metalColor && localFilters.metalColor !== 'all') count++;
-    if (localFilters.metalQuality && localFilters.metalQuality !== 'all') count++;
-    if (localFilters.assignedDateFrom) count++;
-    if (localFilters.assignedDateTo) count++;
     if (localFilters.createdDateFrom) count++;
     if (localFilters.createdDateTo) count++;
     return count;
@@ -473,16 +467,17 @@ const EnquiryFiltersModal = ({
             {!isDesigner && renderDropdown('stoneType', stoneTypeOptions, 'Stone Type')}
           </View>
 
-          {/* Material Filters Card */}
+          {/* Material Filters Card - temporarily disabled
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeader}>
               <Icon name="diamond" size={20} color={colors.primary} />
               <Text style={styles.sectionTitle}>Material Filters</Text>
             </View>
-            
+
             {renderDropdown('metalColor', metalColorOptions, 'Metal Color')}
             {renderDropdown('metalQuality', metalQualityOptions, 'Metal Quality')}
           </View>
+          */}
 
           {/* Date Ranges Card */}
           <View style={styles.sectionCard}>
@@ -490,9 +485,9 @@ const EnquiryFiltersModal = ({
               <Icon name="calendar-today" size={20} color={colors.primary} />
               <Text style={styles.sectionTitle}>Date Ranges</Text>
             </View>
-            
-            {!isDesigner && renderDateRange('shippingDateFrom', 'shippingDateTo', 'Shipping Date')}
-            {renderDateRange('assignedDateFrom', 'assignedDateTo', 'Assigned Date')}
+
+            {/* {!isDesigner && renderDateRange('shippingDateFrom', 'shippingDateTo', 'Shipping Date')}
+            {renderDateRange('assignedDateFrom', 'assignedDateTo', 'Assigned Date')} */}
             {renderDateRange('createdDateFrom', 'createdDateTo', 'Created Date')}
           </View>
         </ScrollView>
