@@ -27,7 +27,9 @@ import PricingScreen from '../screens/Pricing/PricingScreen';
 import UploadDesignScreen from '../screens/UploadDesign/UploadDesignScreen';
 import UploadExcelScreen from '../screens/UploadDesign/uploadExcel';
 import PdfViewerTestScreen from '../screens/Test/PdfViewerTestScreen';
-import PricingCalci from '../screens/Pricing/PricingCalci';
+import PricingCalci from '../screens/Pricing/PricingCalculator';
+import PricingPreviewScreen from '../screens/Pricing/previewScreen';
+import ModifyPricingScreen from '../screens/Pricing/ModifyPricingScreen';
 import ClientHandlerDashboardScreen from '../screens/ClientHandler/ClientHandlerDashboardScreen';
 import Reports from '../screens/Reports/reports'
 import JwelleryEstimate from '../screens/Pricing/JwelleryEstimate';
@@ -197,6 +199,23 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           <Stack.Screen
           name="PricingCalci"
           component={PricingCalci}/>
+
+          <Stack.Screen
+          name="PricingPreview"
+          component={PricingPreviewScreen}
+          options={{
+            headerShown: false,
+            presentation: 'modal',
+            gestureEnabled: true,
+          }}/>
+
+          <Stack.Screen
+          name="ModifyPricingScreen"
+          component={ModifyPricingScreen}
+          options={{
+            headerShown: false,
+            gestureEnabled: true,
+          }}/>
 
           <Stack.Screen
           name="EstimateJwellery"
