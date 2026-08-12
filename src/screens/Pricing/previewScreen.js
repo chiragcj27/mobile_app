@@ -173,7 +173,7 @@ const buildEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false, 
         return `
         <tr style="text-align:center;font-size:11px;">
           <td style="padding:6px;border:1px solid #E6F0F1;font-weight:600;">${label}</td>
-          <td style="padding:6px;border:1px solid #E6F0F1;">${ec(index, null, 'DutyRate.' + key, num(duty.Rate).toFixed(0))}% × $${num(duty.BaseAmount).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">${ec(index, null, 'DutyRate.' + key, num(p.DutyRate?.[key] ?? duty.Rate).toFixed(0))}% × $${num(duty.BaseAmount).toFixed(2)}</td>
           <td style="padding:6px;border:1px solid #E6F0F1;font-weight:600;">$${num(duty.Amount).toFixed(2)}</td>
         </tr>`;
       }).join('')}
@@ -400,7 +400,7 @@ const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = f
         return `
         <tr style="text-align:center;font-size:11px;">
           <td style="padding:6px;border:1px solid #E6F0F1;font-weight:600;">${label}</td>
-          <td style="padding:6px;border:1px solid #E6F0F1;">${ec(index, null, 'DutyRate.' + key, num(duty.Rate).toFixed(0))}% × $${num(duty.BaseAmount).toFixed(2)}</td>
+          <td style="padding:6px;border:1px solid #E6F0F1;">${ec(index, null, 'DutyRate.' + key, num(p.DutyRate?.[key] ?? duty.Rate).toFixed(0))}% × $${num(duty.BaseAmount).toFixed(2)}</td>
           <td style="padding:6px;border:1px solid #E6F0F1;font-weight:600;">$${num(duty.Amount).toFixed(2)}</td>
         </tr>`;
       }).join('')}
