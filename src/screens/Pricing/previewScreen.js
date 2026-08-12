@@ -9,7 +9,6 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
-  AppState,
   Modal,
   FlatList,
   Keyboard,
@@ -707,7 +706,6 @@ export default function PreviewScreen({ route, navigation }) {
   const [copied, setCopied] = useState(false);
   const [isSharingPdf, setIsSharingPdf] = useState(false);
   const [preCropImageUrl, setPreCropImageUrl] = useState(null);
-  const appStateRef = useRef(AppState.currentState);
 
   const [isEditing, setIsEditing] = useState(!isClientPreview);
   const [isRecalculating, setIsRecalculating] = useState(false);
@@ -777,7 +775,7 @@ export default function PreviewScreen({ route, navigation }) {
     [entries, clientName, metalKt, preCropImageUrl, isEditing],
   );
   const combinedHtmlClient = useMemo(
-    () => buildCombinedHtml(entries, clientName, metalKt, preCropImageUrl, isClientPreview, false),
+    () => (isClientPreview ? buildCombinedHtml(entries, clientName, metalKt, preCropImageUrl, true, false) : ''),
     [entries, clientName, metalKt, preCropImageUrl, isClientPreview],
   );
 
@@ -813,7 +811,6 @@ export default function PreviewScreen({ route, navigation }) {
             }
           }
           next[entryIdx] = entry;
-          entriesRef.current = next;
           return next;
         });
         dirtyRef.current = true;
@@ -1009,34 +1006,36 @@ export default function PreviewScreen({ route, navigation }) {
     return () => sub.remove();
   }, [isClientPreview, clientId, triggerRecalculation]);
 
+  // The new value has to be in entriesRef before recalculating: triggerRecalculation reads the
+  // ref synchronously, and a setEntries updater would not have run yet.
   const handleDropdownSelect = useCallback((value) => {
     const { entryIdx, stoneIdx, type } = dropdownConfig;
-    setEntries(prev => {
-      const next = [...prev];
-      if (!next[entryIdx]) return prev;
-      const entry = { ...next[entryIdx] };
-      if (type === 'MetalKT') {
-        entry.MetalKT = value;
-        entry.Metal = { ...(entry.Metal || {}), Quality: value };
-      } else {
-        const stones = entry.Stones ? [...entry.Stones] : [];
-        if (!stones[stoneIdx]) return prev;
-        stones[stoneIdx] = { ...stones[stoneIdx], [type]: value };
-        entry.Stones = stones;
-      }
-      next[entryIdx] = entry;
-      entriesRef.current = next;
-      return next;
-    });
     setDropdownVisible(false);
+
+    const current = entriesRef.current;
+    const target = current[entryIdx];
+    if (!target) return;
+
+    const entry = { ...target };
+    if (type === 'MetalKT') {
+      entry.MetalKT = value;
+      entry.Metal = { ...(entry.Metal || {}), Quality: value };
+    } else {
+      const stones = entry.Stones ? [...entry.Stones] : [];
+      if (!stones[stoneIdx]) return;
+      stones[stoneIdx] = { ...stones[stoneIdx], [type]: value };
+      entry.Stones = stones;
+    }
+
+    const next = [...current];
+    next[entryIdx] = entry;
+    entriesRef.current = next;
+    setEntries(next);
+
     dirtyRef.current = false;
+    lookupChangedRef.current = false;
     triggerRecalculation(false);
   }, [dropdownConfig, triggerRecalculation]);
-
-  const injectedEditJs = useMemo(() => {
-    if (!isEditing) return '';
-    return `true;`;
-  }, [isEditing]);
 
   useEffect(() => {
     if (preCropImageUrlParam) {
@@ -1050,15 +1049,6 @@ export default function PreviewScreen({ route, navigation }) {
       }
     }).catch(() => {});
   }, [preCropImageKey, preCropImageUrlParam]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextState => {
-      appStateRef.current = nextState;
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, []);
 
   const handleCopy = useCallback(() => {
     if (combinedMessage) {
@@ -1184,7 +1174,6 @@ export default function PreviewScreen({ route, navigation }) {
           html={combinedHtml}
           style={styles.pdfViewer}
           onMessage={handleWebViewMessage}
-          injectedJavaScript={injectedEditJs}
         />
       </View>
       
@@ -1334,7 +1323,6 @@ const renderClientPreview = () => {
             html={combinedHtml}
             style={styles.pdfViewer}
             onMessage={handleWebViewMessage}
-            injectedJavaScript={injectedEditJs}
           />
         </View>
 
@@ -1420,7 +1408,7 @@ const renderClientPreview = () => {
   );
 }
 
-export { num, buildEntryHtml, buildClientEntryHtml, buildCombinedHtml };
+export { num, buildCombinedHtml };
 
 const styles = StyleSheet.create({
   container: {
