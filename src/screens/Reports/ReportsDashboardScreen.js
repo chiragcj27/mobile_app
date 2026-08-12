@@ -17,7 +17,6 @@ import ReorderableList from '../../components/common/ReorderableList';
 import Share from 'react-native-share';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors } from '../../constants/colors';
-import { fonts } from '../../constants/fonts';
 import { formatDateTime, formatDate, objectIdToDate } from '../../utils';
 import Icon from '../../components/common/Icon';
 import { useGetEnquiriesQuery, useReorderEnquiryMutation } from '../../store/api';
@@ -33,8 +32,6 @@ try {
   const mod = require('react-native-html-to-pdf');
   generatePDFModule = mod.generatePDF || mod.default?.generatePDF || mod.default;
 } catch (e) {}
-
-const PRIORITY_ORDER = ['normal', 'high', 'super high'];
 
 const toDateStr = (d) => {
   const y = d.getFullYear();
@@ -117,7 +114,6 @@ const enrich = (rows, clientNameMap) =>
 const ReportsDashboardScreen = ({ route }) => {
   const navigation = useNavigation();
   const assignedTo = route.params?.assignedTo;
-  console.log('[ReportsDashboard] assignedTo:', JSON.stringify(assignedTo));
 
   // Filter state — all of these are sent to the backend query (no client-side filtering).
   const [showFilter, setShowFilter] = useState(false);
@@ -158,7 +154,6 @@ const ReportsDashboardScreen = ({ route }) => {
     filters.sortOrder = 'asc';
     return { role: assignedTo.role, filters, limit: 50 };
   }, [statusFilter, assignedTo, filterPriority, filterClientId, filterStartDate, filterEndDate]);
-  console.log('[ReportsDashboard] queryArg:', JSON.stringify(queryArg));
 
   const { clients = [] } = useClients({ skip: !queryArg });
   const clientNameMap = useMemo(() => buildClientNameMap(clients), [clients]);
@@ -175,7 +170,6 @@ const ReportsDashboardScreen = ({ route }) => {
     if (apiData) {
       const data = apiData?.data || apiData || [];
       const enriched = enrich(data, clientNameMap);
-      console.log('[ReportsDashboard] enquiries data enriched:', JSON.stringify(enriched));
       return enriched;
     }
     return [];
@@ -198,16 +192,14 @@ const ReportsDashboardScreen = ({ route }) => {
           if (typeof firstRef === 'string') imageKey = firstRef;
         }
         if (!id || !imageKey) {
-          console.log('[ReportsDashboard] no image key for enquiry', id, 'refs:', JSON.stringify(e?.ReferenceImages));
           continue;
         }
         const url = `${FILE_BASE_URL}/api/enquiries/files/${encodeURIComponent(String(imageKey))}`;
-        console.log('[ReportsDashboard] fetching image for', id, ':', url);
         try {
           const res = await fetch(url, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
           });
-          if (!res.ok) { console.log('[ReportsDashboard] image fetch failed', id, res.status); continue; }
+          if (!res.ok) { continue; }
           const ct = res.headers.get('content-type') || '';
           if (ct.includes('application/json')) {
             const j = await res.json();
@@ -219,10 +211,8 @@ const ReportsDashboardScreen = ({ route }) => {
             sources[id] = { uri: `data:${ct};base64,${b64}` };
           }
         } catch (err) {
-          console.log('[ReportsDashboard] image fetch error for', id, err);
         }
       }
-      console.log('[ReportsDashboard] imageSources loaded:', Object.keys(sources).length);
       setImageSources(sources);
     };
     if (enquiries.length > 0) loadImages();

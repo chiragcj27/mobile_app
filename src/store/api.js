@@ -53,6 +53,7 @@ export const api = createApi({
     'Notification',
     'DeviceToken',
     'Users',
+    'Design',
   ],
   // Prevent memory buildup by removing unused data after 60 seconds
   keepUnusedDataFor: 60,
@@ -5999,7 +6000,7 @@ export const api = createApi({
     }),
     //============= Design Inventory =============
     insertDesign: builder.mutation({
-      queryFn: async ({ designType, images, name }, { dispatch }, extraOptions, baseQuery) => {
+      queryFn: async ({ designType, images, name, uploadedBy }) => {
         try {
           const token = await secureStorage.getItem('token');
           if (!token) {
@@ -6014,19 +6015,14 @@ export const api = createApi({
           });
           formData.append('designType', designType);
           if (name) formData.append('name', name);
+          if (uploadedBy) formData.append('uploadedBy', uploadedBy);
           const response = await fetch(`${API_BASE_URL}/api/designs/insert`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
             body: formData,
           });
-          console.log('[insertDesign] response status:', formdata, response.status);  
-
           if (response.ok) {
             const data = await response.json();
-            if (__DEV__) {
-              console.log('[getDesignsByType] response:', data);
-              console.log('[getDesignsByType] images:', data?.images);
-            }
             return { data: data?.images || [] };
           }
 
@@ -6038,6 +6034,7 @@ export const api = createApi({
           return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to insert design' } };
         }
       },
+      invalidatesTags: ['Design'],
     }),
 
     getDesignById: builder.query({
@@ -6046,13 +6043,12 @@ export const api = createApi({
 
     getDesignTypes: builder.query({
       queryFn: async () => {
-        console.log('[getDesignTypes] returning static types');
         return { data: [ 'coral', 'cad'] };
       },
     }),
 
     getDesignsByType: builder.query({
-      queryFn: async ({ designType, search, category, skip = 0, limit = 10 }, { dispatch }, extraOptions, baseQuery) => {
+      queryFn: async ({ designType, search, category, skip = 0, limit = 10 }) => {
         try {
           const token = await secureStorage.getItem('token');
           if (!token) {
@@ -6074,25 +6070,22 @@ export const api = createApi({
 
           if (response.ok) {
             const data = await response.json();
-            console.log('[getDesignsByType] response:', JSON.stringify(data));
-            console.log('[getDesignsByType] images:', data?.images);
             return { data: data?.images || [] };
           }
 
           const errorText = await response.text();
-          console.log('[getDesignsByType] error:', response.status, errorText);
           let errorData;
           try { errorData = JSON.parse(errorText); } catch { errorData = { message: errorText || 'Lookup failed' }; }
           return { error: { status: response.status, data: errorData } };
         } catch (error) {
-          console.log('[getDesignsByType] exception:', error);
           return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to get designs' } };
         }
       },
+      providesTags: ['Design'],
     }),
 
     lookupDesigns: builder.mutation({
-      queryFn: async ({ image, designType, search, category }, { dispatch }, extraOptions, baseQuery) => {
+      queryFn: async ({ image, designType, search, category }) => {
         try {
           const token = await secureStorage.getItem('token');
           if (!token) {

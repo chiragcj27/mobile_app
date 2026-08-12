@@ -34,7 +34,7 @@ const CARD_GAP = 8;
 const CARD_WIDTH = (SCREEN_WIDTH - 32 - CARD_GAP * (NUM_COLS - 1)) / NUM_COLS;
 
 const TYPE_ICONS = {
-  Cad: 'diamond',
+  cad: 'diamond',
   coral: 'draw',
 };
 
@@ -169,7 +169,7 @@ export default function InventoryScreen({ navigation }) {
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.typeCard} onPress={() => handleTypePress(item)} activeOpacity={0.8}>
                 <View style={styles.typeIconWrap}>
-                  <Icon name={TYPE_ICONS[item] || 'image'} size={36} color={colors.background} />
+                  <Icon name={TYPE_ICONS[String(item).toLowerCase()] || 'image'} size={36} color={colors.background} />
                 </View>
                 <Text style={styles.typeLabel}>{item}</Text>
                 <Icon name="chevron-right" size={20} color={colors.textSecondary} />

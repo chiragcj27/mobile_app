@@ -9,6 +9,7 @@ import {
   Image,
   ActivityIndicator,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { useAuth } from '../../context/AuthContext';
@@ -17,21 +18,19 @@ import Icon from '../common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 
-const DESIGN_TYPES = ['coral', 'Cad'];
+const DESIGN_TYPES = ['coral', 'cad'];
 
 export default function AddDesignModal({ visible, onClose, designType: initialType }) {
   const { user } = useAuth();
   const [insertDesign, { isLoading }] = useInsertDesignMutation();
 
-  const [designType, setDesignType] = useState(initialType || 'Cad');
+  const [designType, setDesignType] = useState(initialType || 'cad');
   const [name, setName] = useState('');
   const [image, setImage] = useState(null);
   const [showTypePicker, setShowTypePicker] = useState(false);
 
-  console.log('[AddDesignModal] initialType:', initialType, 'designType:', designType);
-
   const reset = () => {
-    setDesignType(initialType || 'Cad');
+    setDesignType(initialType || 'cad');
     setName('');
     setImage(null);
     setShowTypePicker(false);
@@ -69,7 +68,9 @@ export default function AddDesignModal({ visible, onClose, designType: initialTy
         name: name.trim(),
       }).unwrap();
       handleClose();
-    } catch (e) {}
+    } catch (e) {
+      Alert.alert('Upload Failed', e?.data?.message || e?.message || 'Could not add the design. Please try again.');
+    }
   };
 
   return (

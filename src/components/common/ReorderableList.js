@@ -120,6 +120,8 @@ export default function ReorderableList({
     }
   }, []);
 
+  useEffect(() => stopAutoScroll, [stopAutoScroll]);
+
   const maybeAutoScroll = useCallback(() => {
     if (activeIndexRef.current == null) return;
     const y = pointerViewportY.current;

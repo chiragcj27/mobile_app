@@ -114,9 +114,6 @@ const MetalPriceCards = () => {
       refetch();
       showAlert('Price Updated', `${name} price saved successfully.`, 'success');
     } catch (error) {
-      if (__DEV__) {
-        console.error(`❌ ${name} price update failed:`, error?.message || error);
-      }
       showAlert('Save Failed', `Could not update ${name} price.`, 'error');
     }
   };
