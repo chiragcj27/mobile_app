@@ -90,7 +90,8 @@ export default function SingleStonePricing({
     setCommonMetal({
       Weight: m?.Weight != null && m.Weight !== '' ? String(m.Weight) : '',
       Rate: m?.Rate != null && m.Rate !== '' ? String(m.Rate) : '',
-      Ounce: m?.Ounce != null && m.Ounce !== '' ? String(m.Ounce) : r?.GoldRatePerOunce ? String(r.GoldRatePerOunce) : '',
+      // An empty Ounce is deliberate (a Rate was typed), so only fall back when it is absent.
+      Ounce: m?.Ounce != null ? String(m.Ounce) : r?.GoldRatePerOunce ? String(r.GoldRatePerOunce) : '',
     });
   }, [visible, catData]);
 
@@ -216,6 +217,7 @@ export default function SingleStonePricing({
           });
         });
         if (allFilled && onDone) {
+          metalTouchedRef.current = false;
           setTimeout(() => onDone(), 200);
         } else if (allFilled && onClose) {
           setTimeout(() => onClose(), 200);
@@ -241,6 +243,13 @@ export default function SingleStonePricing({
   const onRequestRecalculateRef = useRef(onRequestRecalculate);
   useEffect(() => { onRequestRecalculateRef.current = onRequestRecalculate; }, [onRequestRecalculate]);
 
+  // Asking for a recalculation hands the metal fields back to the result: the user has
+  // finished typing, so the Rate/Ounce/Weight the backend derives should win again.
+  const requestRecalculate = useCallback(() => {
+    metalTouchedRef.current = false;
+    onRequestRecalculateRef.current?.();
+  }, []);
+
   const updateLocalCharge = useCallback((type, field, value) => {
     setLocalCharges(prev => ({
       ...prev,
@@ -249,9 +258,9 @@ export default function SingleStonePricing({
     // The extra-charges type is toggled with a button (no keyboard blur to trigger the
     // keyboardDidHide recalc), so kick off a recalculation once the parent charge state syncs.
     if (field === 'ExtraChargesType') {
-      setTimeout(() => onRequestRecalculateRef.current?.(), 0);
+      setTimeout(() => requestRecalculate(), 0);
     }
-  }, []);
+  }, [requestRecalculate]);
 
   // Common Metal Weight & Rate — one value applied to every stone type (same as PricingCalculator).
   // Rate and Ounce are mutually exclusive: the backend prefers Ounce, so setting one clears the other.
@@ -318,10 +327,10 @@ export default function SingleStonePricing({
       const charges = localChargesRef.current;
       // Recalculate when charges or the common metal weight/rate changed.
       if (Object.keys(charges).length === 0 && !metalTouchedRef.current) return;
-      onRequestRecalculateRef.current?.();
+      requestRecalculate();
     });
     return () => subscription?.remove();
-  }, []);
+  }, [requestRecalculate]);
 
   const getApplicableFields = useCallback((type) => {
     const applicable = localGrouped[type]?.pricingResult?.Applicable;
@@ -655,7 +664,7 @@ export default function SingleStonePricing({
             {!hasAnyMissing && (
               <TouchableOpacity
                 style={[s.recalcAllBtn, isRecalculating && s.recalcAllBtnDisabled]}
-                onPress={onRequestRecalculate}
+                onPress={requestRecalculate}
                 disabled={isRecalculating}
                 activeOpacity={0.85}
               >
