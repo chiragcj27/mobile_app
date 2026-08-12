@@ -31,6 +31,30 @@ const CHARGE_FIELDS = [
   { key: 'LossAndLabourDuties', label: 'Loss+labour Duty', suffix: '%', source: 'charges', applicableKey: 'LossAndLabourDuties' },
 ];
 
+const chargeLabel = (field, type, metalKt) => {
+  if (field.key === 'SilverAndLabsDuties') return /lab/i.test(type) ? 'Silver+Lab Duty' : 'Silver';
+  if (field.key === 'GoldDuties') {
+    if (metalKt?.includes('Silver')) return 'Silver Duty';
+    if (metalKt?.includes('Platinum')) return 'Platinum Duty';
+    return 'Gold Duty';
+  }
+  return field.label;
+};
+
+const applyChargeOverrides = (data, overrides = {}) => {
+  const editableCharges = { ...data.editableCharges };
+  const dutyRates = { ...data.dutyRates };
+  CHARGE_FIELDS.forEach(({ key, source }) => {
+    const v = overrides[key];
+    if (v === undefined || v === '') return;
+    if (source === 'duty') dutyRates[key] = v;
+    else editableCharges[key] = v;
+  });
+  editableCharges.ExtraChargesType =
+    overrides.ExtraChargesType ?? editableCharges.ExtraChargesType ?? 'percentage';
+  return { ...data, editableCharges, dutyRates };
+};
+
 export default function SingleStonePricing({
   visible,
   onClose,
@@ -90,7 +114,6 @@ export default function SingleStonePricing({
     setCommonMetal({
       Weight: m?.Weight != null && m.Weight !== '' ? String(m.Weight) : '',
       Rate: m?.Rate != null && m.Rate !== '' ? String(m.Rate) : '',
-      // An empty Ounce is deliberate (a Rate was typed), so only fall back when it is absent.
       Ounce: m?.Ounce != null ? String(m.Ounce) : r?.GoldRatePerOunce ? String(r.GoldRatePerOunce) : '',
     });
   }, [visible, catData]);
@@ -125,22 +148,17 @@ export default function SingleStonePricing({
   }, [editedPrices, localGrouped]);
 
   const getTypeMissingIndices = useCallback((type) => {
-    const data = localGrouped[type];
-    if (!data || !Array.isArray(data.editableStones)) return new Set();
-    return new Set(
-      data.editableStones.reduce((acc, s, i) => {
-        if (getEffectivePrice(type, i) <= 0) acc.push(i);
-        return acc;
-      }, [])
-    );
+    const stones = localGrouped[type]?.editableStones;
+    if (!Array.isArray(stones)) return new Set();
+    const missing = new Set();
+    stones.forEach((s, i) => { if (getEffectivePrice(type, i) <= 0) missing.add(i); });
+    return missing;
   }, [localGrouped, getEffectivePrice]);
 
-  const hasAnyMissing = useMemo(() => {
-    return Object.keys(localGrouped).some(type => {
-      const missing = getTypeMissingIndices(type);
-      return missing.size > 0;
-    });
-  }, [localGrouped, getTypeMissingIndices]);
+  const hasAnyMissing = useMemo(
+    () => Object.keys(localGrouped).some(type => getTypeMissingIndices(type).size > 0),
+    [localGrouped, getTypeMissingIndices],
+  );
 
   useEffect(() => {
     if (hasAnyMissing) {
@@ -187,45 +205,45 @@ export default function SingleStonePricing({
 
   const saveInlineEdit = useCallback(() => {
     if (inlineEditIndex === null) return;
-    const [editType] = inlineEditIndex.split('_');
+    const editType = inlineEditIndex.slice(0, inlineEditIndex.lastIndexOf('_'));
 
-    setEditedPrices(prev => {
-      const next = { ...prev, [inlineEditIndex]: inlineEditPrice };
-      const missing = getTypeMissingIndices(editType);
-      const stillMissing = [...missing].filter(i => {
-        const key = `${editType}_${i}`;
-        const ep = next[key] !== undefined ? num(next[key]) : num(localGrouped[editType]?.editableStones?.[i]?.Price);
-        return ep <= 0;
-      });
-      if (stillMissing.length > 0) {
-        const nextIdx = stillMissing[0];
-        const nextKey = `${editType}_${nextIdx}`;
-        setTimeout(() => {
-          setInlineEditIndex(nextKey);
-          const nd = localGrouped[editType]?.editableStones?.[nextIdx];
-          setInlineEditPrice(next[nextKey] !== undefined ? String(next[nextKey]) : (num(nd?.Price) > 0 ? String(nd.Price) : ''));
-        }, 100);
-      } else {
-        setInlineEditIndex(null);
-        setInlineEditPrice('');
-        const allFilled = Object.keys(localGrouped).every(type => {
-          const data = localGrouped[type];
-          if (!data || !Array.isArray(data.editableStones) || data.editableStones.length === 0) return true;
-          return data.editableStones.every((s, i) => {
-            const key = `${type}_${i}`;
-            return (next[key] !== undefined ? num(next[key]) : num(s.Price)) > 0;
-          });
-        });
-        if (allFilled && onDone) {
-          metalTouchedRef.current = false;
-          setTimeout(() => onDone(), 200);
-        } else if (allFilled && onClose) {
-          setTimeout(() => onClose(), 200);
-        }
-      }
-      return next;
-    });
-  }, [inlineEditIndex, inlineEditPrice, localGrouped, getTypeMissingIndices, onDone, onClose]);
+    const next = { ...editedPrices, [inlineEditIndex]: inlineEditPrice };
+    setEditedPrices(next);
+
+    const priceAt = (type, i, stone) => {
+      const v = next[`${type}_${i}`];
+      return v !== undefined ? num(v) : num(stone?.Price);
+    };
+
+    const stones = localGrouped[editType]?.editableStones || [];
+    const nextMissing = stones.findIndex((st, i) => priceAt(editType, i, st) <= 0);
+    if (nextMissing !== -1) {
+      const nextKey = `${editType}_${nextMissing}`;
+      const stone = stones[nextMissing];
+      setTimeout(() => {
+        setInlineEditIndex(nextKey);
+        setInlineEditPrice(
+          next[nextKey] !== undefined ? String(next[nextKey])
+            : num(stone?.Price) > 0 ? String(stone.Price) : ''
+        );
+      }, 100);
+      return;
+    }
+
+    setInlineEditIndex(null);
+    setInlineEditPrice('');
+
+    const allFilled = Object.keys(localGrouped).every(type =>
+      (localGrouped[type]?.editableStones || []).every((st, i) => priceAt(type, i, st) > 0)
+    );
+    if (!allFilled) return;
+    if (onDone) {
+      metalTouchedRef.current = false;
+      setTimeout(onDone, 200);
+    } else if (onClose) {
+      setTimeout(onClose, 200);
+    }
+  }, [inlineEditIndex, inlineEditPrice, editedPrices, localGrouped, onDone, onClose]);
 
   useEffect(() => {
     if (hasAnyMissing && inlineEditIndex === null) {
@@ -243,8 +261,6 @@ export default function SingleStonePricing({
   const onRequestRecalculateRef = useRef(onRequestRecalculate);
   useEffect(() => { onRequestRecalculateRef.current = onRequestRecalculate; }, [onRequestRecalculate]);
 
-  // Asking for a recalculation hands the metal fields back to the result: the user has
-  // finished typing, so the Rate/Ounce/Weight the backend derives should win again.
   const requestRecalculate = useCallback(() => {
     metalTouchedRef.current = false;
     onRequestRecalculateRef.current?.();
@@ -263,7 +279,6 @@ export default function SingleStonePricing({
   }, [requestRecalculate]);
 
   // Common Metal Weight & Rate — one value applied to every stone type (same as PricingCalculator).
-  // Rate and Ounce are mutually exclusive: the backend prefers Ounce, so setting one clears the other.
   const updateCommonMetal = useCallback((field, value) => {
     metalTouchedRef.current = true;
     setCommonMetal(prev => {
@@ -298,26 +313,7 @@ export default function SingleStonePricing({
     types.forEach(type => {
       const data = localGroupedRef.current[type];
       if (!data) return;
-      const ch = localCharges[type] || {};
-      const mergedData = {
-        ...data,
-        editableCharges: {
-          ...data.editableCharges,
-          Loss: ch.Loss !== undefined && ch.Loss !== '' ? ch.Loss : data.editableCharges?.Loss,
-          Labour: ch.Labour !== undefined && ch.Labour !== '' ? ch.Labour : data.editableCharges?.Labour,
-          ExtraCharges: ch.ExtraCharges !== undefined && ch.ExtraCharges !== '' ? ch.ExtraCharges : data.editableCharges?.ExtraCharges,
-          ExtraChargesType: ch.ExtraChargesType ?? data.editableCharges?.ExtraChargesType ?? 'percentage',
-          GoldDuties: ch.GoldDuties !== undefined && ch.GoldDuties !== '' ? ch.GoldDuties : data.editableCharges?.GoldDuties,
-          SilverAndLabsDuties: ch.SilverAndLabsDuties !== undefined && ch.SilverAndLabsDuties !== '' ? ch.SilverAndLabsDuties : data.editableCharges?.SilverAndLabsDuties,
-          LossAndLabourDuties: ch.LossAndLabourDuties !== undefined && ch.LossAndLabourDuties !== '' ? ch.LossAndLabourDuties : data.editableCharges?.LossAndLabourDuties,
-        },
-        dutyRates: {
-          ...data.dutyRates,
-          LabDuties: ch.LabDuties !== undefined && ch.LabDuties !== '' ? ch.LabDuties : data.dutyRates?.LabDuties,
-          NaturalDuties: ch.NaturalDuties !== undefined && ch.NaturalDuties !== '' ? ch.NaturalDuties : data.dutyRates?.NaturalDuties,
-        },
-      };
-      onRecalculatedRef.current(type, mergedData);
+      onRecalculatedRef.current(type, applyChargeOverrides(data, localCharges[type]));
     });
   }, [localCharges]);
 
@@ -340,12 +336,11 @@ export default function SingleStonePricing({
       if (!applicable) return true;
       return applicable[f.applicableKey] === true;
     });
-  }, [localGrouped]);
+  }, [localGrouped, metalKt]);
 
   const renderChargesSection = (type) => {
     const fields = getApplicableFields(type);
     const ch = localCharges[type] || {};
-    const hasLabStone = /lab/i.test(type);
 
     return (
       <View style={s.chargesSection}>
@@ -356,11 +351,7 @@ export default function SingleStonePricing({
             const placeholder = localGrouped[type]?.editableCharges?.[field.key]
               ?? localGrouped[type]?.dutyRates?.[field.key]
               ?? '0';
-            const label = field.key === 'SilverAndLabsDuties'
-              ? (hasLabStone ? 'Silver+Lab Duty' : 'Silver')
-              : field.key === 'GoldDuties'
-                ? (metalKt?.includes('Silver') ? 'Silver Duty' : metalKt?.includes('Platinum') ? 'Platinum Duty' : 'Gold Duty')
-                : field.label;
+            const label = chargeLabel(field, type, metalKt);
 
             if (field.key === 'ExtraCharges') {
               const ecType = ch.ExtraChargesType
