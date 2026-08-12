@@ -130,6 +130,15 @@ export const api = createApi({
       },
     }),
 
+    // Get Stone Shapes list from API
+    getStoneShapes: builder.query({
+      query: () => '/api/codelists/StoneShapes',
+      transformResponse: data => {
+        const arr = Array.isArray(data) ? data : (data?.data || []);
+        return arr.map(s => ({ id: s.Id, code: s.Code, name: s.Name }));
+      },
+    }),
+
     // Get Stone Types list from API
     getStoneTypes: builder.query({
       query: () => '/api/codelists/StoneTypes',
@@ -516,18 +525,17 @@ export const api = createApi({
           // Add data as JSON string
           formData.append('data', JSON.stringify(data));
 
-          // Add reference images
           if (referenceImages && referenceImages.length > 0) {
+            const descriptions = [];
             referenceImages.forEach((image, index) => {
-              const defaultType = 'image/jpeg';
-              const defaultName = `image_${index}_${Date.now()}.jpg`;
-
+              descriptions.push(image.Description || image.description || `Reference image ${index + 1}`);
               formData.append('referenceImages', {
                 uri: image.uri,
-                type: image.type || defaultType,
-                name: image.name || defaultName,
+                type: image.type || 'image/jpeg',
+                name: image.name || `image_${index}_${Date.now()}.jpg`,
               });
             });
+            formData.append('referenceImageDescriptions', JSON.stringify(descriptions));
           }
 
           const endpoint = '/api/enquiries';
@@ -967,6 +975,7 @@ export const api = createApi({
             Category: enquiry.Category,
             StoneType: enquiry.StoneType,
             ShippingDate: enquiry.ShippingDate,
+            OrderKey: enquiry.OrderKey ?? null,
             ClientId: enquiry.ClientId,
             AssignedTo:
               enquiry.AssignedTo !== undefined
@@ -1452,6 +1461,14 @@ export const api = createApi({
       ],
     }),
 
+    reorderEnquiry: builder.mutation({
+      query: ({ draggedId, previousId, nextId }) => ({
+        url: '/api/enquiries/reSort',
+        method: 'POST',
+        body: { draggedId, previousId: previousId || null, nextId: nextId || null },
+      }),
+    }),
+
     deleteEnquiry: builder.mutation({
       query: id => ({
         url: `/api/enquiries/${id}`,
@@ -1550,6 +1567,10 @@ export const api = createApi({
             client.Logo ||
             client.logo ||
             null,
+          applicableStoneTypes:
+            client.ApplicableStoneTypes ||
+            client.applicableStoneTypes ||
+            [],
         }));
       },
     }),
@@ -2238,7 +2259,7 @@ export const api = createApi({
 
     validateImageUpload: builder.mutation({
       queryFn: async (
-        { image, enquiryId },
+        { image, enquiryId, category },
         { dispatch },
         extraOptions,
         baseQuery,
@@ -2288,6 +2309,10 @@ export const api = createApi({
 
           // Add enquiryId
           formData.append('enquiryId', enquiryId);
+
+          if (category) {
+            formData.append('category', category);
+          }
 
           const endpoint = '/api/validate-image';
           const fullUrl = `${API_BASE_URL}${endpoint}`;
@@ -2413,6 +2438,7 @@ export const api = createApi({
           designCode,
           cost,
           isFinalVersion,
+          isOnlyMetalDesign,
         },
         { dispatch },
         extraOptions,
@@ -2532,6 +2558,11 @@ export const api = createApi({
           // Add isFinalVersion flag for Final CAD uploads
           if (isFinalVersion) {
             formData.append('isFinalVersion', 'true');
+          }
+
+          // Add isOnlyMetalDesign flag for designs without diamonds
+          if (isOnlyMetalDesign !== undefined) {
+            formData.append('isOnlyMetalDesign', isOnlyMetalDesign ? 'true' : 'false');
           }
 
           // Separate images and videos - backend expects them in separate fields
@@ -2750,6 +2781,7 @@ export const api = createApi({
                   imageFiles.length
                 } images + ${videoFiles.length} videos)`,
                 ...(excel ? { excel: '1 file' } : {}),
+                ...(isOnlyMetalDesign !== undefined ? { isOnlyMetalDesign: String(isOnlyMetalDesign) } : {}),
                 note:
                   videoFiles.length > 0
                     ? `Videos sent in 'images' field for ${designType} uploads`
@@ -3070,6 +3102,22 @@ export const api = createApi({
       },
     }),
 
+    // Generic asset data update (used by NewCard for approve/reject/sendForApproval)
+    updateAssetData: builder.mutation({
+      query: ({ enquiryId, type, version, data }) => {
+        const versionParam = version ? `?version=${encodeURIComponent(version)}` : '';
+        return {
+          url: `/api/enquiries/${enquiryId}/upload/${type}${versionParam}`,
+          method: 'PUT',
+          body: data,
+        };
+      },
+      invalidatesTags: (result, error, { enquiryId }) => [
+        { type: 'Enquiry', id: enquiryId },
+        'Enquiry',
+      ],
+    }),
+
     // Approve design version
     // intent: 'forApproval' (Cad QR → Design Approval Pending) | 'final' (Cad DAP → Order Placement)
     // Coral always uses IsApprovedVersion (transitions Coral → Cad).
@@ -3128,7 +3176,7 @@ export const api = createApi({
     }),
     // Save pricing for coral/CAD design
     savePricing: builder.mutation({
-      query: ({ enquiryId, designType, version, pricingData }) => {
+      query: ({ enquiryId, designType, version, pricingData, isOnlyMetalDesign }) => {
         const startTime = Date.now();
 
         if (__DEV__) {
@@ -3157,8 +3205,16 @@ export const api = createApi({
         const pricingArray = Array.isArray(pricingData)
           ? pricingData
           : [pricingData];
+        // The pricing-save PUT (updateAssetData) reads `data.IsOnlyMetalDesign` — capital I,
+        // as a boolean — and deriveCostSubStatus() only advances the sub-status to
+        // "Quotation Review" when asset.IsOnlyMetalDesign is truthy. Send it exactly that way.
+        const resolvedIsOnlyMetal =
+          typeof isOnlyMetalDesign === 'boolean'
+            ? isOnlyMetalDesign
+            : !!(pricingArray[0] && pricingArray[0].isOnlyMetalDesign);
         const requestBody = {
           Pricing: pricingArray,
+          IsOnlyMetalDesign: resolvedIsOnlyMetal,
         };
 
         const endpoint = `/api/enquiries/${enquiryId}/upload/${designType}${versionParam}`;
@@ -3562,9 +3618,12 @@ export const api = createApi({
             });
           }
 
-          // Separate images and videos
+          // Separate images and videos; descriptions travel in parallel
+          // arrays since FormData file parts can only carry uri/type/name
           const imageFiles = [];
           const videoFiles = [];
+          const imageDescriptions = [];
+          const videoDescriptions = [];
 
           if (images && images.length > 0) {
             images.forEach((image, index) => {
@@ -3619,8 +3678,10 @@ export const api = createApi({
 
               if (isVideo) {
                 videoFiles.push(fileObject);
+                videoDescriptions.push(String(image.Description || ''));
               } else {
                 imageFiles.push(fileObject);
+                imageDescriptions.push(String(image.Description || ''));
               }
             });
           }
@@ -3686,6 +3747,15 @@ export const api = createApi({
               }
             });
           }
+
+          // Per-file comments as descriptions, index-aligned with the
+          // images field (then videos) appended above
+          const allDescriptions = [...imageDescriptions, ...videoDescriptions];
+          console.log('[uploadReferenceImages] referenceImageDescriptions field:', JSON.stringify(allDescriptions));
+          formData.append(
+            'referenceImageDescriptions',
+            JSON.stringify(allDescriptions),
+          );
 
           const endpoint = `/api/enquiries/${enquiryId}/upload/reference`;
           const fullUrl = `${API_BASE_URL}${endpoint}`;
@@ -4445,7 +4515,7 @@ export const api = createApi({
     }),
     //============= image pricing extraction ===========
     ImagepriceData: builder.mutation({
-      query: ({ image, clientId, stoneType, quantity, metalQuality }) => {
+      query: ({ image, clientId, stoneType, stoneTypes, quantity, metalQuality, cropX, cropY, cropW, cropH }) => {
         // Create FormData
         const formData = new FormData();
 
@@ -4453,8 +4523,11 @@ export const api = createApi({
         formData.append('image', image);
         formData.append('clientId', clientId);
 
-        // Optional fields
-        if (stoneType) {
+        // Optional fields — stoneTypes is a repeated field (backend reads it as an array).
+        // Fall back to the single stoneType when no array is provided.
+        if (Array.isArray(stoneTypes) && stoneTypes.length > 0) {
+          stoneTypes.forEach(t => { if (t) formData.append('stoneTypes', t); });
+        } else if (stoneType) {
           formData.append('stoneType', stoneType);
         }
 
@@ -4466,12 +4539,34 @@ export const api = createApi({
           formData.append('metalQuality', metalQuality);
         }
 
+        // Crop region as fractions (0..1) of the ORIGINAL image. The backend crops
+        // full-resolution from these, so the device never has to crop (which degraded iOS).
+        // Only sent when ALL FOUR are real finite numbers AND they describe a genuine
+        // sub-region. If any is missing we send NOTHING (no 0 fallbacks) so the backend
+        // processes the complete image — a stray 0 would otherwise be read as a real coordinate.
+        const cropVals = [cropX, cropY, cropW, cropH].map(Number);
+        const allCropNumbers = cropVals.every(v => Number.isFinite(v));
+        const isRealSubRegion = allCropNumbers &&
+          (cropVals[2] < 1 || cropVals[3] < 1 || cropVals[0] > 0 || cropVals[1] > 0);
+        if (isRealSubRegion) {
+          formData.append('cropX', String(cropVals[0]));
+          formData.append('cropY', String(cropVals[1]));
+          formData.append('cropW', String(cropVals[2]));
+          formData.append('cropH', String(cropVals[3]));
+          console.log('[crop][api] sending crop fractions', {
+            cropX: cropVals[0], cropY: cropVals[1], cropW: cropVals[2], cropH: cropVals[3],
+          });
+        } else {
+          console.log('[crop][api] no crop → sending whole image', { cropX, cropY, cropW, cropH });
+        }
+
         // Dev Logs
         if (__DEV__) {
           console.log('ðŸ“¤ Image Pricing Payload:', {
             image: image?.name || image?.fileName || image,
             clientId,
             stoneType,
+            stoneTypes,
             quantity,
             metalQuality,
           });
@@ -5902,6 +5997,140 @@ export const api = createApi({
         }
       },
     }),
+    //============= Design Inventory =============
+    insertDesign: builder.mutation({
+      queryFn: async ({ designType, images, name }, { dispatch }, extraOptions, baseQuery) => {
+        try {
+          const token = await secureStorage.getItem('token');
+          if (!token) {
+            return { error: { status: 'CUSTOM_ERROR', data: 'Authentication token not found' } };
+          }
+
+          const formData = new FormData();
+          formData.append('image', {
+            uri: images.uri,
+            type: images.type || 'image/jpeg',
+            name: images.name || `design_${Date.now()}.jpg`,
+          });
+          formData.append('designType', designType);
+          if (name) formData.append('name', name);
+          const response = await fetch(`${API_BASE_URL}/api/designs/insert`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+          console.log('[insertDesign] response status:', formdata, response.status);  
+
+          if (response.ok) {
+            const data = await response.json();
+            if (__DEV__) {
+              console.log('[getDesignsByType] response:', data);
+              console.log('[getDesignsByType] images:', data?.images);
+            }
+            return { data: data?.images || [] };
+          }
+
+          const errorText = await response.text();
+          let errorData;
+          try { errorData = JSON.parse(errorText); } catch { errorData = { message: errorText || 'Insert failed' }; }
+          return { error: { status: response.status, data: errorData } };
+        } catch (error) {
+          return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to insert design' } };
+        }
+      },
+    }),
+
+    getDesignById: builder.query({
+      query: id => `/api/designs/${id}`,
+    }),
+
+    getDesignTypes: builder.query({
+      queryFn: async () => {
+        console.log('[getDesignTypes] returning static types');
+        return { data: [ 'coral', 'cad'] };
+      },
+    }),
+
+    getDesignsByType: builder.query({
+      queryFn: async ({ designType, search, category, skip = 0, limit = 10 }, { dispatch }, extraOptions, baseQuery) => {
+        try {
+          const token = await secureStorage.getItem('token');
+          if (!token) {
+            return { error: { status: 'CUSTOM_ERROR', data: 'Authentication token not found' } };
+          }
+
+          const formData = new FormData();
+          if (designType) formData.append('designType', designType);
+          if (search) formData.append('search', search);
+          if (category) formData.append('category', category);
+          formData.append('skip', String(skip));
+          formData.append('limit', String(limit));
+
+          const response = await fetch(`${API_BASE_URL}/api/designs/lookup`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            console.log('[getDesignsByType] response:', JSON.stringify(data));
+            console.log('[getDesignsByType] images:', data?.images);
+            return { data: data?.images || [] };
+          }
+
+          const errorText = await response.text();
+          console.log('[getDesignsByType] error:', response.status, errorText);
+          let errorData;
+          try { errorData = JSON.parse(errorText); } catch { errorData = { message: errorText || 'Lookup failed' }; }
+          return { error: { status: response.status, data: errorData } };
+        } catch (error) {
+          console.log('[getDesignsByType] exception:', error);
+          return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to get designs' } };
+        }
+      },
+    }),
+
+    lookupDesigns: builder.mutation({
+      queryFn: async ({ image, designType, search, category }, { dispatch }, extraOptions, baseQuery) => {
+        try {
+          const token = await secureStorage.getItem('token');
+          if (!token) {
+            return { error: { status: 'CUSTOM_ERROR', data: 'Authentication token not found' } };
+          }
+
+          const formData = new FormData();
+          if (image) {
+            formData.append('image', {
+              uri: image.uri,
+              type: image.type || 'image/jpeg',
+              name: image.name || `search_${Date.now()}.jpg`,
+            });
+          }
+          if (designType) formData.append('designType', designType);
+          if (search) formData.append('search', search);
+          if (category) formData.append('category', category);
+
+          const response = await fetch(`${API_BASE_URL}/api/designs/lookup`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            return { data: data?.images || [] };
+          }
+
+          const errorText = await response.text();
+          let errorData;
+          try { errorData = JSON.parse(errorText); } catch { errorData = { message: errorText || 'Lookup failed' }; }
+          return { error: { status: response.status, data: errorData } };
+        } catch (error) {
+          return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to lookup designs' } };
+        }
+      },
+    }),
   }),
 });
 
@@ -5925,6 +6154,7 @@ export const {
   useLazyGetEnquiryByIdQuery,
   useCreateEnquiryMutation,
   useUpdateEnquiryMutation,
+  useReorderEnquiryMutation,
   useDeleteEnquiryMutation,
 
   // Clients
@@ -5960,6 +6190,7 @@ export const {
   useUploadDesignMutation,
   useValidateImageUploadMutation,
   useUpdateAssetDescriptionMutation,
+  useUpdateAssetDataMutation,
   useApproveDesignVersionMutation,
   useRejectDesignVersionMutation,
   useUpdateShowToClientMutation,
@@ -5980,8 +6211,16 @@ export const {
   useGetChatMessagesQuery,
   useUploadChatMediaMutation,
 
+  // Design Inventory
+  useInsertDesignMutation,
+  useGetDesignByIdQuery,
+  useGetDesignTypesQuery,
+  useGetDesignsByTypeQuery,
+  useLookupDesignsMutation,
+
   // Code Lists
   useGetRolesQuery,
   useGetStatusesQuery,
   useGetStoneTypesQuery,
+  useGetStoneShapesQuery,
 } = api;

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -24,6 +24,7 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
 import { navigateFromNotification } from '../../utils/notificationNavigation';
+import MetalPriceCards from '../../components/cards/MetalPriceCards';
 
 const DashboardScreen = ({ navigation }) => {
   const { user } = useAuth();
@@ -122,6 +123,7 @@ const DashboardScreen = ({ navigation }) => {
 
   const renderAdminDashboard = () => (
     <View style={styles.dashboardContent}>
+      <MetalPriceCards />
       <View style={styles.NewEnquiryPricingButtonContainer}>
         <TouchableOpacity
           style={styles.NewEnquiryButton}
@@ -141,10 +143,17 @@ const DashboardScreen = ({ navigation }) => {
 
           <TouchableOpacity
           style={styles.NewEnquiryButton}
-          onPress={() => navigation.navigate('Reports')}
+          onPress={() => navigation.navigate('AllClientsDashboard', { showAll: true , isDepartment: true})}
         >
           <Icon name="report" size={20} color={colors.textWhite} />
           <Text style={styles.NewEnquiryText}>Reports</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.NewEnquiryButton}
+          onPress={() => navigation.navigate('Inventory')}
+        >
+          <Icon name="inventory" size={20} color={colors.textWhite} />
+          <Text style={styles.NewEnquiryText}>Inventory</Text>
         </TouchableOpacity>
       </View>
 
@@ -174,7 +183,7 @@ const DashboardScreen = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.allEnquiriesSection}>
+      {/* <View style={styles.allEnquiriesSection}>
         <TouchableOpacity
           style={styles.allEnquiriesButton}
           onPress={() => navigation.navigate('ClientHandlerEnquiries', { assignedTo: { role: 'order_placement' } })}
@@ -191,7 +200,7 @@ const DashboardScreen = ({ navigation }) => {
           </View>
           <Icon name="chevron-right" size={28} color={colors.textWhite} />
         </TouchableOpacity>
-      </View>
+      </View> */}
 
       
 
@@ -415,16 +424,6 @@ const DashboardScreen = ({ navigation }) => {
           }
           color={colors.primaryDark}
           onPress={() => {
-            console.log(
-              '🎯 [DASHBOARD] "Pending Designs" tile pressed (Coral role)',
-            );
-            console.log(
-              '🎯 [DASHBOARD] Coral count displayed:',
-              finalPendingDesignsValue,
-            );
-            console.log(
-              '🎯 [DASHBOARD] Filter being applied: "coral" → shows Coral status enquiries',
-            );
             navigateWithDashboardFilter({ filter: 'coral' });
           }}
           style={tabletStatusCardStyle}

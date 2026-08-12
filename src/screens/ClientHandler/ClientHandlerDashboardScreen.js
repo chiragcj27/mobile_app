@@ -22,19 +22,26 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 
 const TABS = [
-  { key: 'clients',     label: 'Clients',    icon: 'people'   },
+  { key: 'clients', label: 'Clients', icon: 'people' },
   { key: 'departments', label: 'Departments', icon: 'business' },
 ];
 
 const ROLE_CONFIG = {
-  coral: { label: 'Coral Designer', color: `${colors.primary}` },
-  co:    { label: 'Coral Designer',color: `${colors.primary}` },
-  cad:   { label: 'CAD Designer',  color: `${colors.primary}`},
-  cd:    { label: 'CAD Designer',   color: `${colors.primary}` },
+  coral: { label: 'Coral Departments', color: `${colors.primary}` },
+  co: { label: 'Coral Department', color: `${colors.primary}` },
+  cad: { label: 'CAD Departments', color: `${colors.primary}` },
+  cd: { label: 'CAD Department', color: `${colors.primary}` },
 };
 
 // Roles excluded from the Departments tab
-const EXCLUDED_ROLES = new Set(['admin', 'ad', 'client_handler', 'ch', 'client', 'cl']);
+const EXCLUDED_ROLES = new Set([
+  'admin',
+  'ad',
+  'client_handler',
+  'ch',
+  'client',
+  'cl',
+]);
 
 const getRoleConfig = (roleRaw = '') => {
   const key = String(roleRaw).toLowerCase().replace(/\s+/g, '_');
@@ -42,31 +49,48 @@ const getRoleConfig = (roleRaw = '') => {
 };
 
 const ClientHandlerDashboardScreen = ({ navigation, route }) => {
-  const { user }    = useAuth();
-  const [activeTab,  setActiveTab]  = useState('clients');
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState(
+    route?.params?.isDepartment ? 'departments' : 'clients',
+  );
   const [refreshing, setRefreshing] = useState(false);
 
   // ── All hooks unconditionally at the top ─────────────────────────────────
-  const { data: allClients = [],  isLoading: clientsLoading,  refetch: refetchClients }  = useGetClientsQuery();
-  const { data: allDepts = [],    isLoading: deptsLoading,    refetch: refetchDepts }    = useGetDepartmentsQuery();
-  const { data: allUsers = [],    isLoading: usersLoading,    refetch: refetchUsers }    = useGetUsersQuery();
-  const { data: rolesData = [] }                                                          = useGetRolesQuery();
+  const {
+    data: allClients = [],
+    isLoading: clientsLoading,
+    refetch: refetchClients,
+  } = useGetClientsQuery();
+  const {
+    isLoading: deptsLoading,
+    refetch: refetchDepts,
+  } = useGetDepartmentsQuery();
+  const {
+    data: allUsers = [],
+    isLoading: usersLoading,
+    refetch: refetchUsers,
+  } = useGetUsersQuery();
+  const { data: rolesData = [] } = useGetRolesQuery();
 
   const showAll = route?.params?.showAll;
 
-  const clients = useMemo(() =>
-    showAll
-      ? allClients
-      : allClients.filter(c => (user?.clientsHandled || []).includes(c.id || c._id)),
-  [allClients, showAll, user]);
+  const clients = useMemo(
+    () =>
+      showAll
+        ? allClients
+        : allClients.filter(c =>
+            (user?.clientsHandled || []).includes(c.id || c._id),
+          ),
+    [allClients, showAll, user],
+  );
 
   const roleNameMap = useMemo(() => {
     const m = {};
     rolesData.forEach(r => {
-      const id   = String(r.id   || '');
+      const id = String(r.id || '');
       const code = String(r.code || '').toLowerCase();
       const name = String(r.name || '').toLowerCase();
-      if (id)   m[id]   = r.name || r.code;
+      if (id) m[id] = r.name || r.code;
       if (code) m[code] = r.name || r.code;
       if (name) m[name] = r.name || r.code;
     });
@@ -76,11 +100,15 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
   const usersByRole = useMemo(() => {
     const groups = {};
     allUsers.forEach(u => {
-      const rawRole      = u.role || u.Role || '';
-      const resolvedRole = roleNameMap[String(rawRole).toLowerCase()] || roleNameMap[String(rawRole)] || rawRole;
-      const roleKey      = String(resolvedRole).toLowerCase().replace(/\s+/g, '_');
+      const rawRole = u.role || u.Role || '';
+      const resolvedRole =
+        roleNameMap[String(rawRole).toLowerCase()] ||
+        roleNameMap[String(rawRole)] ||
+        rawRole;
+      const roleKey = String(resolvedRole).toLowerCase().replace(/\s+/g, '_');
       if (EXCLUDED_ROLES.has(roleKey)) return;
-      if (!groups[roleKey]) groups[roleKey] = { roleRaw: resolvedRole || rawRole, users: [] };
+      if (!groups[roleKey])
+        groups[roleKey] = { roleRaw: resolvedRole || rawRole, users: [] };
       groups[roleKey].users.push(u);
     });
     const order = ['coral', 'co', 'cad', 'cd'];
@@ -89,37 +117,59 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
       const bi = order.indexOf(b);
       if (ai !== -1 && bi !== -1) return ai - bi;
       if (ai !== -1) return -1;
-      if (bi !== -1) return  1;
+      if (bi !== -1) return 1;
       return a.localeCompare(b);
     });
   }, [allUsers, roleNameMap]);
 
-  const departmentListData = useMemo(() => {
-    const rows = [];
+  const departmentSections = useMemo(() => {
+    const sections = [];
     usersByRole.forEach(([roleKey, { roleRaw, users }]) => {
       const cfg = getRoleConfig(roleRaw);
-      users.forEach((u) => {
+      sections.push({
+        type: 'header',
+        roleKey,
+        label: cfg.label,
+        userCount: users.length,
+        cfg,
+      });
+      users.forEach(u => {
         const userName = u.name || u.Name || u.username || 'Unknown';
-        const roleShort = roleKey === 'coral' || roleKey === 'co' ? 'Coral' : roleKey === 'cad' || roleKey === 'cd' ? 'CAD' : cfg.label;
-        rows.push({ type: 'user', roleKey, cfg, user: u, displayName: `${roleShort} - ${userName}`, roleLabel: cfg.label });
+        const roleShort =
+          roleKey === 'coral' || roleKey === 'co'
+            ? 'Coral'
+            : roleKey === 'cad' || roleKey === 'cd'
+            ? 'CAD'
+            : cfg.label;
+        sections.push({
+          type: 'user',
+          roleKey,
+          cfg,
+          user: u,
+          displayName: `${roleShort} - ${userName}`,
+          roleLabel: cfg.label,
+        });
       });
     });
-    return rows;
+    return sections;
   }, [usersByRole]);
 
-  const activeCount = useMemo(() =>
-    activeTab === 'clients'
-      ? clients.length
-      : allUsers.filter(u => {
-          const r = String(u.role || '').toLowerCase().replace(/\s+/g, '_');
-          return !EXCLUDED_ROLES.has(r);
-        }).length,
-  [activeTab, clients, allUsers]);
+  const activeCount = useMemo(
+    () =>
+      activeTab === 'clients'
+        ? clients.length
+        : allUsers.filter(u => {
+            const r = String(u.role || '')
+              .toLowerCase()
+              .replace(/\s+/g, '_');
+            return !EXCLUDED_ROLES.has(r);
+          }).length,
+    [activeTab, clients, allUsers],
+  );
 
   // ── Derived flags (no hooks below) ───────────────────────────────────────
-  const isLoading = activeTab === 'clients'
-    ? clientsLoading
-    : (deptsLoading || usersLoading);
+  const isLoading =
+    activeTab === 'clients' ? clientsLoading : deptsLoading || usersLoading;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -139,67 +189,132 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
       onPress={() =>
         navigation.navigate('ClientHandlerEnquiries', {
           client: {
-            id:    client.id || client._id,
-            name:  client.name  || 'Unknown Client',
+            id: client.id || client._id,
+            name: client.name || 'Unknown Client',
             email: client.email || '',
           },
         })
-      }>
+      }
+    >
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>
           {client.name ? client.name.substring(0, 2).toUpperCase() : '?'}
         </Text>
       </View>
       <View style={styles.info}>
-        <Text style={styles.rowName} numberOfLines={1}>{client.name || 'Unknown Client'}</Text>
+        <Text style={styles.rowName} numberOfLines={1}>
+          {client.name || 'Unknown Client'}
+        </Text>
         {client.email && client.email !== 'N/A' && (
-          <Text style={styles.subText} numberOfLines={1}>{client.email}</Text>
+          <Text style={styles.subText} numberOfLines={1}>
+            {client.email}
+          </Text>
         )}
       </View>
       <Icon name="chevron-right" size={22} color={colors.textLight} />
     </TouchableOpacity>
   );
 
-  const renderDepartmentRow = ({ item }) => {
-    const u     = item.user;
-    const name  = item.displayName;
+  const renderDepartmentItem = ({ item }) => {
+    if (item.type === 'header') {
+      return (
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionHeaderLeft}>
+            <View
+              style={[styles.sectionDot, { backgroundColor: item.cfg.color }]}
+            />
+            <Text style={styles.sectionHeaderText}>{item.label}</Text>
+            <Text style={styles.sectionCount}>{item.userCount}</Text>
+          </View>
+        </View>
+      );
+    }
+    const u = item.user;
+    const name = item.displayName;
     const email = u.email || u.Email || '';
     return (
       <TouchableOpacity
         style={styles.row}
         activeOpacity={0.7}
         onPress={() => {
-          const assignedToPayload = { id: String(u.id || u._id || ''), name: item.displayName, role: item.roleKey || '' };
-          console.log('[CHDashboard] navigating with assignedTo:', JSON.stringify(assignedToPayload));
+          const assignedToPayload = {
+            id: String(u.id || u._id || ''),
+            name: item.displayName,
+            role: item.roleKey || '',
+          };
+          console.log(
+            '[CHDashboard] navigating with assignedTo:',
+            JSON.stringify(assignedToPayload),
+          );
           navigation.navigate('ClientHandlerEnquiries', {
             assignedTo: assignedToPayload,
           });
-        }}>
-                 <View style={[styles.avatar, { backgroundColor: item.cfg.color }]}>
-          <Text style={styles.avatarText}>{name.substring(0, 2).toUpperCase()}</Text>
+        }}
+      >
+        <View style={[styles.avatar, { backgroundColor: item.cfg.color }]}>
+          <Text style={styles.avatarText}>
+            {name.substring(0, 2).toUpperCase()}
+          </Text>
         </View>
         <View style={styles.info}>
-          <Text style={styles.rowName} numberOfLines={1}>{name}</Text>
-          <Text style={[styles.rolePillText, { color: item.cfg.color }]} numberOfLines={1}>{item.roleLabel}</Text>
+          <Text style={styles.rowName} numberOfLines={1}>
+            {name}
+          </Text>
+          <Text
+            style={[styles.rolePillText, { color: item.cfg.color }]}
+            numberOfLines={1}
+          >
+            {item.roleLabel}
+          </Text>
           {!!email && email !== 'N/A' && (
-            <Text style={styles.subText} numberOfLines={1}>{email}</Text>
+            <Text style={styles.subText} numberOfLines={1}>
+              {email}
+            </Text>
           )}
         </View>
+
+        <TouchableOpacity
+          style={styles.reportDeptBtn}
+          onPress={() => {
+            const assignedToPayload = {
+              id: String(u.id || u._id || ''),
+              name: item.displayName,
+              role: item.roleKey || '',
+            };
+            console.log(
+              '[CHDashboard] navigating with assignedTo:',
+              JSON.stringify(assignedToPayload),
+            );
+            navigation.navigate('ReportsDashboard', {
+              assignedTo: assignedToPayload,
+            });
+          }}
+        >
+          <Icon name="assessment" size={14} color={colors.primary} />
+          <Text style={styles.reportDeptBtnText}> View Report</Text>
+        </TouchableOpacity>
         <Icon name="chevron-right" size={22} color={colors.textLight} />
       </TouchableOpacity>
     );
   };
 
-  const titleText = activeTab === 'clients'
-    ? (showAll ? 'All Clients' : 'My Clients')
-    : 'Departments';
+  const titleText =
+    activeTab === 'clients'
+      ? showAll
+        ? 'All Clients'
+        : 'My Clients'
+      : 'Departments';
 
-  const subtitleText = activeTab === 'clients'
-    ? `${activeCount} client${activeCount !== 1 ? 's' : ''}`
-    : `${activeCount} member${activeCount !== 1 ? 's' : ''}`;
+  const subtitleText =
+    activeTab === 'clients'
+      ? `${activeCount} client${activeCount !== 1 ? 's' : ''}`
+      : `${activeCount} member${activeCount !== 1 ? 's' : ''}`;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={styles.container}
+      edges={['top', 'left', 'right', 'bottom']}
+    >
       <TopNavbar navigation={navigation} />
 
       {/* ── Tabs — above heading ── */}
@@ -211,9 +326,16 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
               key={tab.key}
               style={[styles.tab, isActive && styles.tabActive]}
               onPress={() => setActiveTab(tab.key)}
-              activeOpacity={0.75}>
-              <Icon name={tab.icon} size={15} color={isActive ? colors.primary : 'rgba(255,255,255,0.85)'} />
-              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{tab.label}</Text>
+              activeOpacity={0.75}
+            >
+              <Icon
+                name={tab.icon}
+                size={15}
+                color={isActive ? colors.primary : 'rgba(255,255,255,0.85)'}
+              />
+              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                {tab.label}
+              </Text>
             </TouchableOpacity>
           );
         })}
@@ -230,13 +352,20 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
         <TouchableOpacity
           style={styles.unassignedBtn}
           activeOpacity={0.7}
-          onPress={() => navigation.navigate('ClientHandlerEnquiries', { filter: 'unassigned' })}>
+          onPress={() =>
+            navigation.navigate('ClientHandlerEnquiries', {
+              filter: 'unassigned',
+            })
+          }
+        >
           <View style={styles.unassignedIconWrap}>
             <Icon name="inbox" size={20} color="#fff" />
           </View>
           <View style={styles.unassignedInfo}>
-            <Text style={styles.unassignedLabel}>Unassigned Enquiries</Text>
-            <Text style={styles.unassignedSub}>View all unassigned enquiries from all clients</Text>
+            <Text style={styles.unassignedLabel}>Unassigned / Placed</Text>
+            <Text style={styles.unassignedSub}>
+              View all unassigned enquiries and placed orders
+            </Text>
           </View>
           <Icon name="chevron-right" size={22} color={colors.textLight} />
         </TouchableOpacity>
@@ -247,8 +376,14 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
         clients.length === 0 ? (
           <View style={styles.empty}>
             <Icon name="people" size={48} color={colors.textLight} />
-            <Text style={styles.emptyText}>{showAll ? 'No clients found' : 'No clients assigned yet'}</Text>
-            {!showAll && <Text style={styles.emptySubtext}>Contact your admin to get clients assigned</Text>}
+            <Text style={styles.emptyText}>
+              {showAll ? 'No clients found' : 'No clients assigned yet'}
+            </Text>
+            {!showAll && (
+              <Text style={styles.emptySubtext}>
+                Contact your admin to get clients assigned
+              </Text>
+            )}
           </View>
         ) : (
           <FlatList
@@ -257,27 +392,39 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
             renderItem={renderClient}
             contentContainerStyle={styles.list}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
             }
           />
         )
+      ) : departmentSections.length === 0 ? (
+        <View style={styles.empty}>
+          <Icon name="business" size={48} color={colors.textLight} />
+          <Text style={styles.emptyText}>No team members found</Text>
+        </View>
       ) : (
-        departmentListData.length === 0 ? (
-          <View style={styles.empty}>
-            <Icon name="business" size={48} color={colors.textLight} />
-            <Text style={styles.emptyText}>No team members found</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={departmentListData}
-            keyExtractor={(item, i) => `u-${item.user?.id || item.user?._id || i}`}
-            renderItem={renderDepartmentRow}
-            contentContainerStyle={styles.list}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
-            }
-          />
-        )
+        <FlatList
+          data={departmentSections}
+          keyExtractor={(item, i) =>
+            item.type === 'header'
+              ? `h-${item.roleKey}`
+              : `u-${item.user?.id || item.user?._id || i}`
+          }
+          renderItem={renderDepartmentItem}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+        />
       )}
     </SafeAreaView>
   );
@@ -302,9 +449,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
   },
-  tabActive:     { backgroundColor: '#fff' },
-  tabText:       { fontFamily: fonts.medium, fontSize: fonts.sm || 13, color: 'rgba(255,255,255,0.85)' },
-  tabTextActive: { fontFamily: fonts.bold,   fontSize: fonts.sm || 13, color: colors.primary },
+  tabActive: { backgroundColor: '#fff' },
+  tabText: {
+    fontFamily: fonts.medium,
+    fontSize: fonts.sm || 13,
+    color: 'rgba(255,255,255,0.85)',
+  },
+  tabTextActive: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.sm || 13,
+    color: colors.primary,
+  },
 
   headerSection: {
     paddingHorizontal: 20,
@@ -313,8 +468,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  title:    { fontSize: fonts.xl, fontFamily: fonts.bold,    color: colors.textPrimary },
-  subtitle: { fontSize: fonts.sm, fontFamily: fonts.regular, color: colors.textSecondary, marginTop: 2 },
+  title: {
+    fontSize: fonts.xl,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+  },
+  subtitle: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
 
   list: { paddingVertical: 8 },
 
@@ -341,27 +505,81 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  avatarText:   { color: '#fff', fontSize: fonts.base, fontFamily: fonts.bold },
-  info:         { flex: 1 },
-  rowName:      { fontSize: fonts.base, fontFamily: fonts.bold,    color: colors.textPrimary },
-  subText:      { fontSize: fonts.sm,   fontFamily: fonts.regular, color: colors.textSecondary, marginTop: 2 },
+  avatarText: { color: '#fff', fontSize: fonts.base, fontFamily: fonts.bold },
+  info: { flex: 1 },
+  rowName: {
+    fontSize: fonts.base,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+  },
+  subText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
   rolePillText: { fontSize: 11, fontFamily: fonts.medium, marginTop: 2 },
 
-  roleHeader: {
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingTop: 16,
     paddingBottom: 6,
   },
-  roleHeaderDot:  { width: 8, height: 8, borderRadius: 4 },
-  roleHeaderText: { fontFamily: fonts.bold, fontSize: fonts.sm || 13 },
-  roleHeaderLine: { flex: 1, height: 1 },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionDot: { width: 8, height: 8, borderRadius: 4 },
+  sectionHeaderText: { fontFamily: fonts.bold, fontSize: fonts.sm || 13 },
+  sectionCount: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.textSecondary,
+    backgroundColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    overflow: 'hidden',
+  },
+  reportDeptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  reportDeptBtnText: {
+    fontSize: 10,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+  },
 
-  empty:        { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  emptyText:    { fontSize: fonts.lg, fontFamily: fonts.bold,    color: colors.textSecondary, marginTop: 16 },
-  emptySubtext: { fontSize: fonts.sm, fontFamily: fonts.regular, color: colors.textLight, marginTop: 8, textAlign: 'center' },
+  empty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyText: {
+    fontSize: fonts.lg,
+    fontFamily: fonts.bold,
+    color: colors.textSecondary,
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textLight,
+    marginTop: 8,
+    textAlign: 'center',
+  },
 
   unassignedBtn: {
     flexDirection: 'row',
@@ -384,9 +602,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  unassignedInfo:  { flex: 1 },
-  unassignedLabel: { fontSize: fonts.base, fontFamily: fonts.bold,    color: '#fff' },
-  unassignedSub:   { fontSize: fonts.sm,   fontFamily: fonts.regular, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
+  unassignedInfo: { flex: 1 },
+  unassignedLabel: {
+    fontSize: fonts.base,
+    fontFamily: fonts.bold,
+    color: '#fff',
+  },
+  unassignedSub: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 2,
+  },
 });
 
 export default ClientHandlerDashboardScreen;
