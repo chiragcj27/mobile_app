@@ -9,7 +9,7 @@ import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FILE_BASE_URL, API_BASE_URL } from '../config/apiConfig';
 import { getUserName } from './userUtils';
-import { LOGO_BASE64 } from '../screens/Pricing/previewScreen';
+import { LOGO_BASE64 } from '../constants/logo';
 
 // Import PDF generation library (react-native-html-to-pdf)
 let generatePDF = null;
