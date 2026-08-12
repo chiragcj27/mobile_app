@@ -43,6 +43,33 @@ import {
 import { buildCombinedHtml } from './previewScreen';
 import CropBoxSelector from './CropBoxSelector';
 
+const buildTypeEntry = ({ type, src, imageData, metalKt, clientPricing = {}, forceType = false }) => ({
+  imageData,
+  editableStones: (src.Stones || []).map(st => ({ ...st, Type: forceType ? type : (st.Type || type) })),
+  editableMetal: {
+    Weight: src.Metal?.Weight || 0,
+    Quality: src.Metal?.Quality || metalKt,
+    Rate: src.Metal?.Rate || '',
+    Ounce: src.GoldRatePerOunce ? String(src.GoldRatePerOunce) : '',
+  },
+  editableCharges: {
+    Loss: src.Client?.Loss ?? clientPricing.Loss ?? 0,
+    Labour: src.Client?.Labour ?? clientPricing.Labour ?? 0,
+    ExtraCharges: extraChargesValue(src.Client?.ExtraCharges ?? clientPricing.ExtraCharges),
+    ExtraChargesType: extraChargesType(src.Client?.ExtraCharges ?? clientPricing.ExtraCharges),
+    GoldDuties: src.Client?.GoldDuties ?? clientPricing.GoldDuties ?? 0,
+    SilverAndLabsDuties: src.Client?.SilverAndLabsDuties ?? clientPricing.SilverAndLabsDuties ?? 0,
+    LossAndLabourDuties: src.Client?.LossAndLabourDuties ?? clientPricing.LossAndLabourDuties ?? 0,
+  },
+  dutyRates: {
+    UndercutPrice: src.Client?.UndercutPrice ?? clientPricing.UndercutPrice,
+    UndercutPriceTouched: false,
+    NaturalDuties: src.Client?.NaturalDuties ?? clientPricing.NaturalDuties ?? 0,
+    LabDuties: src.Client?.LabDuties ?? clientPricing.LabDuties ?? 0,
+  },
+  pricingResult: src,
+});
+
 let generatePDFModule = null;
 try {
   const mod = require('react-native-html-to-pdf');
@@ -98,7 +125,6 @@ export default function PricingCalci({ route, navigation }) {
 
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
-  const prevMissingCountRef = useRef(0);
   const metalWeightRef = useRef(null);
   const singleStoneCatKeyRef = useRef(singleStoneCatKey);
   const groupedDataRef = useRef(groupedData);
@@ -173,7 +199,7 @@ export default function PricingCalci({ route, navigation }) {
   // Count missing stones — optionally filter by a specific type
   const countMissingStones = useCallback((filterType) => {
     let count = 0;
-    Object.values(groupedData).forEach((catData) => {
+    Object.values(groupedDataRef.current).forEach((catData) => {
       catData.types.forEach((type) => {
         if (filterType && type !== filterType) return;
         const d = catData.byType[type];
@@ -186,7 +212,7 @@ export default function PricingCalci({ route, navigation }) {
       });
     });
     return count;
-  }, [groupedData]);
+  }, []);
 
   // Auto-recalculate: when stone types change, trigger recalc after extraction settles
   useEffect(() => {
@@ -195,7 +221,7 @@ export default function PricingCalci({ route, navigation }) {
       const timer = setTimeout(() => {
         if (!isAutoRecalculatingRef.current) {
           isAutoRecalculatingRef.current = true;
-          handleRecalculateAll().finally(() => {
+          handleRecalculateAllRef.current?.().finally(() => {
             isAutoRecalculatingRef.current = false;
           });
         }
@@ -217,7 +243,7 @@ export default function PricingCalci({ route, navigation }) {
         debounceTimer = setTimeout(() => {
           if (!isAutoRecalculatingRef.current) {
             isAutoRecalculatingRef.current = true;
-            handleRecalculateAll().finally(() => {
+            handleRecalculateAllRef.current?.().finally(() => {
               isAutoRecalculatingRef.current = false;
             });
           }
@@ -233,12 +259,7 @@ export default function PricingCalci({ route, navigation }) {
   // Auto-recalculate: when edit modal closes after editing, trigger recalc
   // only if all missing stones of the EDITED TYPE are now filled
   useEffect(() => {
-    if (editModalVisible) {
-      const editedType = editingContext.type;
-      const snapCount = editedType ? countMissingStones(editedType) : countMissingStones();
-      prevMissingCountRef.current = snapCount;
-      return;
-    }
+    if (editModalVisible) return;
     const editedType = editingContext.type;
     if (clientId && Object.keys(groupedData).length > 0) {
       const currentMissing = editedType ? countMissingStones(editedType) : countMissingStones();
@@ -249,7 +270,7 @@ export default function PricingCalci({ route, navigation }) {
       const timer = setTimeout(() => {
         if (!isAutoRecalculatingRef.current) {
           isAutoRecalculatingRef.current = true;
-          handleRecalculateAll().finally(() => {
+          handleRecalculateAllRef.current?.().finally(() => {
             isAutoRecalculatingRef.current = false;
           });
         }
@@ -395,32 +416,14 @@ export default function PricingCalci({ route, navigation }) {
     const p = Array.isArray(rawPricing)
       ? (rawPricing.find(e => (e?.Stones || []).some(s => s?.Type === type)) || rawPricing[0] || responseData.extractedData || responseData)
       : (rawPricing || responseData.extractedData || responseData);
-    return {
+    return buildTypeEntry({
+      type,
+      src: p,
       imageData: responseData,
-      editableStones: (p.Stones || []).map(s => ({ ...s, Type: type })),
-      editableMetal: {
-        Weight: p.Metal?.Weight || 0,
-        Quality: p.Metal?.Quality || metalKt,
-        Rate: p.Metal?.Rate || '',
-        Ounce: p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '',
-      },
-      editableCharges: {
-        Loss: p.Client?.Loss ?? 10,
-        Labour: p.Client?.Labour ?? 7,
-        ExtraCharges: extraChargesValue(p.Client?.ExtraCharges),
-        ExtraChargesType: extraChargesType(p.Client?.ExtraCharges),
-        GoldDuties: p.Client?.GoldDuties ?? 0,
-        SilverAndLabsDuties: p.Client?.SilverAndLabsDuties ?? 0,
-        LossAndLabourDuties: p.Client?.LossAndLabourDuties ?? 0,
-      },
-      dutyRates: {
-        UndercutPrice: p.Client?.UndercutPrice ?? undefined,
-        UndercutPriceTouched: false,
-        NaturalDuties: p.Client?.NaturalDuties ?? 0,
-        LabDuties: p.Client?.LabDuties ?? 0,
-      },
-      pricingResult: p,
-    };
+      metalKt,
+      clientPricing: selectedClient?.Pricing,
+      forceType: true,
+    });
   };
 
   const handleMetalKtChange = (newKt) => {
@@ -582,7 +585,6 @@ export default function PricingCalci({ route, navigation }) {
       type,
       payload: buildRecalculatePayload({
         clientId,
-        type,
         data,
         metalKt,
         selectedClient,
@@ -678,9 +680,9 @@ export default function PricingCalci({ route, navigation }) {
   // Runs the extraction on the ORIGINAL image plus the selected crop region (fractions 0..1).
   // The backend crops full-resolution from those fractions — the device never crops, so iOS
   // and Android behave identically.
-  const runExtraction = async (imageFile, crop) => {
+  const runExtraction = async (file, crop) => {
     resetToFresh();
-    setImageFile(imageFile);
+    setImageFile(file);
     setIsExtracting(true);
     setExtractPhase('extracting');
 
@@ -689,7 +691,7 @@ export default function PricingCalci({ route, navigation }) {
       const firstType = selectedStoneTypes[0];
 
       const extractionPromise = GetimagepriceData({
-        image: imageFile,
+        image: file,
         clientId: clientId,
         stoneType: firstType,
         metalQuality: metalKt,
@@ -713,7 +715,7 @@ export default function PricingCalci({ route, navigation }) {
           clearTimeout(timeoutId);
           setIsExtracting(false);
           setExtractPhase('');
-          setExtractionTimeoutImage(imageFile);
+          setExtractionTimeoutImage(file);
           setExtractionTimeoutCrop(crop);
           setExtractionTimeoutVisible(true);
           return;
@@ -739,35 +741,14 @@ export default function PricingCalci({ route, navigation }) {
         );
 
       // `src` is that type's own pricing entry (or the raw extraction when unpriced).
-      const buildTypeData = (type, src) => ({
-        imageData: extractionResponse,
-        editableStones: (src.Stones || []).map(s => ({
-          ...s,
-          Type: s.Type || type,
-        })),
-        editableMetal: {
-          Weight: src.Metal?.Weight || 0,
-          Quality: src.Metal?.Quality || metalKt,
-          Rate: src.Metal?.Rate || '',
-          Ounce: src.GoldRatePerOunce ? String(src.GoldRatePerOunce) : '',
-        },
-        editableCharges: {
-          Loss: src.Client?.Loss ?? 10,
-          Labour: src.Client?.Labour ?? 7,
-          ExtraCharges: extraChargesValue(src.Client?.ExtraCharges),
-          ExtraChargesType: extraChargesType(src.Client?.ExtraCharges),
-          GoldDuties: src.Client?.GoldDuties ?? 0,
-          SilverAndLabsDuties: src.Client?.SilverAndLabsDuties ?? 0,
-          LossAndLabourDuties: src.Client?.LossAndLabourDuties ?? 0,
-        },
-        dutyRates: {
-          UndercutPrice: src.Client?.UndercutPrice ?? undefined,
-          UndercutPriceTouched: false,
-          NaturalDuties: src.Client?.NaturalDuties ?? 0,
-          LabDuties: src.Client?.LabDuties ?? 0,
-        },
-        pricingResult: src,
-      });
+      const buildTypeData = (type, src) =>
+        buildTypeEntry({
+          type,
+          src,
+          imageData: extractionResponse,
+          metalKt,
+          clientPricing: selectedClient?.Pricing,
+        });
 
       if (pricingList.length > 0) {
         // One entry per stone type — key it by the type the backend priced it as.
@@ -817,7 +798,7 @@ export default function PricingCalci({ route, navigation }) {
     } catch (apiError) {
       if (apiError?.status === 429 || apiError?.data?.statusCode === 429) {
         showAlert('Rate Limit', 'Too many requests. Please try again later.', 'error', [
-          { text: 'Try Again', onPress: () => runExtraction(imageFile, crop) },
+          { text: 'Try Again', onPress: () => runExtraction(file, crop) },
         ]);
       } else {
         showAlert('Extraction Error', 'Failed to extract pricing data. Check configuration.', 'error');
@@ -1867,9 +1848,7 @@ export default function PricingCalci({ route, navigation }) {
         onDone={recalculateInPlace}
         catData={singleStoneCatKey ? groupedData[singleStoneCatKey] : null}
         isRecalculating={isRecalculating}
-        clientId={clientId}
         metalKt={metalKt}
-        selectedClient={selectedClient}
         onRecalculated={handleSingleStoneRecalculated}
         onPreviewSummary={() => openPreviewFromModal(false)}
         onClientPreview={() => openPreviewFromModal(true)}
@@ -2332,53 +2311,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontFamily: fonts.medium,
     fontSize: fonts.sm,
-  },
-  clientMsgCard: {
-    marginTop: 20,
-    borderWidth: 1,
-    borderColor: colors.borderLight || '#E0E0E0',
-    borderRadius: 12,
-    padding: 14,
-    backgroundColor: colors.backgroundSecondary || '#F8F9FA',
-  },
-  clientMsgHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  clientMsgLabel: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    flex: 1,
-  },
-  copyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    backgroundColor: colors.background,
-  },
-  copyBtnText: {
-    fontFamily: fonts.medium,
-    fontSize: fonts.xs || 12,
-    color: colors.primary,
-  },
-  clientMsgInput: {
-    minHeight: 100,
-    borderWidth: 1,
-    borderColor: colors.borderLight || '#E0E0E0',
-    borderRadius: 8,
-    padding: 10,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    backgroundColor: colors.background,
   },
   missingWarningText: {
     fontSize: 10,

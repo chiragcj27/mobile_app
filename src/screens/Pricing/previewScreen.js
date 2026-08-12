@@ -910,7 +910,6 @@ export default function PreviewScreen({ route, navigation }) {
         }));
         return buildRecalculatePayload({
           clientId,
-          type: '',
           data: {
             editableStones,
             editableMetal: {

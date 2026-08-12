@@ -15,7 +15,6 @@ import {
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { splitGroupedDataForRecalc } from '../../utils/stoneDataGrouper';
 import { extraChargesSuffix } from '../../utils/extraCharges';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
@@ -60,9 +59,7 @@ export default function SingleStonePricing({
   onClose,
   onDone,
   catData,
-  clientId,
   metalKt,
-  selectedClient,
   onRecalculated,
   onPreviewSummary,
   onClientPreview,
@@ -78,6 +75,7 @@ export default function SingleStonePricing({
   const [inlineEditPrice, setInlineEditPrice] = useState('');
   const [editedPrices, setEditedPrices] = useState({});
   const inlinePriceRef = useRef(null);
+  const selfDismissRef = useRef(false);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -100,10 +98,9 @@ export default function SingleStonePricing({
 
   useEffect(() => {
     if (!visible || !catData) return;
-    const entries = splitGroupedDataForRecalc({ dummy: catData });
     const grouped = {};
-    entries.forEach(({ type, data }) => {
-      grouped[type] = data;
+    (catData.types || []).forEach(type => {
+      if (catData.byType?.[type]) grouped[type] = catData.byType[type];
     });
     setLocalGrouped(grouped);
     // Seed the common Metal Weight & Rate from the first type (same idea as PricingCalculator)
@@ -193,14 +190,11 @@ export default function SingleStonePricing({
   }, [editedPrices]);
 
   useEffect(() => {
-    if (inlineEditIndex !== null && inlinePriceRef.current) {
-      Keyboard.dismiss();
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          inlinePriceRef.current?.focus();
-        }, 150);
-      });
-    }
+    if (inlineEditIndex === null) return;
+    selfDismissRef.current = true;
+    Keyboard.dismiss();
+    const id = setTimeout(() => inlinePriceRef.current?.focus(), 150);
+    return () => clearTimeout(id);
   }, [inlineEditIndex]);
 
   const saveInlineEdit = useCallback(() => {
@@ -320,6 +314,10 @@ export default function SingleStonePricing({
   // Trigger recalculation when keyboard closes after editing duties
   useEffect(() => {
     const subscription = Keyboard.addListener('keyboardDidHide', () => {
+      if (selfDismissRef.current) {
+        selfDismissRef.current = false;
+        return;
+      }
       const charges = localChargesRef.current;
       // Recalculate when charges or the common metal weight/rate changed.
       if (Object.keys(charges).length === 0 && !metalTouchedRef.current) return;
@@ -682,16 +680,14 @@ export default function SingleStonePricing({
               <Icon name="visibility" size={18} color="#fff" />
               <Text style={s.clientPreviewBtnText}>Client Preview</Text>
             </TouchableOpacity>
-            <View style={s.bottomBarRow}>
-              <TouchableOpacity
-                style={s.adminPreviewBtn}
-                onPress={onPreviewSummary}
-                activeOpacity={0.85}
-              >
-                <Icon name="visibility" size={16} color="#fff" />
-                <Text style={s.adminPreviewBtnText}>Admin Preview</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={s.adminPreviewBtn}
+              onPress={onPreviewSummary}
+              activeOpacity={0.85}
+            >
+              <Icon name="visibility" size={16} color="#fff" />
+              <Text style={s.adminPreviewBtnText}>Admin Preview</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -1000,10 +996,6 @@ const s = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 12,
   },
-  bottomBarRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
   clientPreviewBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1029,18 +1021,6 @@ const s = StyleSheet.create({
     paddingVertical: 14,
   },
   adminPreviewBtnText: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 14,
-    color: '#fff',
-  },
-  bottomBarBtnPrimary: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  bottomBarBtnPrimaryText: {
     fontFamily: fonts.bold,
     fontSize: fonts.sm || 14,
     color: '#fff',

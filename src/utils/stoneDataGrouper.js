@@ -56,16 +56,21 @@ export const regroupApiResults = (apiResults, existingGroupedData, categoryMap =
       grouped[category].types.push(type);
     }
 
+    const prev = existingGroupedData?.[category]?.byType?.[type];
+    const prevMetal = prev?.editableMetal;
+    const prevDuty = prev?.dutyRates;
+    const keepPrev = (key, fallback) => (prevDuty?.[key] !== undefined ? prevDuty[key] : fallback);
+
     grouped[category].byType[type] = {
-      imageData: existingGroupedData?.[category]?.byType?.[type]?.imageData || null,
+      imageData: prev?.imageData || null,
       editableStones: result.Stones?.map((s) => ({ Type: type, ...s })) || [],
       editableMetal: {
-        Weight: result.Metal?.Weight ?? 0,
-        Quality: result.Metal?.Quality ?? '18K',
-        Rate: result.Metal?.Rate ?? 0,
+        Weight: result.Metal?.Weight ?? prevMetal?.Weight ?? 0,
+        Quality: result.Metal?.Quality ?? prevMetal?.Quality ?? '18K',
+        Rate: result.Metal?.Rate ?? prevMetal?.Rate ?? 0,
         Ounce: result.GoldRatePerOunce
           ? String(result.GoldRatePerOunce)
-          : existingGroupedData?.[category]?.byType?.[type]?.editableMetal?.Ounce || '',
+          : prevMetal?.Ounce || '',
       },
       editableCharges: {
         Loss: result.Client?.Loss ?? 0,
@@ -77,20 +82,10 @@ export const regroupApiResults = (apiResults, existingGroupedData, categoryMap =
         LossAndLabourDuties: result.Client?.LossAndLabourDuties ?? 0,
       },
       dutyRates: {
-        UndercutPrice:
-          existingGroupedData?.[category]?.byType?.[type]?.dutyRates?.UndercutPrice !== undefined
-            ? existingGroupedData[category].byType[type].dutyRates.UndercutPrice
-            : result.Client?.UndercutPrice,
-        UndercutPriceTouched:
-          existingGroupedData?.[category]?.byType?.[type]?.dutyRates?.UndercutPriceTouched ?? false,
-        NaturalDuties:
-          existingGroupedData?.[category]?.byType?.[type]?.dutyRates?.NaturalDuties !== undefined
-            ? existingGroupedData[category].byType[type].dutyRates.NaturalDuties
-            : result.Client?.NaturalDuties ?? 0,
-        LabDuties:
-          existingGroupedData?.[category]?.byType?.[type]?.dutyRates?.LabDuties !== undefined
-            ? existingGroupedData[category].byType[type].dutyRates.LabDuties
-            : result.Client?.LabDuties ?? 0,
+        UndercutPrice: keepPrev('UndercutPrice', result.Client?.UndercutPrice),
+        UndercutPriceTouched: prevDuty?.UndercutPriceTouched ?? false,
+        NaturalDuties: keepPrev('NaturalDuties', result.Client?.NaturalDuties ?? 0),
+        LabDuties: keepPrev('LabDuties', result.Client?.LabDuties ?? 0),
       },
       pricingResult: result,
     };

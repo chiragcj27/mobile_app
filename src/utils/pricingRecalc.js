@@ -1,10 +1,7 @@
 import { makeExtraCharges } from './extraCharges';
 
-const CHARGE_KEYS = ['Loss', 'Labour', 'ExtraCharges'];
-const DUTY_KEYS = ['UndercutPrice', 'NaturalDuties', 'LabDuties', 'GoldDuties', 'SilverAndLabsDuties', 'LossAndLabourDuties'];
-
-function resolveCharges(data, commonCharges = {}) {
-  const src = data?.editableCharges ?? commonCharges ?? {};
+function resolveCharges(data) {
+  const src = data?.editableCharges ?? {};
   return {
     Loss:             parseFloat(src.Loss) || 0,
     Labour:           parseFloat(src.Labour) || 0,
@@ -13,7 +10,7 @@ function resolveCharges(data, commonCharges = {}) {
   };
 }
 
-function resolveDutyRates(data, selectedClient, commonCharges = {}) {
+function resolveDutyRates(data, selectedClient) {
   // Merge all sources: dutyRates (stone-dependent edits) → editableCharges (common section edits) → pricingResult → client defaults
   const src = {
     ...(selectedClient?.Pricing ?? {}),
@@ -45,7 +42,7 @@ function resolveDutyRates(data, selectedClient, commonCharges = {}) {
   return result;
 }
 
-export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selectedClient, commonMetal = {}, commonCharges = {}, isRecalculate = true }) => {
+export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true }) => {
   const formattedStones = (Array.isArray(data?.editableStones) ? data.editableStones : [])
     .map(s => ({
       Type: s.Type,
@@ -61,8 +58,8 @@ export const buildRecalculatePayload = ({ clientId, type, data, metalKt, selecte
     }))
     .filter(s => s.Type);
 
-  const previousCharges = resolveCharges(data, commonCharges);
-  const previousDutyRates = resolveDutyRates(data, selectedClient, commonCharges);
+  const previousCharges = resolveCharges(data);
+  const previousDutyRates = resolveDutyRates(data, selectedClient);
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
