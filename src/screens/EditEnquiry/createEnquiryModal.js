@@ -29,14 +29,13 @@ import BrandedAlert from '../../components/common/BrandedAlert';
 import { useSelector } from 'react-redux';
 import { buildStoneCategoryMap, getStoneCategory, getStoneCategoryLabel } from '../../utils/stoneTypeMapping';
 import { useBrandedAlert } from '../../hooks/useBrandedAlert';
+import { METAL_QUALITY_OPTIONS } from '../../constants/metalQualities';
 
 const toArray = value =>
   (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean);
 
-const MULTI_SELECT_FIELDS = ['Metal.Qualities', 'StoneTypes'];
-
-// StoneTypes has its own grouped picker below the missing-fields list
-const SELF_RENDERED_FIELDS = ['StoneTypes'];
+// Array-valued fields — each has its own picker below the missing-fields list
+const ARRAY_FIELDS = ['Metal.Qualities', 'StoneTypes'];
 
 export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated, onUpdate, route }) {
   const { user } = useAuth();
@@ -239,7 +238,7 @@ const generateStyleNumber = (qty, category) => {
     if (isAIParsingFlow && dynamicMissingFields.length > 0) {
       const unfilled = dynamicMissingFields.find(field => {
         const value = missingFieldsData[field.field];
-        if (MULTI_SELECT_FIELDS.includes(field.field)) return toArray(value).length === 0;
+        if (ARRAY_FIELDS.includes(field.field)) return toArray(value).length === 0;
         return value === undefined || value === null || value === '';
       });
       if (unfilled) {
@@ -408,7 +407,7 @@ const generateStyleNumber = (qty, category) => {
 
   const renderMissingFields = () => {
     const fields = dynamicMissingFields.filter(
-      f => !SELF_RENDERED_FIELDS.includes(f.field),
+      f => !ARRAY_FIELDS.includes(f.field),
     );
     if (fields.length === 0) return null;
     return (
@@ -431,36 +430,6 @@ const generateStyleNumber = (qty, category) => {
                         onPress={() => setMissingFieldsData(prev => ({ ...prev, [item.field]: option.value }))}
                       >
                         <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{clientName}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            );
-          } else if (MULTI_SELECT_FIELDS.includes(item.field) && item.options.length > 0) {
-            const selectedValues = toArray(missingFieldsData[item.field]);
-            return (
-              <View key={index} style={styles.tileGroup}>
-                <Text style={styles.dropdownLabel}>{item.label}</Text>
-                <View style={styles.chipRowWrap}>
-                  {item.options.map(option => {
-                    const selected = selectedValues.includes(option.value);
-                    return (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[styles.choiceChip, selected && styles.choiceChipActive]}
-                        activeOpacity={0.85}
-                        onPress={() => setMissingFieldsData(prev => {
-                          const current = toArray(prev[item.field]);
-                          return {
-                            ...prev,
-                            [item.field]: current.includes(option.value)
-                              ? current.filter(v => v !== option.value)
-                              : [...current, option.value],
-                          };
-                        })}
-                      >
-                        <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{option.label}</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -515,6 +484,47 @@ const generateStyleNumber = (qty, category) => {
             );
           }
         })}
+      </View>
+    );
+  };
+
+  const renderMetalQualitySelection = () => {
+    const fromParse = dynamicMissingFields.find(f => f.field === 'Metal.Qualities')?.options;
+    const pool = Array.isArray(fromParse) && fromParse.length > 0 ? fromParse : METAL_QUALITY_OPTIONS;
+    if (!pool.length) return null;
+
+    const selected = toArray(missingFieldsData['Metal.Qualities']);
+
+    const toggle = value => {
+      setMissingFieldsData(prev => {
+        const current = toArray(prev['Metal.Qualities']);
+        return {
+          ...prev,
+          'Metal.Qualities': current.includes(value)
+            ? current.filter(v => v !== value)
+            : [...current, value],
+        };
+      });
+    };
+
+    return (
+      <View style={styles.tileGroup}>
+        <Text style={styles.dropdownLabel}>Metal Qualities</Text>
+        <View style={styles.chipRowWrap}>
+          {pool.map(option => {
+            const isSelected = selected.includes(option.value);
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={[styles.choiceChip, isSelected && styles.choiceChipActive]}
+                activeOpacity={0.85}
+                onPress={() => toggle(option.value)}
+              >
+                <Text style={[styles.choiceChipLabel, isSelected && styles.choiceChipLabelActive]}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
     );
   };
@@ -695,6 +705,7 @@ const generateStyleNumber = (qty, category) => {
             {!textSubmitted ? renderInitialInput() : (
               <View>
                 {renderParsedPreview()}
+                {renderMetalQualitySelection()}
                 {renderStoneTypeSelection()}
 
                 {/* Assign To — shown only after AI parsing, users filtered by parsed status */}
