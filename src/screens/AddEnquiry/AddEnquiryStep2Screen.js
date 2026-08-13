@@ -390,11 +390,11 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
         Quantity: parseInt(formData.quantity) || 1, // Convert to number as per API
         Metal: {
           Color: formData.metalColor || null,
-          Quality: formData.metalQuality || '10K',
+          Qualities: formData.metalQuality ? [formData.metalQuality] : [],
         },
         StyleNumber: formData.styleNumber || null,
         GatiOrderNumber: formData.GatiOrderNumber || null,
-        StoneType: formData.stoneType && formData.stoneType.trim() ? formData.stoneType.trim() : null,
+        StoneTypes: formData.stoneType && formData.stoneType.trim() ? [formData.stoneType.trim()] : [],
         MetalWeight: {
           From: formData.metalWeightFrom ? (() => {
             const cleaned = formData.metalWeightFrom.toString().replace(/[^0-9.]/g, '');
@@ -470,11 +470,11 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
           Priority: normalizedPriority,
           ShippingDate: formData.deadline || null,
           Category: formData.category,
-          StoneType: formData.stoneType,
+          StoneTypes: formData.stoneType ? [formData.stoneType] : [],
           Quantity: parseInt(formData.quantity) || 1,
           Metal: {
             Color: formData.metalColor || 'Gold',
-            Quality: formData.metalQuality || '10K',
+            Qualities: formData.metalQuality ? [formData.metalQuality] : [],
           },
           MetalWeight: {
             From: formData.metalWeightFrom || null,

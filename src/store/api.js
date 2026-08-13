@@ -1399,7 +1399,7 @@ export const api = createApi({
           ClientId: data.ClientId,
           Priority: data.Priority,
           Category: data.Category,
-          StoneType: data.StoneType,
+          StoneTypes: data.StoneTypes,
           Quantity: data.Quantity,
           'Has Reference Images': !!data.ReferenceImages,
           'Reference Images Count': data.ReferenceImages?.length || 0,
@@ -1463,10 +1463,10 @@ export const api = createApi({
     }),
 
     reorderEnquiry: builder.mutation({
-      query: ({ draggedId, previousId, nextId }) => ({
+      query: ({ draggedId, draggedOrderKey, targetId, targetOrderKey }) => ({
         url: '/api/enquiries/reSort',
         method: 'POST',
-        body: { draggedId, previousId: previousId || null, nextId: nextId || null },
+        body: { draggedId, draggedOrderKey, targetId, targetOrderKey },
       }),
     }),
 
