@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -11,7 +11,7 @@ import {
   KeyboardAvoidingView, Platform,
   TextInput,
 } from 'react-native';
-import { Input, Button } from '../../components/common';
+import { Input } from '../../components/common';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import IconComponent from '../../components/common/Icon';
@@ -24,9 +24,11 @@ import {
 } from '../../store/api';
 import { useClients } from '../../features/clients/clientsHooks';
 import { useAuth } from '../../context/AuthContext';
-import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
+import { launchImageLibrary } from 'react-native-image-picker';
 import BrandedAlert from '../../components/common/BrandedAlert';
 import { useSelector } from 'react-redux';
+import { buildStoneCategoryMap, getStoneCategory, getStoneCategoryLabel } from '../../utils/stoneTypeMapping';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 
 export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated, onUpdate, route }) {
@@ -57,13 +59,15 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
   const [parsedData, setParsedData] = useState(null);
   const [dynamicMissingFields, setDynamicMissingFields] = useState([]);
   const [missingFieldsData, setMissingFieldsData] = useState({});
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [ImagesCommentModal, setImagesCommentModal] = useState(false);
+  const [imageComments, setImageComments] = useState([]);
   const [createdEnquiryData, setCreatedEnquiryData] = useState(null);
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
+
+  const descriptionRef = useRef(null);
+  const [descriptionRequired, setDescriptionRequired] = useState(false);
 
   // Auto-derive status from parsed data
   const autoStatus = String(parsedData?.Status || 'Enquiry Created');
@@ -77,8 +81,6 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
     if (!allUsers.length) return [];
 
     const statusLower = String(autoStatus).toLowerCase().trim();
-    console.log('🎯 [CreateEnquiry] Auto Status from parsed data:', autoStatus);
-    console.log('🔍 [CreateEnquiry] Roles from API:', rolesData);
 
     // Try to find a role in the roles API that matches the status name
     const matchedRole = Array.isArray(rolesData)
@@ -111,22 +113,11 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       return true;
     });
 
-    console.log('👥 [CreateEnquiry] Matched role:', matchedRole || 'none (showing all)');
-    console.log('👤 [CreateEnquiry] Filtered members for assign:', filtered.map(u => ({
-      id: u.id || u._id,
-      name: String(u.name || u.Name || '?'),
-      role: String(u.role || u.Role || ''),
-    })));
-    console.log('🔎 [CreateEnquiry] Raw user roles (first 5):', allUsers.slice(0, 5).map(u => ({
-      name: String(u.name || u.Name || '?'),
-      role: u.role, Role: u.Role, roleId: u.roleId, RoleId: u.RoleId,
-    })));
     return filtered;
   }, [usersData, rolesData, autoStatus]);
 
   useEffect(() => {
     if (visible) {
-      console.log('CreateEnquiryModal - clientId:', preSelectedClientIdResolved, 'clientName:', preSelectedClientName);
     }
     if (!visible) {
       setProjectType('coral');
@@ -138,30 +129,31 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       setParsedData(null);
       setDynamicMissingFields([]);
       setMissingFieldsData({});
-      setShowConfirmModal(false);
       setShowPreviewModal(false);
       setCreatedEnquiryData(null);
+      setImageComments([]);
+      setIsCreating(false);
+      setDescriptionRequired(false);
     }
   }, [visible]);
+
+  const handleRemoveImage = (i) => {
+    setImageComments(prev =>
+      referenceImages
+        .map((_, idx) => prev[idx] || '')
+        .filter((_, idx) => idx !== i),
+    );
+    setReferenceImages(prev => prev.filter((_, idx) => idx !== i));
+  };
 
   const handleImagePicker = async () => {
     const result = await launchImageLibrary({ mediaType: 'mixed', selectionLimit: 10 });
     if (result.assets) {
       setReferenceImages(prev => [
         ...prev,
-        ...result.assets.map(a => ({ uri: a.uri, name: a.fileName, type: a.type })),
+        ...result.assets.map(a => ({ uri: a.uri, name: a.fileName, type: a.type , })),
       ]);
-    }
-  };
-
-  const handleCamera = async () => {
-    const result = await launchCamera({ mediaType: 'photo', quality: 0.8, saveToPhotos: true });
-    if (result.assets?.length > 0) {
-      const a = result.assets[0];
-      setReferenceImages(prev => [
-        ...prev,
-        { uri: a.uri, type: a.type || 'image/jpeg', name: a.fileName || `camera_${Date.now()}.jpg` },
-      ]);
+      setImagesCommentModal(true);
     }
   };
 
@@ -246,7 +238,6 @@ const generateStyleNumber = (qty, category) => {
     }
 
     try {
-      const isAIParsingFlow = textSubmitted && parsedData !== null;
       let finalData;
 
       if (isAIParsingFlow) {
@@ -258,10 +249,15 @@ const generateStyleNumber = (qty, category) => {
           Priority: missingFieldsData.Priority || parsedData?.Priority || 'Normal',
           Quantity: missingFieldsData.Quantity || parsedData?.Quantity || 1,
           Metal: {
-            Color: missingFieldsData.MetalColor || parsedData?.Metal?.Color || null,
-            Quality: missingFieldsData.MetalQuality || parsedData?.Metal?.Quality || '10K',
+            Color: missingFieldsData["Metal.Color"] || parsedData?.Metal?.Color || null,
+            Quality: missingFieldsData["Metal.Quality"] || parsedData?.Metal?.Quality || '10K',
           },
           StoneType: missingFieldsData.StoneType || parsedData?.StoneType || null,
+          StoneTypes: Array.from(new Set([
+            ...(Array.isArray(missingFieldsData.StoneTypes) ? missingFieldsData.StoneTypes : []),
+            ...(missingFieldsData.StoneType ? [missingFieldsData.StoneType] : []),
+            ...(Array.isArray(parsedData?.StoneTypes) ? parsedData.StoneTypes : []),
+          ].filter(Boolean))),
           Stamping: missingFieldsData.Stamping || parsedData?.Stamping || null,
           Remarks: missingFieldsData.Remarks || parsedData?.Remarks || '',
           Category: missingFieldsData.Category || parsedData?.Category || 'Ring',
@@ -299,6 +295,7 @@ const generateStyleNumber = (qty, category) => {
           Quantity: 1,
           Metal: { Color: null, Quality: '10K' },
           StoneType: null,
+          StoneTypes: [],
           Stamping: null,
           Remarks: '',
           Category: 'Ring',
@@ -332,20 +329,39 @@ const generateStyleNumber = (qty, category) => {
   };
 
   const handleConfirmCreate = async () => {
+    if (isCreating) return;
     const finalData = createdEnquiryData?.data;
     if (!finalData) return;
+    setIsCreating(true);
+
+    // Single request: create the enquiry with the images and their comments
+    // attached — the backend stores each comment as the image Description.
+    const imagesWithDescriptions = referenceImages.map((img, i) => ({
+      ...img,
+      Description: (imageComments[i] || '').trim(),
+    }));
+
+    let enquiryId = null;
     try {
       const result = await submitEnquiry({
         data: finalData,
-        referenceImages: referenceImages,
+        referenceImages: imagesWithDescriptions,
       }).unwrap();
-      const enquiryId = result?.id || result?._id || result?.data?.id || result?.data?._id || result?.enquiry?.id || result?.enquiry?._id || result?.insertedId;
-      setShowPreviewModal(false);
-      onClose();
-      if (onEnquiryCreated) onEnquiryCreated(enquiryId, finalData);
+      // The create endpoint returns the bare enquiry id
+      enquiryId =
+        typeof result === 'string'
+          ? result
+          : result?.id || result?._id || result?.data?.id || result?.data?._id || result?.enquiry?.id || result?.enquiry?._id || result?.insertedId;
     } catch (error) {
+      setIsCreating(false);
       showAlert('Error', 'Failed to create enquiry. Please try again.', 'error');
+      return;
     }
+
+    setIsCreating(false);
+    setShowPreviewModal(false);
+    onClose();
+    if (onEnquiryCreated) onEnquiryCreated(enquiryId, finalData);
   };
 
   const renderPreviewDetails = (data, s) => {
@@ -359,7 +375,7 @@ const generateStyleNumber = (qty, category) => {
       { label: 'Quantity', value: data.Quantity },
       { label: 'Metal Color', value: data.Metal?.Color },
       { label: 'Metal Quality', value: data.Metal?.Quality },
-      { label: 'Stone Type', value: data.StoneType },
+      { label: 'Stone Type', value: data.StoneTypes && data.StoneTypes.length ? data.StoneTypes.join(', ') : data.StoneType },
       { label: 'Stamping', value: data.Stamping },
       { label: 'Budget', value: data.Budget },
       { label: 'Remarks', value: data.Remarks },
@@ -414,21 +430,33 @@ const generateStyleNumber = (qty, category) => {
               </View>
             );
           } else if (item.options.length > 0) {
+            const resolvedOptions = (item.field === 'StoneType' || item.field === 'Stone')
+              ? (() => {
+                  const cId = preSelectedClientIdResolved || missingFieldsData.ClientId;
+                  const selectedClient = clients.find(c => (c.id || c._id) === cId);
+                  const applicable = selectedClient?.applicableStoneTypes || [];
+                  if (applicable.length === 0) return item.options;
+                  const allowed = new Set(applicable);
+                  return item.options.filter(opt => allowed.has(opt.value));
+                })()
+              : item.options;
             return (
               <View key={index} style={styles.tileGroup}>
                 <Text style={styles.dropdownLabel}>{item.label}</Text>
                 <View style={styles.chipRowWrap}>
-                  {item.options.map(option => {
+                  {resolvedOptions.map(option => {
                     const selected = missingFieldsData[item.field] === option.value;
                     return (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[styles.choiceChip, selected && styles.choiceChipActive]}
-                        activeOpacity={0.85}
-                        onPress={() => setMissingFieldsData(prev => ({ ...prev, [item.field]: option.value }))}
-                      >
-                        <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{option.label}</Text>
-                      </TouchableOpacity>
+                        <TouchableOpacity
+                          key={option.value}
+                          style={[styles.choiceChip, selected && styles.choiceChipActive]}
+                          activeOpacity={0.85}
+                          onPress={() => {
+                            setMissingFieldsData(prev => ({ ...prev, [item.field]: option.value }));
+                          }}
+                        >
+                          <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{option.label}</Text>
+                        </TouchableOpacity>
                     );
                   })}
                 </View>
@@ -449,6 +477,69 @@ const generateStyleNumber = (qty, category) => {
             );
           }
         })}
+      </View>
+    );
+  };
+
+  const renderStoneTypeSelection = () => {
+    if (!stoneTypesData.length) return null;
+
+    const cId = preSelectedClientIdResolved || missingFieldsData.ClientId;
+    const selectedClient = clients.find(c => (c.id || c._id) === cId);
+    const applicable =
+      (Array.isArray(selectedClient?.ApplicableStoneTypes) && selectedClient.ApplicableStoneTypes.length > 0
+        ? selectedClient.ApplicableStoneTypes
+        : (Array.isArray(selectedClient?.applicableStoneTypes) ? selectedClient.applicableStoneTypes : []));
+
+    // Pool of selectable types — filtered to the client's applicable types when present
+    const pool = stoneTypesData.filter(st =>
+      applicable.length === 0 || applicable.includes(st.value),
+    );
+    if (pool.length === 0) return null;
+
+    const categoryMap = buildStoneCategoryMap(pool.map(st => st.value));
+    const groups = {};
+    pool.forEach(st => {
+      const category = getStoneCategory(st.value, categoryMap);
+      if (!groups[category]) groups[category] = [];
+      groups[category].push(st);
+    });
+
+    const selected = Array.isArray(missingFieldsData.StoneTypes) ? missingFieldsData.StoneTypes : [];
+
+    const toggle = value => {
+      setMissingFieldsData(prev => {
+        const current = Array.isArray(prev.StoneTypes) ? prev.StoneTypes : [];
+        const next = current.includes(value)
+          ? current.filter(v => v !== value)
+          : [...current, value];
+        return { ...prev, StoneTypes: next };
+      });
+    };
+
+    return (
+      <View style={styles.tileGroup}>
+        <Text style={styles.dropdownLabel}>Stone Types</Text>
+        {Object.entries(groups).map(([category, opts]) => (
+          <View key={category} style={styles.stoneGroupBlock}>
+            <Text style={styles.stoneGroupTitle}>{getStoneCategoryLabel(category)}</Text>
+            <View style={styles.chipRowWrap}>
+              {opts.map(option => {
+                const isSelected = selected.includes(option.value);
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[styles.choiceChip, isSelected && styles.choiceChipActive]}
+                    activeOpacity={0.85}
+                    onPress={() => toggle(option.value)}
+                  >
+                    <Text style={[styles.choiceChipLabel, isSelected && styles.choiceChipLabelActive]}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        ))}
       </View>
     );
   };
@@ -490,22 +581,28 @@ const generateStyleNumber = (qty, category) => {
             {referenceImages.map((img, i) => (
               <View key={i} style={styles.previewItem}>
                 <Image source={{ uri: img.uri }} style={styles.previewThumb} />
-                <TouchableOpacity onPress={() => setReferenceImages(prev => prev.filter((_, idx) => idx !== i))}>
+                <TouchableOpacity onPress={() => handleRemoveImage(i)}>
                   <IconComponent name="close" size={16} color={colors.error} />
                 </TouchableOpacity>
               </View>
             ))}
           </View>
         )}
-        <Input
-          placeholder="Describe your custom jewelry piece"
+        <TextInput
+          ref={descriptionRef}
+          placeholder={descriptionRequired && !enquiryDescription.trim() ? 'Please fill the description to proceed' : 'Describe your custom jewelry piece'}
+          placeholderTextColor={descriptionRequired && !enquiryDescription.trim() ? (colors.warning || '#ffbb34') : colors.textLight}
           multiline
           numberOfLines={6}
           value={enquiryDescription}
-          onChangeText={setEnquiryDescription}
-          style={{ minHeight: 120, textAlignVertical: 'top' }}
+          onChangeText={(text) => {
+            setEnquiryDescription(text);
+            if (text.trim()) setDescriptionRequired(false);
+          }}
+          onFocus={() => { if (descriptionRequired && !enquiryDescription.trim()) setDescriptionRequired(false); }}
+          style={[styles.descriptionInput, descriptionRequired && !enquiryDescription.trim() && styles.descriptionRequiredBorder]}
         />
-        <TouchableOpacity onPress={() => setShowConfirmModal(true)} disabled={!isSubmitReady || isParsing}>
+        <TouchableOpacity onPress={handleTextSubmit} disabled={!isSubmitReady || isParsing}>
           <View style={[styles.submitBtn, (!isSubmitReady || isParsing) && styles.submitBtnDisabled]}>
             {isParsing ? (
               <ActivityIndicator size="small" color={colors.textWhite} />
@@ -560,6 +657,7 @@ const generateStyleNumber = (qty, category) => {
             {!textSubmitted ? renderInitialInput() : (
               <View>
                 {renderParsedPreview()}
+                {renderStoneTypeSelection()}
 
                 {/* Assign To — shown only after AI parsing, users filtered by parsed status */}
                 <View style={styles.assignRow}>
@@ -649,39 +747,6 @@ const generateStyleNumber = (qty, category) => {
           </TouchableOpacity>
         </Modal>
 
-        <Modal visible={showConfirmModal} transparent animationType="fade" onRequestClose={() => setShowConfirmModal(false)}>
-          <View style={styles.confirmOverlay}>
-            <View style={styles.confirmBox}>
-              <Text style={styles.confirmTitle}>Test with AI?</Text>
-              <Text style={styles.confirmDesc}>Would you like to test this description with AI parsing?</Text>
-              <TouchableOpacity style={styles.confirmUploadBtn} onPress={handleImagePicker}>
-                <IconComponent name="cloud-upload" size={20} color={colors.primary} />
-                <Text style={styles.confirmUploadText}>Upload Screenshot</Text>
-              </TouchableOpacity>
-              {referenceImages.length > 0 && (
-                <View style={styles.previewRow}>
-                  {referenceImages.map((img, i) => (
-                    <View key={i} style={styles.previewItem}>
-                      <Image source={{ uri: img.uri }} style={styles.previewThumb} />
-                      <TouchableOpacity onPress={() => setReferenceImages(prev => prev.filter((_, idx) => idx !== i))}>
-                        <IconComponent name="close" size={16} color={colors.error} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-              <View style={styles.confirmActions}>
-                <TouchableOpacity style={styles.confirmBtnSecondary} onPress={() => setShowConfirmModal(false)}>
-                  <Text style={styles.confirmBtnSecondaryText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.confirmBtnPrimary} onPress={() => { setShowConfirmModal(false); handleTextSubmit(); }}>
-                  <Text style={styles.confirmBtnPrimaryText}>Yes, Parse</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
         <Modal visible={showPreviewModal} transparent animationType="slide" onRequestClose={() => {}}>
           <View style={styles.previewOverlay}>
             <View style={styles.previewBox}>
@@ -696,16 +761,16 @@ const generateStyleNumber = (qty, category) => {
                 <TouchableOpacity
                   style={[styles.previewBtn, styles.previewBtnSecondary]}
                   onPress={() => setShowPreviewModal(false)}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCreating}
                 >
                   <Text style={styles.previewBtnSecondaryText}>Close</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.previewBtn, styles.previewBtnPrimary, isSubmitting && { opacity: 0.5 }]}
+                  style={[styles.previewBtn, styles.previewBtnPrimary, (isSubmitting || isCreating) && { opacity: 0.5 }]}
                   onPress={handleConfirmCreate}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCreating}
                 >
-                  {isSubmitting ? (
+                  {isSubmitting || isCreating ? (
                     <ActivityIndicator size="small" color={colors.textWhite} />
                   ) : (
                     <Text style={styles.previewBtnPrimaryText}>Create Enquiry</Text>
@@ -715,6 +780,88 @@ const generateStyleNumber = (qty, category) => {
             </View>
           </View>
         </Modal>
+        
+        <Modal visible={ImagesCommentModal} transparent animationType="slide" onRequestClose={() => {
+          setImagesCommentModal(false);
+          if (!enquiryDescription.trim()) {
+            setDescriptionRequired(true);
+            setTimeout(() => descriptionRef.current?.focus(), 300);
+          }
+        }}>
+          <View style={styles.imgCommentOverlay}>
+            <View style={styles.imgCommentModal}>
+              <View style={styles.imgCommentHeader}>
+                <TouchableOpacity onPress={() => {
+                  setImagesCommentModal(false);
+                  if (!enquiryDescription.trim()) {
+                    setDescriptionRequired(true);
+                    setTimeout(() => descriptionRef.current?.focus(), 300);
+                  }
+                }} style={styles.imgCommentCloseBtn}>
+                  <IconComponent name="close" size={22} color={colors.textSecondary} />
+                </TouchableOpacity>
+                <Text style={styles.imgCommentHeaderTitle}>Image Comments</Text>
+                <View style={styles.imgCommentHeaderSpacer} />
+              </View>
+
+              <ScrollView style={styles.imgCommentBody} showsVerticalScrollIndicator={false} contentContainerStyle={styles.imgCommentBodyContent}>
+                {referenceImages.length === 0 ? (
+                  <View style={styles.imgCommentEmpty}>
+                    <IconComponent name="image" size={48} color={colors.textLight} />
+                    <Text style={styles.imgCommentEmptyText}>No images uploaded yet</Text>
+                  </View>
+                ) : (
+                  <View style={styles.imgCommentGrid}>
+                    {referenceImages.map((img, i) => (
+                      <View key={i} style={styles.imgCommentCard}>
+                        <View style={styles.imgCommentCardImageWrap}>
+                          <Image source={{ uri: img.uri }} style={styles.imgCommentCardImage} resizeMode="cover" />
+                        </View>
+                        <View style={styles.imgCommentCardBody}>
+                          <Text style={styles.imgCommentCardLabel}>Client Note</Text>
+                          <TextInput
+                            style={styles.imgCommentCardInput}
+                            placeholder="Add a note..."
+                            placeholderTextColor={colors.textLight}
+                            value={imageComments[i] || ''}
+                            onChangeText={(text) => {
+                              const updated = [...imageComments];
+                              updated[i] = text;
+                              setImageComments(updated);
+                            }}
+                            multiline
+                            numberOfLines={2}
+                          />
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                <TouchableOpacity style={styles.imgCommentAddBtn} onPress={handleImagePicker}>
+                  <IconComponent name="add-photo-alternate" size={20} color={colors.primary} />
+                  <Text style={styles.imgCommentAddBtnText}>Add Image</Text>
+                </TouchableOpacity>
+              </ScrollView>
+
+              {referenceImages.length > 0 && (
+                <View style={styles.imgCommentFooter}>
+                  <TouchableOpacity style={styles.imgCommentSaveBtn} onPress={() => {
+                    setImagesCommentModal(false);
+                    if (!enquiryDescription.trim()) {
+                      setDescriptionRequired(true);
+                      setTimeout(() => descriptionRef.current?.focus(), 300);
+                    }
+                  }}>
+                    <Text style={styles.imgCommentSaveBtnText}>Save</Text>
+                    <IconComponent name="check" size={18} color={colors.textWhite} />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </View>
+        </Modal>
+
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -842,6 +989,19 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
+  descriptionInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+    minHeight: 120,
+    textAlignVertical: 'top',
+  },
   previewRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -885,6 +1045,17 @@ const styles = StyleSheet.create({
   tileGroup: {
     marginTop: 12,
     marginBottom: 4,
+  },
+  stoneGroupBlock: {
+    marginBottom: 8,
+  },
+  stoneGroupTitle: {
+    fontSize: fonts.xs,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 6,
   },
   chipRowWrap: {
     flexDirection: 'row',
@@ -957,80 +1128,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     marginBottom: 6,
   },
-  confirmOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  confirmBox: {
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    padding: 24,
-    width: '100%',
-    maxWidth: 340,
-  },
-  confirmTitle: {
-    fontSize: fonts.lg,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  confirmDesc: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  confirmUploadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.primaryLight || colors.primary,
-    borderStyle: 'dashed',
-    marginBottom: 12,
-  },
-  confirmUploadText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  confirmActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 4,
-  },
-  confirmBtnSecondary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-  },
-  confirmBtnSecondaryText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.textPrimary,
-  },
-  confirmBtnPrimary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-  },
-  confirmBtnPrimaryText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.textWhite,
-  },
 
   // Assign To row
   assignRow: {
@@ -1051,24 +1148,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
     gap: 2,
   },
-  assignBtnMissing: {
-    borderColor: colors.error,
-    backgroundColor: '#FEF2F2',
-  },
   assignBtnText: {
     fontSize: fonts.sm,
     fontFamily: fonts.medium,
     color: colors.primary,
-  },
-  assignBtnTextMissing: {
-    color: colors.error,
-  },
-  validationError: {
-    fontSize: fonts.xs,
-    color: colors.error,
-    marginLeft: 24,
-    marginBottom: 12,
-    fontFamily: fonts.regular,
   },
   assignedBadge: {
     flexDirection: 'row',
@@ -1149,9 +1232,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.textWhite,
   },
-  assignUserInfo: {
-    flex: 1,
-  },
   assignUserName: {
     fontSize: fonts.sm,
     fontFamily: fonts.medium,
@@ -1160,13 +1240,6 @@ const styles = StyleSheet.create({
   assignUserNameActive: {
     color: colors.primary,
     fontFamily: fonts.bold,
-  },
-  assignUserRole: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    marginTop: 2,
-    textTransform: 'capitalize',
   },
 
   // Preview modal
@@ -1247,5 +1320,172 @@ const styles = StyleSheet.create({
     fontSize: fonts.base,
     fontFamily: fonts.medium,
     color: colors.textPrimary,
+  },
+
+
+  // Images Comment Modal — New Grid Design
+  imgCommentOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  imgCommentModal: {
+    backgroundColor: colors.background,
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '85%',
+    elevation: 10,
+    shadowColor: '#0D3B3F',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(192,200,201,0.3)',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
+  },
+  imgCommentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight || colors.border,
+  },
+  imgCommentCloseBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundSecondary,
+  },
+  imgCommentHeaderTitle: {
+    fontSize: fonts.lg,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    textAlign: 'center',
+  },
+  imgCommentHeaderSpacer: {
+    width: 38,
+  },
+  imgCommentBody: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    maxHeight: 500,
+  },
+  imgCommentBodyContent: {
+    paddingBottom: 16,
+  },
+  imgCommentGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  imgCommentCard: {
+    width: '48%',
+    backgroundColor: colors.background,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(192,200,201,0.25)',
+    marginBottom: 14,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#0D3B3F',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+  },
+  imgCommentCardImageWrap: {
+    width: '100%',
+    height: 160,
+    overflow: 'hidden',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
+  imgCommentCardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imgCommentCardBody: {
+    padding: 12,
+  },
+  imgCommentCardLabel: {
+    fontSize: fonts.xs,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  imgCommentCardInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: fonts.sm,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    backgroundColor: colors.backgroundSecondary,
+    textAlignVertical: 'top',
+    minHeight: 48,
+  },
+  imgCommentEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
+  imgCommentEmptyText: {
+    fontSize: fonts.sm,
+    color: colors.textSecondary,
+    marginTop: 8,
+    fontFamily: fonts.regular,
+  },
+  imgCommentAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
+    marginTop: 4,
+  },
+  imgCommentAddBtnText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.medium,
+    color: colors.primary,
+  },
+  imgCommentFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight || colors.border,
+  },
+  imgCommentSaveBtn: {
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  imgCommentSaveBtnText: {
+    fontSize: fonts.base,
+    fontFamily: fonts.medium,
+    color: colors.textWhite,
+  },
+
+  // Description required placeholder
+  descriptionRequiredBorder: {
+    borderColor: colors.warning || '#ffbb34',
   },
 });

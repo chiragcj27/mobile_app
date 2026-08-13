@@ -6,7 +6,6 @@ import React, {
   useMemo,
 } from 'react';
 import {
-  ImageBackground,
   StyleSheet,
   View,
   Text,
@@ -19,31 +18,33 @@ import {
   FlatList,
   Image,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Video from 'react-native-video';
-import secureStorage from '../../utils/secureStorage';
+import ImageZoom from 'react-native-image-pan-zoom';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { FILE_BASE_URL, API_BASE_URL } from '../../config/apiConfig';
+import { FILE_BASE_URL } from '../../config/apiConfig';
 import Icon from '../common/Icon';
 import BrandedAlert from '../common/BrandedAlert';
-import PdfViewer from '../common/PdfViewer';
+import { TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
 import {
   useGetUsersQuery,
-  useGetStatusesQuery,
-  useGetRolesQuery,
   useGetEnquiryByIdQuery,
-  useApproveDesignVersionMutation,
-  useRejectDesignVersionMutation,
+  useUpdateAssetDataMutation,
   useUpdateEnquiryMutation,
 } from '../../store/api';
 import { actionsFor, resolveRoleCode, ACTION, SUBSTATUS, STATUS, ROLE } from '../../constants/enquiry';
 import { useEnquiryActions } from '../../hooks/useEnquiryActions';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
-const { width: screenWidth } = Dimensions.get('window');
+
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+const IMAGE_EXT_RE = /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif|svg|ico)$/i;
+const isImageExtension = (str) => typeof str === 'string' && IMAGE_EXT_RE.test(str.trim());
 
 function ModalVideoItem({ uri }) {
   const [paused, setPaused] = useState(true);
@@ -74,23 +75,22 @@ export default function NewEnquiryCard({
   currentTab,
   onUpdateEnquiry,
   onDeleteEnquiry,
-  isExpandedAll = false,
   onFinalLook,
-  onSummary,
+  onShare,
+  onLongPress,
+  isDragActive,
 }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   
   const { data: users, isLoading } = useGetUsersQuery();
-  const { data: statusesData, isLoading: isStatusesLoading } = useGetStatusesQuery();
-  const { data: rolesData } = useGetRolesQuery();
 
   const [imagesData, setImagesData] = useState([]);
   const [imageLoading, setImageLoading] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isImageModalVisible, setImageModalVisible] = useState(false);
   const [modalCurrentIndex, setModalCurrentIndex] = useState(0);
-  const [zoomedImageIndex, setZoomedImageIndex] = useState(null);
+  const [isModalZoomed, setIsModalZoomed] = useState(false);
   const modalFlatListRef = useRef(null);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [isRemarkExpanded, setIsRemarkExpanded] = useState(false);
@@ -107,18 +107,14 @@ export default function NewEnquiryCard({
   const [showCadPicker, setShowCadPicker] = useState(false);
   const [isRejectingQuotation, setIsRejectingQuotation] = useState(false);
   const [isRejectingApproval, setIsRejectingApproval] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
   const [selectedCadDesigner, setSelectedCadDesigner] = useState(null);
   const [updateReason, setUpdateReason] = useState('');
   const [isActionLoading, setIsActionLoading] = useState(false);
-  const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
+  const { alertConfig: alertCfg, showAlert, hideAlert } = useBrandedAlert();
   
   const [activeDesignType, setActiveDesignType] = useState(null);
-  const [excelPdfHtml, setExcelPdfHtml] = useState(null);
-  const [showExcelPdf, setShowExcelPdf] = useState(false);
   
-  const showAlert = useCallback((title, message, type = 'info', buttons = []) =>
-    setAlertCfg({ visible: true, title, message, type, buttons }), []);
-  const hideAlert = useCallback(() => setAlertCfg(p => ({ ...p, visible: false })), []);
 
   const coralDesigners = useMemo(
     () => (users || []).filter(u => u.role === 2 || u.roleId === 2 || u.roleNumber === 2),
@@ -129,10 +125,9 @@ export default function NewEnquiryCard({
     [users],
   );
 
-  const [approveDesignVersion] = useApproveDesignVersionMutation();
-  const [rejectDesignVersion] = useRejectDesignVersionMutation();
+  const [updateAssetData] = useUpdateAssetDataMutation();
   const [updateEnquiryDirect] = useUpdateEnquiryMutation();
-  const { handleAcceptApproval, handleUploadFinalCad, handleMoveToOrderPlacement, generateAndShareExcel, generateExcelPdf, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
+  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
 
   const getVersionFromLast = useCallback((designType) => {
     const src = fullEnquiryData?._originalData || fullEnquiryData || item;
@@ -156,7 +151,6 @@ export default function NewEnquiryCard({
     return null;
   }, [user]);
 
-  const isAdminCh = roleCode === ROLE.AD || roleCode === ROLE.CH;
 
   const enquiryId = item?.Id || item?._id || item?.id;
   const { data: enquiryResult, isFetching: isFetchingEnquiry } = useGetEnquiryByIdQuery(
@@ -167,8 +161,6 @@ export default function NewEnquiryCard({
   const fullSrc = fullEnquiryData;
   const status = (fullEnquiryData?.CurrentStatus || item?.CurrentStatus || 'pending').toLowerCase();
   const subStatus = fullEnquiryData?.CurrentSubStatus || item?.CurrentSubStatus || '';
-  const latestCoralVersion = fullEnquiryData?.lastCoral || item?.lastCoral || '';
-  const LatestCadVersion = fullEnquiryData?.lastCad || item?.lastCad || '';
 
   const source = useMemo(() => {
     const base = fullEnquiryData || item;
@@ -191,15 +183,30 @@ export default function NewEnquiryCard({
   const isProduction = status === 'production';
   const isApprovalPending = status === 'design approval pending';
   const isApprovedCad = status === 'approved cad';
-  const isQuotation = status === 'quotation';
   const isPlacementStage = status === 'order placement';
   const isJustCreated = status === 'enquiry created' || status === 'created' || status === 'new' || status === 'pending';
 
-  const isCostMissing = subStatus === SUBSTATUS.CM;
-  const isQuotationReview = subStatus === SUBSTATUS.QR;
   const isAssignPending = subStatus === SUBSTATUS.AP;
 
-  const referenceImages = item?.ReferenceImages || [];
+  // Show reference images only. Any image whose Key also lives in a Coral/CAD design
+  // version is an uploaded design image that leaked into ReferenceImages — drop it.
+  const referenceImages = useMemo(() => {
+    const raw = item?._originalData || item || {};
+    const designKeys = new Set();
+    [
+      ...(raw.Coral || item?.Coral || []),
+      ...(raw.Cad || item?.Cad || []),
+    ].forEach(version => {
+      (version?.Images || version?.images || []).forEach(img => {
+        const k = img?.Key || img?.key;
+        if (k) designKeys.add(k);
+      });
+    });
+    return (item?.ReferenceImages || []).filter(img => {
+      const k = img?.Key || img?.key;
+      return !(k && designKeys.has(k));
+    });
+  }, [item]);
 
   const currentInferredDesignType = useMemo(() => {
     const rawData = fullSrc || item;
@@ -218,7 +225,10 @@ export default function NewEnquiryCard({
   }, [fullSrc, item]);
 
   useEffect(() => {
-    if (!isExpandedAll || !referenceImages.length) return;
+    if (!referenceImages || referenceImages.length === 0) {
+      setImagesData([]);
+      return;
+    }
     let cancelled = false;
     const loadAllImages = async () => {
       setImageLoading(true);
@@ -250,7 +260,7 @@ export default function NewEnquiryCard({
     };
     loadAllImages();
     return () => { cancelled = true; };
-  }, [isExpandedAll]);
+  }, [referenceImages]);
 
   const createdDate = item?.CreatedDate || item?.createdAt;
   const daysSinceCreation = createdDate
@@ -304,21 +314,60 @@ export default function NewEnquiryCard({
   const shouldShowAdminApprovedCad = has(ACTION.UPLOAD_FINAL_CAD);
   const isFinalVersion = !!(fullEnquiryData?.finalCad?.Version || item?._originalData?.finalCad?.Version || item?.finalCad?.Version);
   const shouldShowFinalLookAndPlacement = isFinalVersion && has(ACTION.FINAL_LOOK) && has(ACTION.MOVE_TO_ORDER_PLACEMENT);
-  const shouldShowAdminPlacement = false;
   const shouldShowAdminProduction = has(ACTION.CHAT) && isProduction;
   const shouldShowCoralDesignerButtons = has(ACTION.UPLOAD_CORAL);
   const shouldShowCadDesignerButtons = has(ACTION.UPLOAD_CAD) || has(ACTION.UPLOAD_FINAL_CAD);
-  const shouldShowQuotationButtons = has(ACTION.VIEW_QUOTATION) || has(ACTION.MOVE_TO_APPROVAL) || has(ACTION.UPDATE_QUOTATION);
   const shouldShowAssignCoral = has(ACTION.ASSIGN) && !hasAssignedUser && (cardActions?.assignType === 'coral' || isJustCreated || (isCoralPending && isAssignPending));
   const shouldShowAssignCad = has(ACTION.ASSIGN) && !hasAssignedUser && (cardActions?.assignType === 'cad' || (isCadPending && isAssignPending));
   const shouldShowApprovalButtons = has(ACTION.ACCEPT_APPROVAL) || has(ACTION.REJECT_APPROVAL);
 
   const handleScroll = e => setCurrentIndex(Math.round(e.nativeEvent.contentOffset.x / screenWidth));
   const handleImagePress = useCallback(index => { setModalCurrentIndex(index); setImageModalVisible(true); }, []);
-  const closeImageModal = useCallback(() => { setImageModalVisible(false); setZoomedImageIndex(null); }, []);
-  const handleDoubleTap = useCallback(index => {
-    setZoomedImageIndex(prev => prev === index ? null : index);
+  const closeImageModal = useCallback(() => { setImageModalVisible(false); setIsModalZoomed(false); }, []);
+
+  const ZOOM_ON_THRESHOLD = 1.05;
+  const ZOOM_OFF_THRESHOLD = 1.02;
+
+  const handleZoomMove = useCallback(event => {
+    const scale = event?.scale ?? 1;
+    setIsModalZoomed(prev => {
+      if (!prev && scale >= ZOOM_ON_THRESHOLD) return true;
+      if (prev && scale <= ZOOM_OFF_THRESHOLD) return false;
+      return prev;
+    });
   }, []);
+
+  const updateModalIndex = useCallback((index, scrollList = true) => {
+    const boundedIndex = Math.max(0, Math.min((imagesData?.length || 1) - 1, index));
+    if (modalFlatListRef.current && scrollList && imagesData.length > 1) {
+      modalFlatListRef.current.scrollToIndex({ index: boundedIndex, animated: true });
+    }
+    requestAnimationFrame(() => {
+      setModalCurrentIndex(prev => prev === boundedIndex ? prev : boundedIndex);
+      setIsModalZoomed(false);
+    });
+  }, [imagesData]);
+
+  const handleModalPrev = useCallback(() => {
+    if (!imagesData || imagesData.length <= 1) return;
+    updateModalIndex(modalCurrentIndex - 1);
+  }, [imagesData, modalCurrentIndex, updateModalIndex]);
+
+  const handleModalNext = useCallback(() => {
+    if (!imagesData || imagesData.length <= 1) return;
+    updateModalIndex(modalCurrentIndex + 1);
+  }, [imagesData, modalCurrentIndex, updateModalIndex]);
+
+  const modalOnViewableItemsChanged = useCallback(({ viewableItems }) => {
+    if (viewableItems.length > 0) {
+      const nextIndex = viewableItems[0].index || 0;
+      if (nextIndex !== modalCurrentIndex) {
+        updateModalIndex(nextIndex, false);
+      }
+    }
+  }, [modalCurrentIndex, updateModalIndex]);
+
+  const modalViewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 50 }), []);
 
   const updateEnquiryStatus = async (updateData) => {
     if (!onUpdateEnquiry) {
@@ -392,23 +441,15 @@ export default function NewEnquiryCard({
     setIsActionLoading(true);
     try {
       const numericVersion = getVersionFromLast(activeDesignType);
-      await rejectDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: activeDesignType,
+        type: activeDesignType,
         version: String(numericVersion),
-        reason: updateReason.trim(),
+        data: {
+          IsApprovedVersion: false,
+          ReasonForRejection: updateReason.trim(),
+        },
       }).unwrap();
-      
-      if (activeDesignType === 'cad') {
-        const currentAssignedTo = resolveAssignedId(item?.AssignedTo || item?.assignedTo || fullSrc?.AssignedTo || fullSrc?.assignedTo);
-        await updateEnquiryDirect({
-          id: enquiryId,
-          Status: 'CAD',
-          CurrentStatus: 'CAD',
-          ClientId: item?.ClientId || item?.clientId,
-          ...(currentAssignedTo ? { AssignedTo: currentAssignedTo } : {}),
-        }).unwrap();
-      }
       closeQuotationActions();
       showAlert('Update Requested', 'Your revision request has been sent. The design will be updated.', 'success', [{ text: 'OK' }]);
     } catch (e) {
@@ -423,22 +464,14 @@ export default function NewEnquiryCard({
     setIsActionLoading(true);
     try {
       const numericVersion = getVersionFromLast(activeDesignType);
-      await rejectDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: activeDesignType,
+        type: activeDesignType,
         version: String(numericVersion),
-        reason: updateReason.trim(),
-      }).unwrap();
-      
-      const currentAssignedTo = resolveAssignedId(item?.AssignedTo || item?.assignedTo || fullSrc?.AssignedTo || fullSrc?.assignedTo);
-      const rejectStatus = activeDesignType === 'cad' ? STATUS.CAD : STATUS.CORAL;
-      await updateEnquiryDirect({
-        id: enquiryId,
-        Status: rejectStatus,
-        CurrentStatus: rejectStatus,
-        CurrentSubStatus: SUBSTATUS.RR,
-        ClientId: item?.ClientId || item?.clientId,
-        ...(currentAssignedTo ? { AssignedTo: currentAssignedTo } : {}),
+        data: {
+          IsApprovedVersion: false,
+          ReasonForRejection: updateReason.trim(),
+        },
       }).unwrap();
       closeQuotationActions();
       setIsRejectingApproval(false);
@@ -450,27 +483,50 @@ export default function NewEnquiryCard({
     }
   };
 
+  const handleSubmitApproval = async () => {
+    if (!updateReason.trim() || !activeDesignType) return;
+    setIsActionLoading(true);
+    try {
+      const acceptData = fullEnquiryData || item;
+      const src = acceptData?._originalData || acceptData;
+      const itemSrc = item?._originalData || item;
+      const rawCoral = src?.lastCoral || acceptData?.lastCoral || itemSrc?.lastCoral || item?.lastCoral;
+      const rawCad = src?.lastCad || acceptData?.lastCad || itemSrc?.lastCad || item?.lastCad;
+      const coralVersion = rawCoral && typeof rawCoral === 'object' ? String(rawCoral.Version || rawCoral.version || '') : String(rawCoral || '');
+      const cadVersion = rawCad && typeof rawCad === 'object' ? String(rawCad.Version || rawCad.version || '') : String(rawCad || '');
+      const approvedCoral = source?.approvedCoral || src?.approvedCoral || null;
+      const approvedCad = source?.approvedCad || src?.approvedCad || null;
+
+      if (!approvedCoral && !approvedCad && !coralVersion && !cadVersion) {
+        showAlert('Missing Data', 'No design versions found to approve.', 'error', [{ text: 'OK' }]);
+        setIsActionLoading(false);
+        return;
+      }
+
+      await handleAcceptApproval(acceptData, coralVersion, cadVersion, approvedCoral, approvedCad, updateReason.trim());
+      closeQuotationActions();
+      showAlert('Accepted', 'Design accepted successfully.', 'success', [{ text: 'OK' }]);
+    } catch (e) {
+      const errDetail = e?.data ? JSON.stringify(e.data) : e?.message || String(e);
+      showAlert('Failed', `Accept failed: ${errDetail}`, 'error', [{ text: 'OK' }]);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleRejectQuotation = async () => {
     if (!updateReason.trim() || !activeDesignType) return;
     setIsActionLoading(true);
     try {
       const numericVersion = getVersionFromLast(activeDesignType);
-      await rejectDesignVersion({
+      await updateAssetData({
         enquiryId,
-        designType: activeDesignType,
+        type: activeDesignType,
         version: String(numericVersion),
-        reason: updateReason.trim(),
-      }).unwrap();
-      
-      const currentStatus = item?.CurrentStatus || item?.currentStatus || '';
-      const currentAssignedTo = resolveAssignedId(item?.AssignedTo || item?.assignedTo || fullSrc?.AssignedTo || fullSrc?.assignedTo);
-      await updateEnquiryDirect({
-        id: enquiryId,
-        Status: currentStatus,
-        CurrentStatus: currentStatus,
-        CurrentSubStatus: SUBSTATUS.RR,
-        ClientId: item?.ClientId || item?.clientId,
-        ...(currentAssignedTo ? { AssignedTo: currentAssignedTo } : {}),
+        data: {
+          IsApprovedVersion: false,
+          ReasonForRejection: updateReason.trim(),
+        },
       }).unwrap();
       closeQuotationActions();
       showAlert('Rejected', 'Quotation rejected. Enquiry moved back for redo.', 'success', [{ text: 'OK' }]);
@@ -513,133 +569,137 @@ export default function NewEnquiryCard({
     setSelectedCadDesigner(null);
     setUpdateReason('');
     setIsRejectingQuotation(false);
+    setIsRejectingApproval(false);
+    setIsApproving(false);
     setActiveDesignType(null);
   };
 
   return (
-    <View style={[styles.mainContainer, { borderWidth: isPendingStatus ? 4 : 0, borderColor: pendingShadeColor }]}>
+    <View style={[styles.mainContainer, { borderWidth: isPendingStatus ? 2 : 0, borderColor: pendingShadeColor }]}>
 
-      {isExpandedAll && (
-        <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-          <View style={styles.ImageContainer}>
-            {imageLoading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={colors.primary} />
-              </View>
-            ) : imagesData.length > 0 ? (
-              <View style={styles.carouselContainer}>
-                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
-                  {imagesData.map((media, index) => (
-                    <TouchableOpacity key={`media-${index}`} activeOpacity={0.9} onPress={() => handleImagePress(index)}>
-                      <View style={styles.carouselImage}>
-                        {media.isVideo ? (
-                          <Video
-                            source={{ uri: media.uri }}
-                            style={StyleSheet.absoluteFill}
-                            resizeMode="cover"
-                            paused
-                            muted
-                            repeat={false}
-                          />
-                        ) : (
-                          <ImageBackground source={{ uri: media.uri }} style={StyleSheet.absoluteFill} />
-                        )}
-                        {media.isVideo && (
-                          <View style={styles.carouselPlayOverlay}>
-                            <Icon name="play-circle-filled" size={44} color="rgba(255,255,255,0.9)" />
-                          </View>
-                        )}
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                {imagesData.length > 1 && (
-                  <View style={styles.paginationContainer}>
-                    <Text style={styles.paginationText}>{currentIndex + 1} / {imagesData.length}</Text>
-                  </View>
-                )}
-              </View>
-            ) : (
-              <View style={styles.placeholderContainer}>
-                <Text style={styles.placeholderText}>No Image</Text>
-              </View>
-            )}
-          </View>
-        </TouchableOpacity>
-      )}
+      {/* ── Horizontal card body ── */}
+      <GHTouchableOpacity
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={200}
+        activeOpacity={0.8}
+        style={[styles.horzRow, isDragActive && styles.horzRowDragging]}
+      >
 
-      <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-        <View style={styles.titleRow}>
-          <Text style={styles.Heading} numberOfLines={1}>{item?.Name || 'Untitled Enquiry'}</Text>
-          <View style={styles.badgesRow}>
-            <View style={[styles.badge, { backgroundColor: getPriorityColor(priority) }]}>
-              <Text style={styles.badgeText}>{priority.toUpperCase()}</Text>
+        {/* Left: image thumbnail */}
+        <View style={styles.horzImageWrap}>
+          {imageLoading ? (
+            <View style={styles.horzImagePlaceholder}>
+              <ActivityIndicator size="small" color={colors.primary} />
             </View>
-            
-            <View style={[styles.badge, { backgroundColor: getStatusColor(status) }]}>
-              <Text style={styles.badgeText} numberOfLines={1}>
-                {status.toUpperCase()}
-                {isFinalVersion ? ' · Final Version' : ` · ${subStatus}` }
+          ) : imagesData.length > 0 ? (
+            <GHTouchableOpacity activeOpacity={0.9} onPress={() => handleImagePress(0)} style={{ flex: 1 }}>
+              {imagesData[0].isVideo ? (
+                <View style={styles.horzImagePlaceholder}>
+                  <Icon name="play-circle-filled" size={32} color="rgba(255,255,255,0.9)" />
+                </View>
+              ) : (
+                <Image source={{ uri: imagesData[0].uri }} style={styles.horzImage} resizeMode="cover" />
+              )}
+              {imagesData.length > 1 && (
+                <View style={styles.horzImageCount}>
+                  <Text style={styles.horzImageCountText}>1/{imagesData.length}</Text>
+                </View>
+              )}
+              {!!referenceImages[0]?.Description && !isImageExtension(referenceImages[0].Description) && (
+                <View style={styles.horzImgDesc}>
+                  <Text style={styles.horzImgDescText} numberOfLines={2}>{referenceImages[0].Description}</Text>
+                </View>
+              )}
+            </GHTouchableOpacity>
+          ) : (
+            <View style={styles.horzImagePlaceholder}>
+              <Icon name="image" size={28} color={colors.textLight} />
+            </View>
+          )}
+          {/* Priority badge */}
+          <View style={[styles.horzPriorityBadge, { backgroundColor: getPriorityColor(priority) }]}>
+            <Text style={styles.horzPriorityText}>{priority.toUpperCase()}</Text>
+          </View>
+        </View>
+
+        {/* Right: content */}
+        <View style={styles.horzContent}>
+          {/* Title row */}
+          <View style={styles.horzTitleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.horzTitle} numberOfLines={2}>{item?.Name || 'Untitled Enquiry'}</Text>
+              <View style={styles.styleNumRow}>
+                <Icon name="tag" size={11} color={colors.primaryDark} />
+                <Text style={styles.styleNumText} numberOfLines={1}>{item?.EnquiryCode || item?.Code || item?.StyleNumber || '—'}</Text>
+              </View>
+            </View>
+            <View style={styles.horzBadgesCol}>
+              <View style={[styles.badge, { backgroundColor: getStatusColor(status) }]}>
+                <Text style={styles.badgeText} numberOfLines={1}>
+                  {status.toUpperCase()}{isFinalVersion ? ' · Final' : subStatus ? ` · ${subStatus}` : ''}
+                </Text>
+              </View>
+              {isAdmin && (
+                <GHTouchableOpacity style={styles.moreOptionsButton} onPress={() => setShowMoreOptions(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Icon name="more-vert" size={16} color={colors.textSecondary} />
+                </GHTouchableOpacity>
+              )}
+              <GHTouchableOpacity
+                style={styles.shareIconBtn}
+                onPress={() => onShare?.(item)}
+                activeOpacity={0.75}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Icon name="share" size={18} color={colors.primaryDark} />
+              </GHTouchableOpacity>
+            </View>
+          </View>
+
+          {/* Meta: client · time */}
+          <View style={styles.metaRow}>
+            <Icon name="person" size={11} color={colors.textSecondary} />
+            <Text style={styles.metaText} numberOfLines={1}>{item?.clientName || 'Unknown'}</Text>
+            <Text style={styles.metaDot}>·</Text>
+            <Icon name="schedule" size={11} color={colors.textSecondary} />
+            <Text style={styles.metaText}>{formatDate(item?.CreatedDate) || '—'}</Text>
+          </View>
+
+          {(item?.ShippingDate || item?.deadline) ? (
+            <View style={styles.metaRow}>
+              <Icon name="local-shipping" size={11} color={colors.primaryDark} />
+              <Text style={styles.shipDateText} numberOfLines={1}>
+                Ship by {formatShipDate(item?.ShippingDate || item?.deadline)}
               </Text>
             </View>
-            {isAdmin && (
-              <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setShowMoreOptions(true)}>
-                <Icon name="more-vert" size={18} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-        {(fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection) ? (
-          <View style={{ backgroundColor: '#FEF2F2', padding: 8, borderRadius: 6, marginTop: 4, borderLeftWidth: 3, borderLeftColor: '#DC2626' , marginBottom:10}}>
-            <Text style={{ fontSize: 12, fontFamily: fonts.medium, color: '#DC2626', marginBottom: 2 }}>Rejection Message</Text>
-            <Text style={{ fontSize: 12, fontFamily: fonts.regular, color: '#7F1D1D' }}>
-              {fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection}
-            </Text>
-          </View>
-        ) : null}
-        <View style={styles.metaRow}>
-          <Icon name="person" size={12} color={colors.textSecondary} />
-          <Text style={styles.metaText}>{item?.clientName || 'Unknown'}</Text>
-          <Text style={styles.metaDot}>·</Text>
-          <Icon name="schedule" size={12} color={colors.textSecondary} />
-          <Text style={styles.metaText}>{formatDate(item?.CreatedDate) || '—'}</Text>
-          {onSummary && (
-            <TouchableOpacity style={styles.summaryBtn} onPress={() => onSummary(item)} activeOpacity={0.7}>
-              <Icon name="description" size={12} color={colors.primary} />
-              <Text style={styles.summaryBtnText}>Summary</Text>
-            </TouchableOpacity>
+          ) : null}
+
+          {/* Assigned chip */}
+          {hasAssignedUser && (
+            <View style={styles.AssignedRow}>
+              <Icon name="person-add" size={11} color={colors.background} />
+              <Text style={styles.AssignedName} numberOfLines={1}>
+                {assignedUserName || 'User assigned'}
+              </Text>
+            </View>
           )}
+
+          {/* Rejection message */}
+          {(fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection) ? (
+            <View style={styles.horzRejection}>
+              <Icon name="error" size={11} color="#DC2626" />
+              <Text style={styles.horzRejectionText} >
+                {fullEnquiryData?.lastCad?.ReasonForRejection || fullEnquiryData?.lastCoral?.ReasonForRejection || item?.lastCad?.ReasonForRejection || item?.lastCoral?.ReasonForRejection}
+              </Text>
+            </View>
+          ) : null}
+
         </View>
-        {hasAssignedUser && (
-          <View style={styles.AssignedRow}>
-            <Icon name="person-add" size={13} color={colors.background} />
-            <Text style={styles.AssignedName} numberOfLines={1}>
-              Assigned: {assignedUserName || 'User assigned'}
-            </Text>
-          </View>
-        )}
-      </TouchableOpacity>
+      </GHTouchableOpacity>
 
-      {isExpandedAll && (
-        <View style={styles.ButtonContainer}>
-          <View style={styles.remarkContainer}>
-            <Text style={styles.placeholderText2} numberOfLines={isRemarkExpanded ? undefined : 2}>
-              {item?.Remarks || 'No description available.'}
-            </Text>
-            {item?.Remarks && (item.Remarks.length > 60 || item.Remarks.includes('\n')) && (
-              <TouchableOpacity
-                style={styles.expandButton}
-                onPress={() => setIsRemarkExpanded(v => !v)}
-              >
-                <Icon
-                  name={isRemarkExpanded ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-                  size={22}
-                  color={colors.textSecondary}
-                />
-              </TouchableOpacity>
-            )}
-          </View>
-
+      {/* ── Always-visible bottom action bar ── */}
+      <View style={styles.bottomBar}>
+        <View>
         {shouldShowAssignCoral ? (
           <View style={styles.QuickButtonContainer}>
             <TouchableOpacity style={styles.ChatButton} onPress={() => navigation.navigate('ChatDetail', { enquiryId: item?.id || item?._id })}>
@@ -706,17 +766,7 @@ export default function NewEnquiryCard({
               <Icon name="chat" size={16} color={colors.primaryDark} />
               <Text style={styles.ChatButtonText}>Chat</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.QuickActionButton} onPress={async () => {
-              if (has(ACTION.UPLOAD_FINAL_CAD)) {
-                setIsActionLoading(true);
-                try {
-                  await handleUploadFinalCad(fullEnquiryData || item);
-                } catch (e) {
-                  console.log('[UploadFinalCAD] error setting IsFinalVersion:', e?.data?.message || e?.message);
-                } finally {
-                  setIsActionLoading(false);
-                }
-              }
+            <TouchableOpacity style={styles.QuickActionButton} onPress={() => {
               navigation.navigate('UploadDesign', { enquiryId: item?.id || item?._id, designType: 'cad', enquiry: item, isFinalVersion: has(ACTION.UPLOAD_FINAL_CAD) });
             }}>
               <Icon name="cloud-upload" size={16} color={colors.textWhite} />
@@ -757,102 +807,26 @@ export default function NewEnquiryCard({
               <Text style={styles.ChatButtonText}>View Quotation</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
+              style={[styles.QuickActionButton, { backgroundColor: '#F59E0B' }]}
               disabled={isActionLoading}
-              onPress={() => {
-                const targetType = (fullSrc?.CurrentStatus || item?.CurrentStatus) === STATUS.CORAL ? 'coral' : 'cad';
-                showAlert(
-                  'Confirm Move to Approval',
-                  'Are you sure you want to move this enquiry to Approval Pending?',
-                  'info',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Confirm', onPress: async () => {
-                      hideAlert();
-                      setIsActionLoading(true);
-                      try {
-                        const numericVersion = getVersionFromLast(targetType);
-                        await approveDesignVersion({
-                          enquiryId,
-                          designType: targetType,
-                          version: String(numericVersion),
-                          intent: 'forApproval',
-                        }).unwrap();
-                        showAlert('Success', 'Enquiry moved to Approval Pending.', 'success', [{ text: 'OK' }]);
-                      } catch (e) {
-                        showAlert('Failed', e?.data?.message || 'Could not move to approval.', 'error', [{ text: 'OK' }]);
-                      } finally {
-                        setIsActionLoading(false);
-                      }
-                    }},
-                  ]
-                );
-              }}
+              onPress={() => onFinalLook && onFinalLook(item)}
             >
-              {isActionLoading
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <><Icon name="check-circle" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Move to Approval</Text></>}
+              <Icon name="visibility" size={16} color={colors.textWhite} />
+              <View style={{ width: 4 }} />
+              <Text style={styles.QuickActionButtonText}>Check & Send</Text>
             </TouchableOpacity>
           </View>
         ) : shouldShowApprovalButtons ? (
           <View style={styles.QuickButtonContainer}>
-            <TouchableOpacity style={styles.ChatButton} onPress={() => onFinalLook && onFinalLook(item)}>
-              <Icon name="visibility" size={16} color={colors.primaryDark} />
-              <Text style={styles.ChatButtonText}>Final Look</Text>
-            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
               disabled={isActionLoading}
               onPress={() => {
-                const acceptData = fullEnquiryData || item;
-                const src = acceptData?._originalData || acceptData;
-                const itemSrc = item?._originalData || item;
-                const rawCoral = src?.lastCoral || acceptData?.lastCoral || itemSrc?.lastCoral || item?.lastCoral;
-                const rawCad = src?.lastCad || acceptData?.lastCad || itemSrc?.lastCad || item?.lastCad;
-                const coralVersion = rawCoral && typeof rawCoral === 'object' ? String(rawCoral.Version || rawCoral.version || '') : String(rawCoral || '');
-                const cadVersion = rawCad && typeof rawCad === 'object' ? String(rawCad.Version || rawCad.version || '') : String(rawCad || '');
-                const versionLabel = cadVersion
-                  ? `CAD Version ${cadVersion}`
-                  : coralVersion
-                    ? `Coral Version ${coralVersion}`
-                    : '';
-                const acceptMessage = versionLabel
-                  ? `Accept and approve this design? (${versionLabel})`
-                  : 'Accept and approve this design?';
-                showAlert(
-                'Confirm Accept',
-                acceptMessage,
-                'info',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                   { text: 'Confirm', onPress: async () => {
-                    hideAlert();
-                    setIsActionLoading(true);
-                    try {
-                      const approvedCoral = source?.approvedCoral || src?.approvedCoral || null;
-                      const approvedCad = source?.approvedCad || src?.approvedCad || null;
-
-                      console.log('[NewCard Accept] approvedCoral:', approvedCoral, 'approvedCad:', approvedCad, 'coralVersion:', coralVersion, 'cadVersion:', cadVersion);
-                      if (!approvedCoral && !approvedCad && !coralVersion && !cadVersion) {
-                        showAlert('Missing Data', 'No design versions found to approve.', 'error', [{ text: 'OK' }]);
-                        setIsActionLoading(false);
-                        return;
-                      }
-
-                      await handleAcceptApproval(acceptData, coralVersion, cadVersion, approvedCoral, approvedCad);
-                      showAlert('Accepted', 'Design accepted successfully.', 'success', [{ text: 'OK' }]);
-                    } catch (e) {
-                      const errDetail = e?.data
-                        ? JSON.stringify(e.data)
-                        : e?.message || String(e);
-                      console.log('[NewCard Accept] FAILED:', errDetail);
-                      showAlert('Failed', `Accept failed: ${errDetail}`, 'error', [{ text: 'OK' }]);
-                    } finally {
-                      setIsActionLoading(false);
-                    }
-                  }},
-                ]
-              );
+                setActiveDesignType(currentInferredDesignType);
+                setIsApproving(true);
+                setShowQuotationActions(true);
+                setShowReasonInput(true);
+                setUpdateReason('');
               }}
             >
               {isActionLoading
@@ -909,29 +883,9 @@ export default function NewEnquiryCard({
           </View>
         ) : isPlacementStage ? (
           <View style={styles.QuickButtonContainer}>
-            <TouchableOpacity
-              style={styles.ChatButton}
-              disabled={isActionLoading}
-              onPress={async () => {
-                setIsActionLoading(true);
-                try {
-                  const result = await generateExcelPdf(fullEnquiryData || item);
-                  if (result.success && result.html) {
-                    setExcelPdfHtml(result.html);
-                    setShowExcelPdf(true);
-                  } else {
-                    showAlert('Info', 'No data to display.', 'warning', [{ text: 'OK' }]);
-                  }
-                } catch (e) {
-                  showAlert('Failed', e?.message || 'Could not generate PDF.', 'error', [{ text: 'OK' }]);
-                } finally {
-                  setIsActionLoading(false);
-                }
-              }}
-            >
-              {isActionLoading
-                ? <ActivityIndicator size="small" color={colors.primaryDark} />
-                : <><Icon name="picture-as-pdf" size={16} color={colors.primaryDark} /><Text style={styles.ChatButtonText}>View PDF</Text></>}
+            <TouchableOpacity style={styles.ChatButton} onPress={() => onFinalLook && onFinalLook(item)}>
+              <Icon name="visibility" size={16} color={colors.primaryDark} />
+              <Text style={styles.ChatButtonText}>Final Look</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
@@ -961,15 +915,7 @@ export default function NewEnquiryCard({
               <Icon name="chat" size={16} color={colors.primaryDark} />
               <Text style={styles.ChatButtonText}>Chat</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.QuickActionButton} onPress={async () => {
-              setIsActionLoading(true);
-              try {
-                await handleUploadFinalCad(fullEnquiryData || item);
-              } catch (e) {
-                console.log('[UploadFinalCAD] error setting IsFinalVersion:', e?.data?.message || e?.message);
-              } finally {
-                setIsActionLoading(false);
-              }
+            <TouchableOpacity style={styles.QuickActionButton} onPress={() => {
               navigation.navigate('UploadDesign', { enquiryId: item?.id || item?._id, designType: 'cad', enquiry: item, isFinalVersion: true });
             }}>
               <Icon name="cloud-upload" size={16} color={colors.textWhite} />
@@ -1002,7 +948,7 @@ export default function NewEnquiryCard({
           </View>
         ) : null}
         </View>
-      )}
+      </View>
 
       <Modal
         visible={showQuotationActions}
@@ -1010,6 +956,7 @@ export default function NewEnquiryCard({
         animationType="slide"
         onRequestClose={closeQuotationActions}
       >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <TouchableOpacity
           style={styles.qaOverlay}
           activeOpacity={1}
@@ -1019,7 +966,7 @@ export default function NewEnquiryCard({
             <View style={styles.qaHeader}>
               <View style={styles.qaDragHandle} />
               <Text style={styles.qaTitle}>
-                {showReasonInput ? 'Request a Design Update' : showCadPicker ? 'Assign CAD Designer' : 'Quotation Actions'}
+                {showReasonInput ? (isApproving ? 'Approve Design' : 'Request a Design Update') : showCadPicker ? 'Assign CAD Designer' : 'Quotation Actions'}
               </Text>
               <Text style={styles.qaSubtitle} numberOfLines={1}>
                 {item?.Name || ''}
@@ -1167,13 +1114,13 @@ export default function NewEnquiryCard({
             ) : (
               <View style={styles.qaReasonWrap}>
                 <Text style={styles.qaReasonLabel}>
-                  What changes are needed?
+                  {isApproving ? 'Approval remarks...' : 'What changes are needed?'}
                 </Text>
                 <TextInput
                   style={styles.qaReasonInput}
                   value={updateReason}
                   onChangeText={setUpdateReason}
-                  placeholder="Add a reason to update the version..."
+                  placeholder={isApproving ? 'Add approval remarks...' : 'Add a reason to update the version...'}
                   placeholderTextColor={colors.textSecondary}
                   multiline
                   numberOfLines={4}
@@ -1182,8 +1129,7 @@ export default function NewEnquiryCard({
                 <View style={styles.qaReasonActions}>
                   <TouchableOpacity
                     style={styles.qaReasonBack}
-                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); }}
-                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); }}
+                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); setIsApproving(false); }}
                     disabled={isActionLoading}
                     activeOpacity={0.8}
                   >
@@ -1195,8 +1141,7 @@ export default function NewEnquiryCard({
                       styles.qaReasonSubmit,
                       (!updateReason.trim() || isActionLoading) && { opacity: 0.4 },
                     ]}
-                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : handleRequestUpdate}
-                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : handleRequestUpdate}
+                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : isApproving ? handleSubmitApproval : handleRequestUpdate}
                     disabled={!updateReason.trim() || isActionLoading}
                     activeOpacity={0.8}
                   >
@@ -1206,7 +1151,7 @@ export default function NewEnquiryCard({
                       <>
                         <Icon name="send" size={15} color="#fff" />
                         <View style={{ width: 4 }} />
-                        <Text style={styles.qaReasonSubmitText}>Send Request</Text>
+                        <Text style={styles.qaReasonSubmitText}>{isApproving ? 'Approve' : 'Send Request'}</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -1219,6 +1164,16 @@ export default function NewEnquiryCard({
             </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
+
+        <BrandedAlert
+          visible={alertCfg.visible}
+          title={alertCfg.title}
+          message={alertCfg.message}
+          type={alertCfg.type}
+          buttons={alertCfg.buttons}
+          onClose={hideAlert}
+        />
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -1234,14 +1189,6 @@ export default function NewEnquiryCard({
         >
           <View style={styles.dropdownModalContent}>
             <Text style={styles.dropdownModalTitle}>Options</Text>
-            {onSummary && (
-              <TouchableOpacity
-                style={styles.dropdownModalItem}
-                onPress={() => { setShowMoreOptions(false); onSummary(item); }}
-              >
-                <Text style={styles.dropdownModalItemText}>View Summary</Text>
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
               style={styles.dropdownModalItem}
               onPress={handleDeleteEnquiry}
@@ -1261,41 +1208,107 @@ export default function NewEnquiryCard({
             <Icon name="close" size={24} color={colors.textWhite} />
           </TouchableOpacity>
           {imagesData.length > 1 && (
-            <View style={styles.modalImageCounter}>
-              <Text style={styles.modalImageCounterText}>{modalCurrentIndex + 1} / {imagesData.length}</Text>
+            <>
+              <View style={styles.modalImageCounter}>
+                <Text style={styles.modalImageCounterText}>{modalCurrentIndex + 1} / {imagesData.length}</Text>
+              </View>
+              <FlatList
+                ref={modalFlatListRef}
+                data={imagesData}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                initialScrollIndex={modalCurrentIndex}
+                onViewableItemsChanged={modalOnViewableItemsChanged}
+                viewabilityConfig={modalViewabilityConfig}
+                getItemLayout={(_, index) => ({ length: screenWidth, offset: screenWidth * index, index })}
+                scrollEnabled={!isModalZoomed}
+                onMomentumScrollEnd={() => setIsModalZoomed(false)}
+                onScrollBeginDrag={() => setIsModalZoomed(false)}
+                keyExtractor={(_, index) => `modal-img-${index}`}
+                renderItem={({ item: media, index }) => {
+                  const imgComment = referenceImages[index]?.Description || referenceImages[index]?.description || null;
+                  return (
+                    <View style={styles.modalImageContainer}>
+                      {media.isVideo ? (
+                        <ModalVideoItem uri={media.uri} />
+                      ) : (
+                        <ImageZoom
+                          cropWidth={screenWidth}
+                          cropHeight={screenHeight}
+                          imageWidth={screenWidth}
+                          imageHeight={screenHeight}
+                          enableCenterFocus
+                          useNativeDriver
+                          enableSwipeDown={false}
+                          pinchToZoom
+                          panToMove={isModalZoomed}
+                          onMove={handleZoomMove}
+                        >
+                          <Image source={{ uri: media.uri }} style={styles.fullscreenImage} resizeMode="contain" />
+                        </ImageZoom>
+                      )}
+                      {!!imgComment && !isImageExtension(imgComment) && (
+                        <View style={styles.modalImgComment}>
+                          <Icon name="comment" size={12} color="#fff" />
+                          <Text style={styles.modalImgCommentText}>{imgComment}</Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                }}
+              />
+              <TouchableOpacity
+                style={[styles.modalNavButton, styles.modalNavButtonLeft, modalCurrentIndex === 0 && styles.modalNavButtonDisabled]}
+                onPress={handleModalPrev}
+                disabled={modalCurrentIndex === 0}
+                activeOpacity={0.8}
+              >
+                <Icon name="chevron-left" size={28} color={colors.textWhite} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalNavButton, styles.modalNavButtonRight, modalCurrentIndex === imagesData.length - 1 && styles.modalNavButtonDisabled]}
+                onPress={handleModalNext}
+                disabled={modalCurrentIndex === imagesData.length - 1}
+                activeOpacity={0.8}
+              >
+                <Icon name="chevron-right" size={28} color={colors.textWhite} />
+              </TouchableOpacity>
+              <View style={styles.modalPaginationContainer}>
+                {imagesData.map((_, index) => (
+                  <View key={index} style={[styles.modalPaginationDot, index === modalCurrentIndex && styles.modalPaginationDotActive]} />
+                ))}
+              </View>
+            </>
+          )}
+          {imagesData.length === 1 && (
+            <View style={styles.modalImageContainer}>
+              {imagesData[0]?.isVideo ? (
+                <ModalVideoItem uri={imagesData[0].uri} />
+              ) : (
+                <ImageZoom
+                  cropWidth={screenWidth}
+                  cropHeight={screenHeight}
+                  imageWidth={screenWidth}
+                  imageHeight={screenHeight}
+                  enableCenterFocus
+                  useNativeDriver
+                  enableSwipeDown={false}
+                  pinchToZoom
+                  panToMove={isModalZoomed}
+                  onMove={handleZoomMove}
+                >
+                  <Image source={{ uri: imagesData[0].uri }} style={styles.fullscreenImage} resizeMode="contain" />
+                </ImageZoom>
+              )}
+              {!!referenceImages[0]?.Description && !isImageExtension(referenceImages[0].Description) && (
+                <View style={styles.modalImgComment}>
+                  <Icon name="comment" size={12} color="#fff" />
+                  <Text style={styles.modalImgCommentText}>{referenceImages[0].Description}</Text>
+                </View>
+              )}
             </View>
           )}
-          <FlatList
-            ref={modalFlatListRef}
-            data={imagesData}
-            horizontal pagingEnabled showsHorizontalScrollIndicator={false}
-            initialScrollIndex={modalCurrentIndex}
-            getItemLayout={(_, index) => ({ length: screenWidth, offset: screenWidth * index, index })}
-            onMomentumScrollEnd={e => {
-              const index = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
-              setModalCurrentIndex(index);
-              setZoomedImageIndex(null);
-            }}
-            scrollEventThrottle={16}
-            scrollEnabled={zoomedImageIndex === null}
-            keyExtractor={(_, index) => `modal-img-${index}`}
-            renderItem={({ item: media, index }) => (
-              <View style={styles.modalImageContainer}>
-                {media.isVideo ? (
-                  <ModalVideoItem uri={media.uri} />
-                ) : (
-                  <TouchableOpacity activeOpacity={1} onPress={() => handleDoubleTap(index)} style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Image source={{ uri: media.uri }} style={[styles.fullscreenImage, zoomedImageIndex === index && styles.fullscreenImageZoomed]} resizeMode="contain" />
-                  </TouchableOpacity>
-                )}
-                {!media.isVideo && zoomedImageIndex === index && (
-                  <View style={styles.zoomHintContainer}>
-                    <Text style={styles.zoomHintText}>Tap again to zoom out</Text>
-                  </View>
-                )}
-              </View>
-            )}
-          />
         </View>
       </Modal>
 
@@ -1374,23 +1387,6 @@ export default function NewEnquiryCard({
         </TouchableOpacity>
       </Modal>
 
-      <Modal
-        visible={showExcelPdf}
-        transparent
-        animationType="slide"
-        onRequestClose={() => { setShowExcelPdf(false); setExcelPdfHtml(null); }}
-      >
-        <View style={{ flex: 1, backgroundColor: '#fff' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-            <Text style={{ fontFamily: fonts.semiBold, fontSize: 15, color: colors.textPrimary }}>Order Data</Text>
-            <TouchableOpacity onPress={() => { setShowExcelPdf(false); setExcelPdfHtml(null); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Icon name="close" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-          {excelPdfHtml && <PdfViewer html={excelPdfHtml} style={{ flex: 1 }} />}
-        </View>
-      </Modal>
-
       <BrandedAlert
         visible={alertCfg.visible}
         title={alertCfg.title}
@@ -1406,36 +1402,37 @@ export default function NewEnquiryCard({
 const getStatusColor = status => {
   const statusColors = {
     'enquiry created': '#F59E0B',
-    'coral': '#8B5CF6',
-    'cad': '#3B82F6',
-    'approved cad': '#10B981',
-    'quotation': '#0EA5E9',
-    'design approval pending': '#F97316',
-    'order placement': '#6366F1',
-    'production': '#D97706',
-    'shipped': '#059669',
-    'completed': '#10B981',
-    'rejected': '#EF4444',
-    pending: '#F59E0B',
-    approval_pending: '#F97316',
-    approved_cad: '#10B981',
-    cad: '#3B82F6',
     coral: '#8B5CF6',
+    cad: '#3B82F6',
+    'approved cad': '#10B981',
+    approved_cad: '#10B981',
+    quotation: '#0EA5E9',
+    'design approval pending': '#F97316',
+    approval_pending: '#F97316',
+    'order placement': '#6366F1',
     order_placement: '#6366F1',
     production: '#D97706',
     shipped: '#059669',
+    completed: '#10B981',
+    rejected: '#EF4444',
+    pending: '#F59E0B',
     in_progress: '#6B7280',
   };
   return statusColors[status] || '#6B7280';
 };
 
 const getPriorityColor = priority => {
+  const p = (priority || '').toLowerCase().trim();
   const priorityColors = {
     high: '#EF4444',
+    'super high': '#EF4444',
     medium: '#F59E0B',
     low: '#10B981',
+    normal: '#10B981',
+    urgent: '#EF4444',
+    'super urgent': '#EF4444',
   };
-  return priorityColors[priority] || '#6B7280';
+  return priorityColors[p] || '#6B7280';
 };
 
 const formatDate = dateString => {
@@ -1455,6 +1452,17 @@ const formatDate = dateString => {
   }
 };
 
+const formatShipDate = dateString => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
 const styles = StyleSheet.create({
   mainContainer: {
     backgroundColor: colors.cardBackground,
@@ -1462,24 +1470,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
     marginBottom: 8,
     padding: 10,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
     shadowRadius: 3,
     elevation: 2,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  badgesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flexShrink: 0,
   },
   badge: {
     paddingHorizontal: 6,
@@ -1490,20 +1486,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textWhite,
     fontFamily: fonts.medium,
-  },
-  Heading: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: colors.textPrimary,
-    flex: 1,
-    marginRight: 6,
-  },
-  remarkText: {
-    fontSize: 12,
-    color: colors.textLight,
-    fontFamily: fonts.regular,
-    marginBottom: 6,
-    lineHeight: 16,
   },
   metaRow: {
     flexDirection: 'row',
@@ -1520,48 +1502,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textSecondary,
   },
-  summaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  summaryBtnText: {
-    fontSize: 10,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  summaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  summaryBtnText: {
-    fontSize: 10,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  assignedChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  assignedChipText: {
-    fontSize: 10,
-    color: colors.background,
+  shipDateText: {
+    fontSize: 11,
+    color: colors.primaryDark,
     fontFamily: fonts.medium,
   },
   moreOptionsButton: {
@@ -1574,46 +1517,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  toggleBtn: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
-  toggleTrack: { width: 36, height: 20, borderRadius: 10, backgroundColor: colors.border, justifyContent: 'center', paddingHorizontal: 2 },
-  toggleTrackOn: { backgroundColor: colors.primary },
-  toggleThumb: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#fff', elevation: 2, alignSelf: 'flex-start' },
-  toggleThumbOn: { alignSelf: 'flex-end' },
-  ImageContainer: { width: '100%', padding: 10 },
-  StatusContainerStart: { marginTop: 5, flexDirection: 'row', justifyContent: 'space-between', marginLeft: 5 },
-  PriortyContainer: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, flexShrink: 1, maxWidth: '45%' },
-  PriorityText: { fontSize: 12, color: colors.textWhite, fontFamily: fonts.regular },
-  statusContainer: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, flexShrink: 1, maxWidth: 120 },
-  StatusText: { fontSize: 12, color: colors.textWhite, fontFamily: fonts.regular },
-  StatusContainerEnd: { marginRight: 5, flexDirection: 'row', alignItems: 'center', flexShrink: 1, maxWidth: '55%' },
-  loadingContainer: { width: '100%', height: 200, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.backgroundSecondary },
-  placeholderContainer: { width: '100%', height: 200, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.backgroundSecondary },
-  placeholderText: { fontSize: 14, color: colors.textLight, fontFamily: fonts.regular, paddingHorizontal: 10 },
-  carouselContainer: { width: '100%', height: 200, position: 'relative' },
-  carouselImage: { width: Dimensions.get('window').width - 60, height: 200, marginRight: 3, overflow: 'hidden', backgroundColor: '#000' },
-  carouselPlayOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
-  paginationContainer: { position: 'absolute', bottom: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  paginationText: { fontSize: 12, color: colors.textWhite, fontFamily: fonts.medium },
-  ButtonContainer: { borderTopColor: colors.border, borderTopWidth: 1, marginTop: 10, paddingTop: 8, flexDirection: 'column' },
-  remarkContainer: {
-    marginBottom: 8,
-  },
-  placeholderText2: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
-  },
-  expandButton: {
-    alignSelf: 'flex-end',
-    marginTop: 2,
-    padding: 2,
-  },
-  ClientTimeContainer: { flexDirection: 'row', marginBottom: 5, justifyContent: 'space-between' },
-  ClientRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  TimeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  ClientName: { fontFamily: fonts.medium, fontSize: 14, color: colors.textSecondary },
-  ClientTime: { fontFamily: fonts.regular, fontSize: 12, color: colors.textSecondary },
   AssignedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, paddingHorizontal: 6, paddingVertical: 3, backgroundColor: colors.primary, borderRadius: 6, alignSelf: 'flex-start', marginBottom: 9 },
   AssignedName: { fontFamily: fonts.medium, fontSize: 12, color: colors.textWhite, flexShrink: 1 },
   QuickButtonContainer: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
@@ -1621,19 +1524,19 @@ const styles = StyleSheet.create({
   ChatButtonText: { fontFamily: fonts.medium, fontSize: 14, color: colors.primaryDark },
   QuickActionButton: { flex: 1, backgroundColor: colors.primaryDark, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, borderRadius: 5, paddingVertical: 8, paddingHorizontal: 12 },
   QuickActionButtonText: { fontFamily: fonts.medium, fontSize: 14, color: colors.textWhite, textAlign: 'center' },
-  DropdownButton: { flex: 1, backgroundColor: colors.background, borderColor: colors.primaryDark, borderWidth: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, borderRadius: 5, paddingVertical: 8, paddingHorizontal: 8 },
-  DropdownButtonText: { fontFamily: fonts.medium, fontSize: 13, color: colors.primaryDark },
-  ActionButton: { flex: 1, backgroundColor: colors.primaryDark, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, borderRadius: 5, paddingVertical: 8, paddingHorizontal: 8 },
-  ActionButtonText: { fontFamily: fonts.medium, fontSize: 13, color: colors.textWhite },
   fullscreenImageBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   fullscreenImageCloseButton: { position: 'absolute', top: 40, right: 20, padding: 12, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 1000 },
   modalImageCounter: { position: 'absolute', top: 50, left: 20, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, zIndex: 10 },
   modalImageCounterText: { color: colors.textWhite, fontSize: 14, fontFamily: fonts.medium },
+  modalNavButton: { position: 'absolute', top: '50%', marginTop: -28, backgroundColor: 'rgba(0,0,0,0.5)', padding: 12, borderRadius: 28, zIndex: 15 },
+  modalNavButtonLeft: { left: 12 },
+  modalNavButtonRight: { right: 12 },
+  modalNavButtonDisabled: { opacity: 0.35 },
+  modalPaginationContainer: { position: 'absolute', bottom: 40, flexDirection: 'row', alignSelf: 'center', gap: 6, zIndex: 10 },
+  modalPaginationDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
+  modalPaginationDotActive: { backgroundColor: '#fff', width: 10, height: 10, borderRadius: 5 },
   modalImageContainer: { width: Dimensions.get('window').width, height: Dimensions.get('window').height, justifyContent: 'center', alignItems: 'center' },
   fullscreenImage: { width: Dimensions.get('window').width, height: Dimensions.get('window').height * 0.8 },
-  fullscreenImageZoomed: { width: Dimensions.get('window').width * 2.5, height: Dimensions.get('window').height * 2.5 },
-  zoomHintContainer: { position: 'absolute', bottom: 100, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
-  zoomHintText: { color: colors.textWhite, fontSize: 12, fontFamily: fonts.medium },
   modalVideoPlayOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
   modalOverlay: {
     flex: 1,
@@ -1828,5 +1731,151 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: colors.textSecondary,
+  },
+  // ── Horizontal card styles ──────────────────────────────────────────────
+  horzRowDragging: {
+    backgroundColor: '#fff',
+    opacity: 0.95,
+  },
+  horzRow: {
+    flexDirection: 'row',
+    minHeight: 130,
+  },
+  horzImageWrap: {
+    width: 110,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: colors.backgroundSecondary,
+    flexShrink: 0,
+    position: 'relative',
+  },
+  horzImage: {
+    width: '100%',
+    height: '100%',
+    minHeight: 130,
+  },
+  horzImagePlaceholder: {
+    flex: 1,
+    minHeight: 130,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundSecondary,
+  },
+  horzImageCount: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  horzImageCountText: {
+    color: '#fff',
+    fontSize: 9,
+    fontFamily: fonts.medium,
+  },
+  horzPriorityBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  horzPriorityText: {
+    fontSize: 9,
+    color: '#fff',
+    fontFamily: fonts.bold,
+  },
+  horzContent: {
+    flex: 1,
+    paddingLeft: 10,
+    justifyContent: 'flex-start',
+    gap: 3,
+  },
+  horzTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  horzTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: colors.textPrimary,
+    flex: 1,
+    lineHeight: 18,
+  },
+  horzBadgesCol: {
+    alignItems: 'flex-end',
+    gap: 2,
+    flexShrink: 0,
+  },
+  horzRejection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 2,
+  },
+  horzRejectionText: {
+    fontSize: 14,
+    fontFamily: fonts.medium,
+    color: '#DC2626',
+    flex: 1,
+    lineHeight: 14,
+  },
+  horzImgDesc: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(220,38,38,0.88)',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  horzImgDescText: {
+    color: '#fff',
+    fontSize: 9,
+    fontFamily: fonts.medium,
+    lineHeight: 13,
+  },
+  styleNumRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
+  styleNumText: { fontSize: 11, fontFamily: fonts.medium, color: colors.primaryDark },
+  shareIconBtn: {
+    padding: 2,
+    borderRadius: 5,
+    marginTop: 5,
+
+  },
+  modalImgComment: {
+    position: 'absolute',
+    bottom: 130,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(220,38,38,0.88)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  modalImgCommentText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    flex: 1,
+    lineHeight: 17,
+  },
+  bottomBar: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    marginTop: 10,
+    paddingTop: 8,
   },
 });

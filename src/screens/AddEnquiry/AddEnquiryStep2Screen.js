@@ -28,6 +28,7 @@ import {
   isEnquiryClientUser,
 } from '../../components/enquiry/EnquirySummaryCard';
 import BrandedAlert from '../../components/common/BrandedAlert';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 const normalizeEnquiryChat = (chat) => chat?._originalData || chat;
 
@@ -57,10 +58,7 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
   const { user } = useAuth();
   const [selectedImages, setSelectedImages] = useState([]);
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
   
   // Fetch and cache users for name resolution
   useUsers();
