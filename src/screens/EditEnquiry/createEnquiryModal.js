@@ -30,6 +30,16 @@ import { useSelector } from 'react-redux';
 import { buildStoneCategoryMap, getStoneCategory, getStoneCategoryLabel } from '../../utils/stoneTypeMapping';
 import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
+const toArray = value =>
+  (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean);
+
+const mergeUnique = (...sources) =>
+  Array.from(new Set(sources.flatMap(toArray)));
+
+const MULTI_SELECT_FIELDS = ['Metal.Qualities', 'StoneTypes'];
+
+// StoneTypes has its own grouped picker below the missing-fields list
+const SELF_RENDERED_FIELDS = ['StoneTypes'];
 
 export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated, onUpdate, route }) {
   const { user } = useAuth();
@@ -229,6 +239,7 @@ const generateStyleNumber = (qty, category) => {
     if (isAIParsingFlow && dynamicMissingFields.length > 0) {
       const unfilled = dynamicMissingFields.find(field => {
         const value = missingFieldsData[field.field];
+        if (MULTI_SELECT_FIELDS.includes(field.field)) return toArray(value).length === 0;
         return value === undefined || value === null || value === '';
       });
       if (unfilled) {
@@ -250,14 +261,15 @@ const generateStyleNumber = (qty, category) => {
           Quantity: missingFieldsData.Quantity || parsedData?.Quantity || 1,
           Metal: {
             Color: missingFieldsData["Metal.Color"] || parsedData?.Metal?.Color || null,
-            Quality: missingFieldsData["Metal.Quality"] || parsedData?.Metal?.Quality || '10K',
+            Qualities: mergeUnique(
+              missingFieldsData["Metal.Qualities"],
+              parsedData?.Metal?.Qualities,
+            ),
           },
-          StoneType: missingFieldsData.StoneType || parsedData?.StoneType || null,
-          StoneTypes: Array.from(new Set([
-            ...(Array.isArray(missingFieldsData.StoneTypes) ? missingFieldsData.StoneTypes : []),
-            ...(missingFieldsData.StoneType ? [missingFieldsData.StoneType] : []),
-            ...(Array.isArray(parsedData?.StoneTypes) ? parsedData.StoneTypes : []),
-          ].filter(Boolean))),
+          StoneTypes: mergeUnique(
+            missingFieldsData.StoneTypes,
+            parsedData?.StoneTypes,
+          ),
           Stamping: missingFieldsData.Stamping || parsedData?.Stamping || null,
           Remarks: missingFieldsData.Remarks || parsedData?.Remarks || '',
           Category: missingFieldsData.Category || parsedData?.Category || 'Ring',
@@ -293,8 +305,7 @@ const generateStyleNumber = (qty, category) => {
           Status: 'Enquiry Created',
           Priority: 'Normal',
           Quantity: 1,
-          Metal: { Color: null, Quality: '10K' },
-          StoneType: null,
+          Metal: { Color: null, Qualities: [] },
           StoneTypes: [],
           Stamping: null,
           Remarks: '',
@@ -374,8 +385,8 @@ const generateStyleNumber = (qty, category) => {
       { label: 'Category', value: data.Category },
       { label: 'Quantity', value: data.Quantity },
       { label: 'Metal Color', value: data.Metal?.Color },
-      { label: 'Metal Quality', value: data.Metal?.Quality },
-      { label: 'Stone Type', value: data.StoneTypes && data.StoneTypes.length ? data.StoneTypes.join(', ') : data.StoneType },
+      { label: 'Metal Quality', value: toArray(data.Metal?.Qualities).join(', ') },
+      { label: 'Stone Type', value: toArray(data.StoneTypes).join(', ') },
       { label: 'Stamping', value: data.Stamping },
       { label: 'Budget', value: data.Budget },
       { label: 'Remarks', value: data.Remarks },
@@ -402,11 +413,14 @@ const generateStyleNumber = (qty, category) => {
   };
 
   const renderMissingFields = () => {
-    if (dynamicMissingFields.length === 0) return null;
+    const fields = dynamicMissingFields.filter(
+      f => !SELF_RENDERED_FIELDS.includes(f.field),
+    );
+    if (fields.length === 0) return null;
     return (
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Complete Missing Details</Text>
-        {dynamicMissingFields.map((item, index) => {
+        {fields.map((item, index) => {
           if (item.field === 'ClientId' && item.options.length > 0) {
             return (
               <View key={index} style={styles.tileGroup}>
@@ -423,6 +437,36 @@ const generateStyleNumber = (qty, category) => {
                         onPress={() => setMissingFieldsData(prev => ({ ...prev, [item.field]: option.value }))}
                       >
                         <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{clientName}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            );
+          } else if (MULTI_SELECT_FIELDS.includes(item.field) && item.options.length > 0) {
+            const selectedValues = toArray(missingFieldsData[item.field]);
+            return (
+              <View key={index} style={styles.tileGroup}>
+                <Text style={styles.dropdownLabel}>{item.label}</Text>
+                <View style={styles.chipRowWrap}>
+                  {item.options.map(option => {
+                    const selected = selectedValues.includes(option.value);
+                    return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[styles.choiceChip, selected && styles.choiceChipActive]}
+                        activeOpacity={0.85}
+                        onPress={() => setMissingFieldsData(prev => {
+                          const current = toArray(prev[item.field]);
+                          return {
+                            ...prev,
+                            [item.field]: current.includes(option.value)
+                              ? current.filter(v => v !== option.value)
+                              : [...current, option.value],
+                          };
+                        })}
+                      >
+                        <Text style={[styles.choiceChipLabel, selected && styles.choiceChipLabelActive]}>{option.label}</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -555,8 +599,8 @@ const generateStyleNumber = (qty, category) => {
           <TextInput style={[styles.parsedDataLabel, styles.editableField]} value={missingFieldsData.Name !== undefined ? missingFieldsData.Name : (parsedData.Name || '')} onChangeText={value => setMissingFieldsData(prev => ({ ...prev, Name: value }))} placeholder="Name" />
           {!isClient && <Text style={styles.parsedDataLabel}>Client: <Text style={styles.parsedDataValue}>{displayClientName}</Text></Text>}
           <Text style={styles.parsedDataLabel}>Category: <Text style={styles.parsedDataValue}>{parsedData.Category || 'Not specified'}</Text></Text>
-          <Text style={styles.parsedDataLabel}>Metal: <Text style={styles.parsedDataValue}>{parsedData.Metal?.Quality || ''} {parsedData.Metal?.Color || ''}</Text></Text>
-          <Text style={styles.parsedDataLabel}>Stone Type: <Text style={styles.parsedDataValue}>{parsedData.StoneType || 'Not specified'}</Text></Text>
+          <Text style={styles.parsedDataLabel}>Metal: <Text style={styles.parsedDataValue}>{toArray(parsedData.Metal?.Qualities).join(', ')} {parsedData.Metal?.Color || ''}</Text></Text>
+          <Text style={styles.parsedDataLabel}>Stone Type: <Text style={styles.parsedDataValue}>{toArray(parsedData.StoneTypes).join(', ') || 'Not specified'}</Text></Text>
           <Text style={styles.parsedDataLabel}>Priority: <Text style={styles.parsedDataValue}>{parsedData.Priority || 'Normal'}</Text></Text>
           <Text style={styles.parsedDataLabel}>Status: <Text style={styles.parsedDataValue}>{parsedData.Status || 'Not specified'}</Text></Text>
         </View>
