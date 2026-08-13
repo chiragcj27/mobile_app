@@ -33,9 +33,6 @@ import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 const toArray = value =>
   (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean);
 
-const mergeUnique = (...sources) =>
-  Array.from(new Set(sources.flatMap(toArray)));
-
 const MULTI_SELECT_FIELDS = ['Metal.Qualities', 'StoneTypes'];
 
 // StoneTypes has its own grouped picker below the missing-fields list
@@ -176,9 +173,12 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       setParsedData(result.parsed);
       const missing = (result.missingFields || []).filter(f => f.field !== 'ClientId');
       setDynamicMissingFields(missing);
-      if (preSelectedClientIdResolved) {
-        setMissingFieldsData(prev => ({ ...prev, ClientId: preSelectedClientIdResolved }));
-      }
+      setMissingFieldsData(prev => ({
+        ...prev,
+        StoneTypes: toArray(result.parsed?.StoneTypes),
+        'Metal.Qualities': toArray(result.parsed?.Metal?.Qualities),
+        ...(preSelectedClientIdResolved ? { ClientId: preSelectedClientIdResolved } : {}),
+      }));
       setTextSubmitted(true);
     } catch (error) {
       showAlert(
@@ -261,15 +261,9 @@ const generateStyleNumber = (qty, category) => {
           Quantity: missingFieldsData.Quantity || parsedData?.Quantity || 1,
           Metal: {
             Color: missingFieldsData["Metal.Color"] || parsedData?.Metal?.Color || null,
-            Qualities: mergeUnique(
-              missingFieldsData["Metal.Qualities"],
-              parsedData?.Metal?.Qualities,
-            ),
+            Qualities: toArray(missingFieldsData["Metal.Qualities"]),
           },
-          StoneTypes: mergeUnique(
-            missingFieldsData.StoneTypes,
-            parsedData?.StoneTypes,
-          ),
+          StoneTypes: toArray(missingFieldsData.StoneTypes),
           Stamping: missingFieldsData.Stamping || parsedData?.Stamping || null,
           Remarks: missingFieldsData.Remarks || parsedData?.Remarks || '',
           Category: missingFieldsData.Category || parsedData?.Category || 'Ring',
