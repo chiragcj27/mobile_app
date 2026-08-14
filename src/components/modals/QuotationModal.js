@@ -531,6 +531,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const [pricingEntries, setPricingEntries] = useState([]);
   const [activeEntryIndex, setActiveEntryIndex] = useState(0);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
+  const [qualityPickerIdx, setQualityPickerIdx] = useState(0);
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdf, setShowPdf] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
@@ -539,7 +540,6 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const [addStoneType, setAddStoneType] = useState('');
   const [addMetalQuality, setAddMetalQuality] = useState('10K');
   const [isAddingEntry, setIsAddingEntry] = useState(false);
-  const inlinePriceRef = useRef(null);
 
   const updateEntry = useCallback((idx, updater) => {
     setPricingEntries(prev => {
@@ -550,10 +550,6 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       return next;
     });
   }, []);
-
-  const updateActive = useCallback((updater) => {
-    updateEntry(activeEntryIndex, updater);
-  }, [activeEntryIndex, updateEntry]);
 
   // Metal and stones are shared across every quotation of an enquiry, so any entry
   // left blank takes the value another entry already has. Fills gaps only, and
@@ -596,14 +592,9 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const metalWeight = active?.metalWeight || '';
   const metalQuality = active?.metalQuality || '10K';
   const metalRate = active?.metalRate || '';
-  const metalOunce = active?.metalOunce || '';
   const diamonds = active?.stones || [];
-  const missingIndices = active?.missingIndices || new Set();
-  const inlineEditIndex = active?.inlineEditIndex ?? null;
-  const inlineEditPrice = active?.inlineEditPrice || '';
   const editedPrices = active?.editedPrices || {};
   const pricingResult = active?.result || null;
-  const clientMsg = active?.clientMsg || '';
 
   const metalEditedRef = useRef(false);
   const entryDirtyRef = useRef(false);
@@ -612,31 +603,43 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const activeIdxRef = useRef(activeEntryIndex);
   activeIdxRef.current = activeEntryIndex;
 
-  const onMetalWeightChange = useCallback(v => { metalEditedRef.current = true; entryDirtyRef.current = true; updateActive({ metalWeight: v }); }, [updateActive]);
-  const onMetalRateChange   = useCallback(v => { metalEditedRef.current = true; entryDirtyRef.current = true; updateActive({ metalRate: v }); }, [updateActive]);
-  const onMetalOunceChange  = useCallback(v => { metalEditedRef.current = true; entryDirtyRef.current = true; updateActive({ metalOunce: v }); }, [updateActive]);
-  const onMetalQualityPick  = useCallback(v => { metalEditedRef.current = true; entryDirtyRef.current = true; updateActive({ metalQuality: v }); }, [updateActive]);
-
-  const setDiamonds = useCallback((updater) => {
+  const onEntryMetalChange = useCallback((idx, key, v) => {
+    metalEditedRef.current = true;
     entryDirtyRef.current = true;
-    updateActive(prev => ({
+    activeIdxRef.current = idx;
+    setActiveEntryIndex(idx);
+    updateEntry(idx, { [key]: v });
+  }, [updateEntry]);
+
+  const onEntryMetalQualityPick = useCallback((idx, v) => {
+    metalEditedRef.current = true;
+    entryDirtyRef.current = true;
+    activeIdxRef.current = idx;
+    setActiveEntryIndex(idx);
+    updateEntry(idx, { metalQuality: v });
+  }, [updateEntry]);
+
+  const setEntryDiamonds = useCallback((idx, updater) => {
+    entryDirtyRef.current = true;
+    activeIdxRef.current = idx;
+    updateEntry(idx, prev => ({
       ...prev,
       stones: typeof updater === 'function' ? updater(prev.stones || []) : updater,
     }));
-  }, [updateActive]);
+  }, [updateEntry]);
 
-  const setInlineEditIndex = useCallback((v) => updateActive({ inlineEditIndex: v }), [updateActive]);
-  const setInlineEditPrice = useCallback((v) => updateActive({ inlineEditPrice: v }), [updateActive]);
+  const setEntryInlineEditIndex = useCallback((idx, v) => updateEntry(idx, { inlineEditIndex: v }), [updateEntry]);
+  const setEntryInlineEditPrice = useCallback((idx, v) => updateEntry(idx, { inlineEditPrice: v }), [updateEntry]);
 
-  const setEditedPrices = useCallback((updater) => {
-    updateActive(prev => ({
+  const setEntryEditedPrices = useCallback((idx, updater) => {
+    updateEntry(idx, prev => ({
       ...prev,
       editedPrices: typeof updater === 'function' ? updater(prev.editedPrices || {}) : updater,
     }));
-  }, [updateActive]);
+  }, [updateEntry]);
 
-  const setPricingResult = useCallback((v) => updateActive({ result: v }), [updateActive]);
-  const setClientMsg = useCallback((v) => updateActive({ clientMsg: v }), [updateActive]);
+  const setEntryResult = useCallback((idx, v) => updateEntry(idx, { result: v }), [updateEntry]);
+  const setEntryClientMsg = useCallback((idx, v) => updateEntry(idx, { clientMsg: v }), [updateEntry]);
 
   const perTypeResultsRef = useRef([]);
   const [perTypeResults, setPerTypeResults] = useState([]);
@@ -781,65 +784,52 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
 
 
-  const handleDeleteDiamond = useCallback((index) => {
+  const handleEntryDeleteDiamond = useCallback((idx, stoneIndex) => {
     showAlert('Delete Stone', 'Remove this stone entry?', 'info', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive',
-        onPress: () => setDiamonds(prev => prev.filter((_, i) => i !== index)),
+        onPress: () => setEntryDiamonds(idx, prev => prev.filter((_, i) => i !== stoneIndex)),
       },
     ]);
-  }, [showAlert]);
+  }, [showAlert, setEntryDiamonds]);
 
-  const startInlineEdit = useCallback((index, diamond) => {
-    setInlineEditIndex(index);
-    const local = editedPrices[index];
-    setInlineEditPrice(local !== undefined ? local : (num(diamond.Price) > 0 ? String(diamond.Price) : ''));
-  }, [editedPrices]);
+  const startEntryInlineEdit = useCallback((idx, stoneIndex, diamond) => {
+    setEntryInlineEditIndex(idx, stoneIndex);
+    const entry = pricingEntriesRef.current[idx];
+    const local = entry?.editedPrices?.[stoneIndex];
+    setEntryInlineEditPrice(idx, local !== undefined ? local : (num(diamond.Price) > 0 ? String(diamond.Price) : ''));
+  }, [setEntryInlineEditIndex, setEntryInlineEditPrice]);
 
-  useEffect(() => {
-    if (inlineEditIndex !== null && inlinePriceRef.current) {
-      Keyboard.dismiss();
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          inlinePriceRef.current?.focus();
-        }, 150);
-      });
-    }
-  }, [inlineEditIndex]);
-
-  const saveInlineEdit = useCallback(() => {
-    if (inlineEditIndex === null) return;
-    setEditedPrices(prev => {
+  const saveEntryInlineEdit = useCallback((idx) => {
+    const entry = pricingEntriesRef.current[idx];
+    if (!entry || entry.inlineEditIndex === null) return;
+    const { inlineEditIndex, inlineEditPrice, missingIndices, stones } = entry;
+    setEntryEditedPrices(idx, prev => {
       const next = { ...prev, [inlineEditIndex]: inlineEditPrice };
-      const stillMissing = [...missingIndices].filter(idx => {
-        const ep = next[idx] !== undefined ? num(next[idx]) : num(diamonds[idx]?.Price);
+      const stillMissing = [...(missingIndices || [])].filter(i => {
+        const ep = next[i] !== undefined ? num(next[i]) : num(stones?.[i]?.Price);
         return ep <= 0;
       });
       if (stillMissing.length > 0) {
         const nextIdx = stillMissing[0];
         setTimeout(() => {
-          setInlineEditIndex(nextIdx);
-          const nd = diamonds[nextIdx];
-          setInlineEditPrice(next[nextIdx] !== undefined ? next[nextIdx] : (num(nd?.Price) > 0 ? String(nd.Price) : ''));
+          setEntryInlineEditIndex(idx, nextIdx);
+          const nd = stones?.[nextIdx];
+          setEntryInlineEditPrice(idx, next[nextIdx] !== undefined ? next[nextIdx] : (num(nd?.Price) > 0 ? String(nd.Price) : ''));
         }, 100);
       } else {
-        setInlineEditIndex(null);
-        setInlineEditPrice('');
+        setEntryInlineEditIndex(idx, null);
+        setEntryInlineEditPrice(idx, '');
       }
       return next;
     });
-  }, [inlineEditIndex, inlineEditPrice, missingIndices, diamonds]);
-
-  useEffect(() => {
-    if (missingIndices.size > 0 && inlineEditIndex === null) {
-      const first = [...missingIndices][0];
-      startInlineEdit(first, diamonds[first]);
-    }
-  }, [missingIndices]);
+  }, [setEntryEditedPrices, setEntryInlineEditIndex, setEntryInlineEditPrice]);
 
   const handleSaveQuotation = useCallback(async () => {
-    if (!pricingResult) return;
+    const entries = pricingEntriesRef.current;
+    if (!entries || entries.length === 0) return;
+    if (!entries.some(e => e?.result)) return;
 
     if (isFetchingEnquiry) {
       showAlert('Please Wait', 'Loading enquiry data, please try again in a moment.', 'info', [{ text: 'OK' }]);
@@ -852,42 +842,53 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       return;
     }
 
-    const mergedForSave = diamonds.map((d, i) =>
-      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
-    );
-
-    const isOnlyMetalDesign = diamonds.length === 0;
-
-    const pricingToSave = {
-      isOnlyMetalDesign,
-      Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-      Stones: mergedForSave.map(d => ({
-        Type:      d.Type      || '',
-        Color:     d.Color     || '',
-        Shape:     d.Shape     || '',
-        MmSize:    String(d.MmSize   ?? '0'),
-        SieveSize: String(d.SieveSize || '0'),
-        CtWeight:  num(d.Carat),
-        Weight:    num(d.Weight),
-        Pcs:       Math.round(num(d.Pcs)),
-        Price:     num(d.Price),
-        Markup:    num(d.Markup),
-      })).filter(st => st.Type),
-      Loss:                num(sourcePricing?.Loss ?? 0),
-      Labour:              num(sourcePricing?.Labour ?? 0),
-      ExtraCharges:        normalizeExtraCharges(sourcePricing?.ExtraCharges),
-      UndercutPrice:       num(sourcePricing?.UndercutPrice ?? 0),
-      NaturalDuties:       num(sourcePricing?.NaturalDuties ?? 0),
-      LabDuties:           num(sourcePricing?.LabDuties ?? 0),
-      GoldDuties:          num(sourcePricing?.GoldDuties ?? 0),
-      SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
-      LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
-      MetalPrice:          pricingResult.MetalPrice,
-      DiamondsPrice:       pricingResult.DiamondsPrice,
-      DutiesAmount:        pricingResult.DutiesAmount,
-      TotalPrice:          pricingResult.TotalPrice,
-      ClientPricingMessage: clientMsg,
+    const buildPricingForSave = (e) => {
+      const r = e?.result || {};
+      const stones = (e?.stones || []).map((st, i) => {
+        const merged = e?.editedPrices?.[i] !== undefined ? { ...st, Price: num(e.editedPrices[i]) } : st;
+        return {
+          Type:      merged.Type      || '',
+          Color:     merged.Color     || '',
+          Shape:     merged.Shape     || '',
+          MmSize:    String(merged.MmSize   ?? '0'),
+          SieveSize: String(merged.SieveSize || '0'),
+          CtWeight:  num(merged.Carat),
+          Weight:    num(merged.Weight),
+          Pcs:       Math.round(num(merged.Pcs)),
+          Price:     num(merged.Price),
+          Markup:    num(merged.Markup),
+        };
+      }).filter(st => st.Type);
+      return {
+        isOnlyMetalDesign: stones.length === 0,
+        IsSentForApproaval: !!e?.isSentForApproaval,
+        Metal: {
+          Weight: num(e?.metalWeight),
+          Quality: e?.metalQuality || '10K',
+          Rate: num(r.Metal?.Rate ?? e?.metalRate),
+        },
+        Stones: stones,
+        Loss:                num(r.Client?.Loss ?? r.LossPercent ?? r.Loss ?? 0),
+        Labour:              num(r.Client?.Labour ?? r.LabourPercent ?? r.Labour ?? 0),
+        ExtraCharges:        normalizeExtraCharges(r.Client?.ExtraCharges ?? r.ExtraCharges),
+        UndercutPrice:       num(r.Client?.UndercutPrice ?? r.UndercutPrice ?? 0),
+        NaturalDuties:       num(r.Client?.NaturalDuties ?? r.NaturalDuties ?? 0),
+        LabDuties:           num(r.Client?.LabDuties ?? r.LabDuties ?? 0),
+        GoldDuties:          num(r.Client?.GoldDuties ?? r.GoldDuties ?? 0),
+        SilverAndLabsDuties: num(r.Client?.SilverAndLabsDuties ?? r.SilverAndLabsDuties ?? 0),
+        LossAndLabourDuties: num(r.Client?.LossAndLabourDuties ?? r.LossAndLabourDuties ?? 0),
+        MetalPrice:          num(r.MetalPrice),
+        DiamondsPrice:       num(r.DiamondsPrice),
+        DutiesAmount:        num(r.DutiesAmount),
+        TotalPrice:          num(r.TotalPrice),
+        DiamondWeight:       num(r.DiamondWeight),
+        TotalPieces:         num(r.TotalPieces),
+        ClientPricingMessage: r.ClientPricingMessage || e?.clientMsg || '',
+      };
     };
+
+    const pricingData = entries.map(buildPricingForSave);
+    const isOnlyMetalDesign = pricingData.every(p => (p.Stones || []).length === 0);
 
     const pool = [
       ...(Array.isArray(fullEnquiry?.Cad)   ? fullEnquiry.Cad.map(e => ({ ...e, _type: 'cad' }))   : []),
@@ -912,7 +913,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         enquiryId: resolvedEnquiryId,
         designType,
         version,
-        pricingData: pricingToSave,
+        pricingData,
         isOnlyMetalDesign,
       };
       console.log('[QuotationModal][save] payload:', JSON.stringify(saveArgs, null, 2));
@@ -927,9 +928,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     } catch (e) {
       showAlert('Save Failed', e?.data?.message || 'Could not save the quotation. Please try again.', 'error', [{ text: 'OK' }]);
     }
-  }, [pricingResult, isFetchingEnquiry, enquiryId, fullEnquiry,
-      metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing,
-      clientMsg, savePricing, showAlert]);
+  }, [isFetchingEnquiry, fullEnquiry, savePricing, showAlert]);
 
   const recalcAllTypes = useCallback(async (basePayload) => {
     const byTypeStones = splitStonesByEntry(basePayload?.details?.Stones);
@@ -1022,21 +1021,28 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     return { perType, byTypeStones, flat };
   }, [calculatePricing, sourcePricingList]);
 
-  const handleRecalculate = useCallback(async () => {
+  const handleRecalculateFor = useCallback(async (idx) => {
+    const entry = pricingEntries[idx];
+    if (!entry) return;
     const clientId = fullEnquiry?.ClientId || fullEnquiry?.clientId;
     if (!clientId) {
       showAlert('Error', 'Client ID not found.', 'error', [{ text: 'OK' }]);
       return;
     }
+    activeIdxRef.current = idx;
+    setActiveEntryIndex(idx);
 
-    console.log('[handleRecalculate] activeEntryIndex:', activeEntryIndex, 'pricingEntries.length:', pricingEntries.length);
-    console.log('[handleRecalculate] active entry stones:', active?.stones?.length, 'raw:', JSON.stringify(active?.stones?.map(s => ({ Type: s.Type, localId: s.localId }))));
+    const entryStones = entry.stones || [];
+    const entryEdited = entry.editedPrices || {};
 
-    const mergedDiamonds = diamonds.map((d, i) =>
-      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
+    console.log('[handleRecalculate] idx:', idx, 'pricingEntries.length:', pricingEntries.length);
+    console.log('[handleRecalculate] active entry stones:', entryStones.length, 'raw:', JSON.stringify(entryStones.map(s => ({ Type: s.Type, localId: s.localId }))));
+
+    const mergedDiamonds = entryStones.map((d, i) =>
+      entryEdited[i] !== undefined ? { ...d, Price: num(entryEdited[i]) } : d
     );
 
-    console.log('[handleRecalculate] diamonds.length:', diamonds.length, 'editedPrices keys:', Object.keys(editedPrices));
+    console.log('[handleRecalculate] stones.length:', entryStones.length, 'editedPrices keys:', Object.keys(entryEdited));
 
     const editableStones = mergedDiamonds.map(d => ({
       Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
@@ -1049,7 +1055,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     const afterFilter = editableStones.filter(s => s.Type);
     console.log('[handleRecalculate] after .filter(s => s.Type):', afterFilter.length, 'of', editableStones.length, 'survived');
 
-    const ounceVal = num(metalOunce);
+    const ounceVal = num(entry.metalOunce);
 
     try {
       const payload = buildRecalculatePayload({
@@ -1057,9 +1063,9 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         data: {
           editableStones,
           editableMetal: {
-            Weight: num(metalWeight),
-            Quality: metalQuality,
-            Rate: ounceVal <= 0 ? num(metalRate) : undefined,
+            Weight: num(entry.metalWeight),
+            Quality: entry.metalQuality,
+            Rate: ounceVal <= 0 ? num(entry.metalRate) : undefined,
             Ounce: ounceVal > 0 ? ounceVal : undefined,
           },
           editableCharges: {
@@ -1076,31 +1082,31 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
             LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
           },
-          pricingResult: pricingResult || {},
+          pricingResult: entry.result || {},
         },
-        metalKt: metalQuality,
+        metalKt: entry.metalQuality,
         selectedClient: clientData || null,
         isRecalculate: true,
       });
 
       const { perType, flat: result } = await recalcAllTypes(payload);
-      if (perType.length <= 1) setPricingResult(result);
+      if (perType.length <= 1) setEntryResult(idx, result);
 
       const metalPatch = {};
-      if (num(metalRate) <= 0 && result.Metal?.Rate) metalPatch.metalRate = String(result.Metal.Rate);
+      if (num(entry.metalRate) <= 0 && result.Metal?.Rate) metalPatch.metalRate = String(result.Metal.Rate);
       if (result.GoldRatePerOunce) metalPatch.metalOunce = String(result.GoldRatePerOunce);
-      if (Object.keys(metalPatch).length) updateActive(metalPatch);
-      setClientMsg(prev => (perType.length > 1 ? prev : (result.ClientPricingMessage || prev)));
+      if (Object.keys(metalPatch).length) updateEntry(idx, metalPatch);
+      setEntryClientMsg(idx, perType.length > 1 ? (entry.clientMsg || '') : (result.ClientPricingMessage || ''));
 
       const perTypeEntries = perType.length > 1
         ? buildEntriesFromPerType(perType)
         : [];
       const html = perTypeEntries.length > 1
-        ? buildCombinedHtml(perTypeEntries, resolvedClientName, metalQuality, null, false)
+        ? buildCombinedHtml(perTypeEntries, resolvedClientName, entry.metalQuality, null, false)
         : buildHtml({
           pricingResult: result,
           stones: mergedDiamonds,
-          metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate), Ounce: num(metalOunce) },
+          metal: { Weight: num(entry.metalWeight), Quality: entry.metalQuality, Rate: num(entry.metalRate), Ounce: num(entry.metalOunce) },
           charges: {
             Loss: num(sourcePricing?.Loss ?? 0),
             Labour: num(sourcePricing?.Labour ?? 0),
@@ -1116,8 +1122,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     } catch (e) {
       showAlert('Calculation Failed', e?.data?.message || 'Failed to calculate pricing. Please try again.', 'error', [{ text: 'OK' }]);
     }
-  }, [diamonds, editedPrices, metalWeight, metalQuality, metalRate, metalOunce, sourcePricing,
-      fullEnquiry, clientData, pricingResult, calculatePricing, showAlert, resolvedClientName, recalcAllTypes]);
+  }, [pricingEntries, sourcePricing, fullEnquiry, clientData, updateEntry, setEntryResult, setEntryClientMsg,
+      showAlert, resolvedClientName, recalcAllTypes]);
 
   const entryToPricing = useCallback((e) => {
     const r = e?.result || {};
@@ -1399,12 +1405,17 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     setShowCompareModal(true);
   }, []);
 
-  const hasMissingStones = missingIndices.size > 0 && diamonds.some((d, i) => {
-    if (!missingIndices.has(i)) return false;
-    const effectivePrice = editedPrices[i] !== undefined ? num(editedPrices[i]) : num(d.Price);
-    return effectivePrice <= 0;
-  }) || diamonds.length === 0;
-  const hasMissingMetal = num(metalWeight) <= 0 || num(metalRate) <= 0;
+  const hasMissingStones = useMemo(() => pricingEntries.some(e => {
+    const stones = e?.stones || [];
+    const miss = e?.missingIndices || new Set();
+    if (stones.length === 0) return true;
+    return stones.some((d, i) => {
+      if (!miss.has(i)) return false;
+      const effectivePrice = e?.editedPrices?.[i] !== undefined ? num(e.editedPrices[i]) : num(d.Price);
+      return effectivePrice <= 0;
+    });
+  }), [pricingEntries]);
+  const hasMissingMetal = useMemo(() => pricingEntries.some(e => num(e?.metalWeight) <= 0 || num(e?.metalRate) <= 0), [pricingEntries]);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -1480,12 +1491,18 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     setTimeout(() => setCopiedCardIdx(null), 2000);
   }, []);
 
-  const renderStonesSection = () => {
-    if (diamonds.length === 0) {
+  const renderStonesSectionFor = (entry, idx) => {
+    const stones = entry?.stones || [];
+    const missing = entry?.missingIndices || new Set();
+    const edited = entry?.editedPrices || {};
+    const inlineEditIndex = entry?.inlineEditIndex ?? null;
+    const inlineEditPrice = entry?.inlineEditPrice ?? '';
+
+    if (stones.length === 0) {
       return (
         <TouchableOpacity
           style={[s.calcBtn, { paddingVertical: 18, marginTop: 10 }]}
-          onPress={handleRecalculate}
+          onPress={() => handleRecalculateFor(idx)}
           disabled={isCalculating}
           activeOpacity={0.85}
         >
@@ -1499,9 +1516,9 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       );
     }
 
-    const missingStones = diamonds
+    const missingStones = stones
       .map((d, i) => ({ d, i }))
-      .filter(({ i }) => missingIndices.has(i));
+      .filter(({ i }) => missing.has(i));
 
     return (
       <>
@@ -1524,8 +1541,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               <View style={s.stoneColActions} />
             </View>
             {missingStones.map(({ d, i }, rowIdx) => {
-              const effectivePrice = editedPrices[i] !== undefined ? num(editedPrices[i]) : num(d.Price);
-              const isEdited = editedPrices[i] !== undefined && effectivePrice > 0;
+              const effectivePrice = edited[i] !== undefined ? num(edited[i]) : num(d.Price);
+              const isEdited = edited[i] !== undefined && effectivePrice > 0;
               const isEditing = inlineEditIndex === i;
               return (
                 <Animated.View
@@ -1544,14 +1561,13 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
                   {isEditing ? (
                     <TextInput
-                      ref={inlinePriceRef}
                       style={[s.stoneCol, s.stoneColPrice, s.inlinePriceInput]}
                       value={inlineEditPrice}
-                      onChangeText={setInlineEditPrice}
+                      onChangeText={(v) => setEntryInlineEditPrice(idx, v)}
                       keyboardType="decimal-pad"
                       placeholder="$/Ct"
                       placeholderTextColor="#A0A0A0"
-                      onSubmitEditing={() => { saveInlineEdit(); handleRecalculate(); }}
+                      onSubmitEditing={() => { saveEntryInlineEdit(idx); handleRecalculateFor(idx); }}
                       returnKeyType="done"
                     />
                   ) : (
@@ -1567,11 +1583,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                       </Animated.View>
                     )}
                     {!isEditing && (
-                      <TouchableOpacity onPress={() => startInlineEdit(i, d)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }} style={[s.inlineActionBtn, { borderColor: colors.primary }]}>
+                      <TouchableOpacity onPress={() => startEntryInlineEdit(idx, i, d)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }} style={[s.inlineActionBtn, { borderColor: colors.primary }]}>
                         <Icon name="edit" size={14} color={colors.primary} />
                       </TouchableOpacity>
                     )}
-                    <TouchableOpacity onPress={() => handleDeleteDiamond(i)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }} style={[s.inlineActionBtn, { borderColor: colors.error || '#EF4444' }]}>
+                    <TouchableOpacity onPress={() => handleEntryDeleteDiamond(idx, i)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }} style={[s.inlineActionBtn, { borderColor: colors.error || '#EF4444' }]}>
                       <Icon name="delete-outline" size={14} color={colors.error || '#EF4444'} />
                     </TouchableOpacity>
                   </View>
@@ -1583,7 +1599,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
         <TouchableOpacity
           style={[s.calcBtn, { paddingVertical: 18, marginTop: 16 }]}
-          onPress={handleRecalculate}
+          onPress={() => handleRecalculateFor(idx)}
           disabled={isCalculating}
           activeOpacity={0.85}
         >
@@ -1602,6 +1618,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
   const renderQualityPicker = () => {
     if (!showQualityPicker) return null;
+    const pickerEntry = pricingEntries[qualityPickerIdx];
+    const pickerQuality = pickerEntry?.metalQuality || '10K';
     return (
       <View style={s.pickerAbsOverlay}>
         <TouchableOpacity style={s.pickerOverlay} activeOpacity={1} onPress={() => setShowQualityPicker(false)}>
@@ -1610,12 +1628,12 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             {METAL_QUALITY_OPTIONS.map(opt => (
               <TouchableOpacity
                 key={opt}
-                style={[s.pickerOption, metalQuality === opt && s.pickerOptionSelected]}
-                onPress={() => { onMetalQualityPick(opt); setShowQualityPicker(false); }}
+                style={[s.pickerOption, pickerQuality === opt && s.pickerOptionSelected]}
+                onPress={() => { onEntryMetalQualityPick(qualityPickerIdx, opt); setShowQualityPicker(false); }}
                 activeOpacity={0.8}
               >
-                <Text style={[s.pickerOptionText, metalQuality === opt && s.pickerOptionTextSelected]}>{opt}</Text>
-                {metalQuality === opt && <Icon name="check" size={16} color={colors.primary} />}
+                <Text style={[s.pickerOptionText, pickerQuality === opt && s.pickerOptionTextSelected]}>{opt}</Text>
+                {pickerQuality === opt && <Icon name="check" size={16} color={colors.primary} />}
               </TouchableOpacity>
             ))}
           </TouchableOpacity>
@@ -2268,50 +2286,6 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               showsVerticalScrollIndicator={false}
               refreshControl={pullRefreshControl}
             >
-              {pricingEntries.length > 1 && (
-                <View style={s.entryNavRow}>
-                  <TouchableOpacity
-                    style={[s.entryNavBtn, activeEntryIndex === 0 && s.entryNavBtnDisabled]}
-                    onPress={() => setActiveEntryIndex(Math.max(0, activeEntryIndex - 1))}
-                    disabled={activeEntryIndex === 0}
-                    activeOpacity={0.8}
-                  >
-                    <Icon name="chevron-left" size={20} color={activeEntryIndex === 0 ? '#CCC' : colors.primary} />
-                  </TouchableOpacity>
-                  <ScrollView
-                    style={s.entryNavTabs}
-                    contentContainerStyle={s.entryNavTabsContent}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                  >
-                    {pricingEntries.map((entry, idx) => {
-                      const stoneTypes = [...new Set((entry.stones || []).map(s => s.Type).filter(Boolean))];
-                      const label = stoneTypes.length > 0 ? stoneTypes[0] : 'Metal';
-                      return (
-                        <TouchableOpacity
-                          key={entry.id}
-                          style={[s.entryNavTab, idx === activeEntryIndex && s.entryNavTabActive]}
-                          onPress={() => setActiveEntryIndex(idx)}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={[s.entryNavTabText, idx === activeEntryIndex && s.entryNavTabTextActive]}>
-                            {label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                  <TouchableOpacity
-                    style={[s.entryNavBtn, activeEntryIndex === pricingEntries.length - 1 && s.entryNavBtnDisabled]}
-                    onPress={() => setActiveEntryIndex(Math.min(pricingEntries.length - 1, activeEntryIndex + 1))}
-                    disabled={activeEntryIndex === pricingEntries.length - 1}
-                    activeOpacity={0.8}
-                  >
-                    <Icon name="chevron-right" size={20} color={activeEntryIndex === pricingEntries.length - 1 ? '#CCC' : colors.primary} />
-                  </TouchableOpacity>
-                </View>
-              )}
-
               {isAutoRecalculating && (
                 <View style={s.recalcBanner}>
                   <ActivityIndicator size="small" color={colors.primary} />
@@ -2319,51 +2293,89 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                 </View>
               )}
 
-              {hasMissingStones && hasMissingMetal && (
-                <View style={s.missingBadge}>
-                  <Icon name="warning" size={14} color="#DC2626" />
-                  <Text style={s.missingBadgeText}>Missing Metal Details</Text>
-                </View>
-              )}
+              {pricingEntries.map((entry, idx) => {
+                const stoneTypes = [...new Set((entry.stones || []).map(s => s.Type).filter(Boolean))];
+                const typeLabel = stoneTypes.length > 0 ? stoneTypes.join(', ') : 'METAL ONLY';
+                const stoneCount = (entry.stones || []).length;
+                const entryMissingStones = stoneCount === 0 || (entry.stones || []).some((d, i) => {
+                  if (!(entry.missingIndices?.has(i))) return false;
+                  const ep = entry.editedPrices?.[i] !== undefined ? num(entry.editedPrices[i]) : num(d.Price);
+                  return ep <= 0;
+                });
+                const entryMissingMetal = num(entry.metalWeight) <= 0 || num(entry.metalRate) <= 0;
 
-              <View style={[s.metalSection, hasMissingStones && hasMissingMetal && s.metalSectionMissing]}>
-                <Text style={s.sectionTitle}>Metal</Text>
-                <View style={s.metalRow}>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Weight (g)</Text>
-                    <TextInput style={[s.chargeInput, num(metalWeight) <= 0 && s.inputErrorHighlight]} value={metalWeight} onChangeText={onMetalWeightChange} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Quality</Text>
-                    <TouchableOpacity style={s.qualityBtn} onPress={() => setShowQualityPicker(true)} activeOpacity={0.8}>
-                      <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
-                      <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
-                    <TextInput style={[s.chargeInput, num(metalRate) <= 0 && s.inputErrorHighlight]} value={metalRate} onChangeText={onMetalRateChange} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Per Ounce ($)</Text>
-                    <TextInput style={s.chargeInput} value={metalOunce} onChangeText={onMetalOunceChange} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
-                  </View>
-                </View>
-              </View>
+                return (
+                  <View key={entry.id} style={s.entryEditCard}>
+                    <View style={s.entryEditHeader}>
+                      <View style={{ flex: 1 }}>
+                        <View style={s.entryCardTypeRow}>
+                          <Icon name={stoneCount > 0 ? 'diamond' : 'hardware'} size={16} color={colors.primary} />
+                          <Text style={s.entryCardType} numberOfLines={1}>{typeLabel}</Text>
+                        </View>
+                        <Text style={s.entryCardMetal}>{entry.metalQuality || '10K'} • {stoneCount} stone{stoneCount !== 1 ? 's' : ''}</Text>
+                      </View>
+                      {entryMissingStones && (
+                        <View style={s.entryCardMissing}>
+                          <Icon name="warning" size={12} color="#DC2626" />
+                          <Text style={s.entryCardMissingText}>Missing</Text>
+                        </View>
+                      )}
+                      {pricingEntries.length > 1 && (
+                        <TouchableOpacity style={s.entryCardDeleteBtn} onPress={() => handleDeleteEntry(idx)} activeOpacity={0.8}>
+                          <Icon name="delete-outline" size={16} color={colors.error || '#EF4444'} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
 
-              {hasMissingStones ? (
-                <View style={s.warningBanner}>
-                  <Icon name="warning" size={15} color="#92400E" />
-                  <Text style={s.warningText}>Stone prices are missing — fill them in below to calculate pricing.</Text>
-                </View>
-              ) : (
-                <View style={s.infoBanner}>
-                  <Icon name="info" size={15} color={colors.primary} />
-                  <Text style={s.infoText}>All stones filled. Ready to calculate pricing.</Text>
-                </View>
-              )}
+                    {entryMissingStones && entryMissingMetal && (
+                      <View style={s.missingBadge}>
+                        <Icon name="warning" size={14} color="#DC2626" />
+                        <Text style={s.missingBadgeText}>Missing Metal Details</Text>
+                      </View>
+                    )}
 
-              {renderStonesSection()}
+                    <View style={[s.metalSection, entryMissingStones && entryMissingMetal && s.metalSectionMissing]}>
+                      <Text style={s.sectionTitle}>Metal</Text>
+                      <View style={s.metalRow}>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>Weight (g)</Text>
+                          <TextInput style={[s.chargeInput, num(entry.metalWeight) <= 0 && s.inputErrorHighlight]} value={entry.metalWeight} onChangeText={(v) => onEntryMetalChange(idx, 'metalWeight', v)} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                        </View>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>Quality</Text>
+                          <TouchableOpacity style={s.qualityBtn} onPress={() => { setQualityPickerIdx(idx); setShowQualityPicker(true); }} activeOpacity={0.8}>
+                            <Text style={s.qualityBtnText}>{entry.metalQuality || '10K'}</Text>
+                            <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        </View>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
+                          <TextInput style={[s.chargeInput, num(entry.metalRate) <= 0 && s.inputErrorHighlight]} value={entry.metalRate} onChangeText={(v) => onEntryMetalChange(idx, 'metalRate', v)} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                        </View>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>Per Ounce ($)</Text>
+                          <TextInput style={s.chargeInput} value={entry.metalOunce} onChangeText={(v) => onEntryMetalChange(idx, 'metalOunce', v)} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                        </View>
+                      </View>
+                    </View>
+
+                    {entryMissingStones ? (
+                      <View style={s.warningBanner}>
+                        <Icon name="warning" size={15} color="#92400E" />
+                        <Text style={s.warningText}>Stone prices are missing — fill them in below to calculate pricing.</Text>
+                      </View>
+                    ) : (
+                      <View style={s.infoBanner}>
+                        <Icon name="info" size={15} color={colors.primary} />
+                        <Text style={s.infoText}>All stones filled. Ready to calculate pricing.</Text>
+                      </View>
+                    )}
+
+                    {renderStonesSectionFor(entry, idx)}
+
+                  </View>
+                );
+              })}
 
             </ScrollView>
           )}
@@ -2852,6 +2864,20 @@ const s = StyleSheet.create({
     width: 28, height: 28, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#FEF2F2',
+  },
+
+  entryEditCard: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderLight || '#E0E0E0',
+    marginBottom: 14,
+    padding: 14,
+    paddingTop: 12,
+  },
+  entryEditHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    marginBottom: 8,
   },
 
   entryNavRow: {
