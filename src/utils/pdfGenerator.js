@@ -854,25 +854,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
       }))).filter(Boolean).join('')
     : '<p style="font-size:10px;color:#9CA3AF;padding:8px;">No reference images available</p>';
 
-  // ── Status History ────────────────────────────────────────────────────
-  const sortedHistory = [...statusHistory].sort(
-    (a, b) => new Date(a.Timestamp || a.timestamp || a.CreatedDate || a.createdDate || 0) -
-             new Date(b.Timestamp || b.timestamp || b.CreatedDate || b.createdDate || 0)
-  );
-  const statusHistoryHtml = sortedHistory.length > 0
-    ? sortedHistory.map(entry => {
-        const ts = entry.Timestamp || entry.timestamp || entry.CreatedDate || entry.createdDate || null;
-        const dateStr = ts ? new Date(ts).toLocaleString() : '—';
-        const status = entry.Status || entry.status || '—';
-        const subStatus = entry.SubStatus || entry.subStatus || '';
-        return `<tr>
-          <td style="padding:7px;border:1px solid #e0e0e0;white-space:nowrap;">${dateStr}</td>
-          <td style="padding:7px;border:1px solid #e0e0e0;">${status}</td>
-          <td style="padding:7px;border:1px solid #e0e0e0;">${subStatus || '—'}</td>
-        </tr>`;
-      }).join('')
-    : '<tr><td colspan="3" style="padding:7px;text-align:center;color:#999;">No status history available</td></tr>';
-
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
   // ── Customer remark HTML ────────────────────────────────────────────
@@ -1077,23 +1058,6 @@ ${specialRemarks ? `
     </td>
   </tr>
 </table>
-
-<!-- Section 06: Status History -->
-<section style="margin:0 24px 24px;">
-  <table style="width:100%;border-collapse:collapse;font-size:9px;">
-    <thead>
-      <tr>
-        <th colspan="3" style="background-color:#235A63;color:#ffffff;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">06 STATUS HISTORY</th>
-      </tr>
-      <tr style="background-color:#f3f4f6;">
-        <th style="padding:6px 7px;border:1px solid #d1d5db;color:#6B7280;font-size:9px;text-align:left;width:30%;">Date</th>
-        <th style="padding:6px 7px;border:1px solid #d1d5db;color:#6B7280;font-size:9px;text-align:left;width:35%;">Status</th>
-        <th style="padding:6px 7px;border:1px solid #d1d5db;color:#6B7280;font-size:9px;text-align:left;width:35%;">Sub Status</th>
-      </tr>
-    </thead>
-    <tbody style="border:1px solid #d1d5db;">${statusHistoryHtml}</tbody>
-  </table>
-</section>
 
 </main>
 </body>
