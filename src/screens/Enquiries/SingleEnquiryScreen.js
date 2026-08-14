@@ -332,10 +332,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
 
   // Local UI state
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [selectedDesignType, setSelectedDesignType] = useState(null); // 'coral' or 'cad'
-  const [selectedVersionIndex, setSelectedVersionIndex] = useState(null);
-  const [selectedImageUri, setSelectedImageUri] = useState(null);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [isImageModalVisible, setImageModalVisible] = useState(false);
   const [modalImages, setModalImages] = useState([]); // Store image objects for modal
   const modalFlatListRef = useRef(null);
@@ -885,11 +881,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     enquiry?.createdAt ||
     originalData?.createdAt ||
     new Date().toISOString();
-  const updatedAt =
-    enquiry?.updatedAt ||
-    originalData?.updatedAt ||
-    enquiry?.createdAt ||
-    createdAt;
 
   // Use ref to track last shouldRefresh value to prevent duplicate refetches
   const lastShouldRefreshRef = useRef(shouldRefresh);
@@ -918,7 +909,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     }, [shouldRefresh, enquiryId, refetch]),
   );
 
-  const showAllDetails = user?.role === 'admin';
   const isDesigner = user?.role === 'coral' || user?.role === 'co' || user?.role === 'cad' || user?.role === 'cd' || user?.roleId === 2 || user?.roleId === 3;
 
   const roleCode = useMemo(() => {
@@ -1662,7 +1652,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         }
 
         try {
-          const result = await updateAssetDescription({
+          await updateAssetDescription({
             enquiryId: currentEnquiryId,
             designType: 'reference',
             assetId: newImage.Id,
@@ -1698,49 +1688,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     }
   };
 
-  const hasDetailValue = cell => {
-    if (!cell) return false;
-    const value = cell.value;
-    const result =
-      value !== null && value !== undefined && String(value).trim() !== '';
 
-    // Debug: Log hasDetailValue check for Assigned To
-
-    return result;
-  };
-
-  const renderDetailCell = cell => {
-    if (!cell) {
-      return <View style={styles.detailCellPlaceholder} />;
-    }
-
-    const valueExists = hasDetailValue(cell);
-
-    // Debug: Log renderDetailCell for Assigned To
-
-    if (!valueExists && !cell.showIfEmpty && !showAllDetails) {
-      return <View style={styles.detailCellPlaceholder} />;
-    }
-
-    return (
-      <View style={styles.detailCell}>
-        <View style={styles.detailCellLabelRow}>
-          {cell.icon && (
-            <Icon
-              name={cell.icon}
-              size={14}
-              color={colors.primary}
-              style={styles.detailCellIcon}
-            />
-          )}
-          <Text style={styles.detailCellLabel}>{cell.label}</Text>
-        </View>
-        <Text style={styles.detailCellValue}>
-          {valueExists ? cell.value : cell.placeholder ?? 'N/A'}
-        </Text>
-      </View>
-    );
-  };
 
   const renderEnquiryDetails = () => {
     // Extract metal details - check ALL possible locations (originalData, enquiry normalized, enquiry raw)
@@ -1818,12 +1766,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       enquiry?.SpecialRemarks ||
       enquiry?.specialRemarks ||
       originalData?.specialRemarks ||
-      null;
-    const approvedDate =
-      originalData?.ApprovedDate ||
-      enquiry?.ApprovedDate ||
-      enquiry?.approvedDate ||
-      originalData?.approvedDate ||
       null;
     const shippingDate =
       originalData?.ShippingDate ||
@@ -1940,20 +1882,13 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     };
 
     // Get code from latest version (most recent)
-    const latestCoralVersion =
-      coralVersions.length > 0 ? coralVersions[coralVersions.length - 1] : null;
-    const latestCadVersion =
-      cadVersions.length > 0 ? cadVersions[cadVersions.length - 1] : null;
 
     // Also check all versions to find any code (fallback if latest doesn't have one)
-    let anyCoralCode = null;
-    let anyCadCode = null;
 
     // Check all versions in reverse order (latest first) to find first available code
     for (let i = coralVersions.length - 1; i >= 0; i--) {
       const code = getCodeFromVersion(coralVersions[i]);
       if (code) {
-        anyCoralCode = code;
         break; // Use the latest version that has a code
       }
     }
@@ -1961,7 +1896,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     for (let i = cadVersions.length - 1; i >= 0; i--) {
       const code = getCodeFromVersion(cadVersions[i]);
       if (code) {
-        anyCadCode = code;
         break; // Use the latest version that has a code
       }
     }
@@ -1969,27 +1903,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     // Debug logging
 
     // Priority: Enquiry-level > Latest version > Any version
-    const coralCode =
-      enquiry?.CoralCode ||
-      originalData?.CoralCode ||
-      enquiry?.coralCode ||
-      originalData?.coralCode ||
-      enquiry?.coralVersion ||
-      originalData?.coralVersion ||
-      getCodeFromVersion(latestCoralVersion) ||
-      anyCoralCode ||
-      'N/A';
 
-    const cadCode =
-      enquiry?.CadCode ||
-      originalData?.CadCode ||
-      enquiry?.cadCode ||
-      originalData?.cadCode ||
-      enquiry?.cadVersion ||
-      originalData?.cadVersion ||
-      getCodeFromVersion(latestCadVersion) ||
-      anyCadCode ||
-      'N/A';
 
     const specs = [
       { label: 'Budget Range', value: budget ? `₹${budget}` : null, hide: isDesigner },
@@ -3088,14 +3002,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
 
     // Debug logging to see what we have (after buildImageMeta is defined)
     if (__DEV__ && (images.length > 0 || videos.length > 0)) {
-      const coralVideoCount = coralVersions.reduce(
-        (count, v) => count + (v?.Videos?.length || v?.videos?.length || 0),
-        0,
-      );
-      const cadVideoCount = cadVersions.reduce(
-        (count, v) => count + (v?.Videos?.length || v?.videos?.length || 0),
-        0,
-      );
     }
 
     // If only one media item, show it without slider
@@ -5039,33 +4945,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  detailCell: {
-    flex: 1,
-    paddingVertical: 4,
-  },
-  detailCellPlaceholder: {
-    flex: 1,
-    paddingVertical: 4,
-  },
-  detailCellLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-    gap: 4,
-  },
-  detailCellIcon: {
-    marginRight: 4,
-  },
-  detailCellLabel: {
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: colors.textSecondary,
-  },
-  detailCellValue: {
-    fontSize: 13,
-    color: colors.textPrimary,
   },
   descHeader: {
     flexDirection: 'row',

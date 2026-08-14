@@ -198,7 +198,7 @@ export default function UploadExcelScreen({ route, navigation }) {
     try {
       const isOnlyMetalDesign = designWithDiamonds === false;
 
-      const result = await uploadDesign({
+      await uploadDesign({
         enquiryId,
         designType: designType,
         version: version,

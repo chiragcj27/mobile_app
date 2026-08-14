@@ -738,21 +738,11 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   const specialRemarks = (src?.SpecialRemarks || '').replace(/\n/g, '<br>');
   const styleNumber = src?.StyleNumber || null;
   const metalQuality = src?.Metal?.Quality || src?.metal?.quality || null;
-  const metalColor = src?.Metal?.Color || src?.metal?.color || null;
-  const stamping = src?.Stamping || null;
 
   // ── Gather design versions ──────────────────────────────────────────────
   const coralVersions = Array.isArray(src?.Coral) ? src.Coral : [];
   const cadVersions   = Array.isArray(src?.Cad)   ? src.Cad   : [];
 
-  const latestCoral = coralVersions.length > 0 ? coralVersions[coralVersions.length - 1] : null;
-
-  // ── Accepted vs Final CAD detection ─────────────────────────────────────
-  // Check StatusHistory for an "Approved Cad" entry indicating a previous acceptance
-  const statusHistory = Array.isArray(src?.StatusHistory) ? src.StatusHistory : [];
-  const hasApprovedCad = statusHistory.some(
-    e => (e.Status || e.status) === 'Approved Cad'
-  );
 
   // Final CAD = version explicitly marked as final
   // Check both per-version IsFinalVersion AND enquiry-level IsFinalVersion
@@ -766,32 +756,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   if (!finalCadVersion && enquiryIsFinal && cadVersions.length > 0) {
     finalCadVersion = cadVersions[cadVersions.length - 1];
   }
-
-  // Accepted CAD = latest non-rejected version that is NOT the final version
-  const acceptedCadVersion = (() => {
-    // If a final CAD exists, the accepted one is the last non-rejected before it
-    if (finalCadVersion) {
-      const idx = cadVersions.indexOf(finalCadVersion);
-      const beforeFinal = cadVersions.slice(0, idx).filter(v => !v.ReasonForRejection);
-      if (beforeFinal.length > 0) return beforeFinal[beforeFinal.length - 1];
-    }
-    // Otherwise look for any approved/approved-like version
-    const approved = cadVersions.filter(v =>
-      !v.ReasonForRejection && !(v.IsFinalVersion === true || v.IsFinalVersion === 'true')
-    );
-    if (approved.length > 0) return approved[approved.length - 1];
-    // Fallback: if StatusHistory shows approval was granted, show the latest non-rejected
-    if (hasApprovedCad) {
-      const nonRejected = cadVersions.filter(v => !v.ReasonForRejection);
-      return nonRejected.length > 0 ? nonRejected[nonRejected.length - 1] : null;
-    }
-    return null;
-  })();
-
-  // Determine if accepted and final CAD are the same version (used by both images & pricing sections)
-  const sameCadVersion = acceptedCadVersion && finalCadVersion &&
-    acceptedCadVersion.Version === finalCadVersion.Version &&
-    acceptedCadVersion === finalCadVersion;
 
   // ── Image helpers ───────────────────────────────────────────────────────
   const getImageUrl = async (imgObj) => {
@@ -1678,11 +1642,7 @@ export const generateEnquiriesListHTML = async (enquiries) => {
           return imageUrl;
         }));
         
-        if (__DEV__) {
-          const successCount = resolvedImageUrls.filter(img => img !== '').length;
-        }
         
-        let rowsGenerated = 0;
         const rows = enquiries.map((enquiry, index) => {
           // Safety check: skip invalid enquiries
           if (!enquiry || typeof enquiry !== 'object') {
@@ -1732,8 +1692,6 @@ export const generateEnquiriesListHTML = async (enquiries) => {
             const assignedToId = normalizedEnquiry?.AssignedTo || originalData?.AssignedTo || normalizedEnquiry?.assignedTo || '';
             // Resolve user ID to name
             const assignedToName = assignedToId ? getUserName(assignedToId) : 'N/A';
-            
-            rowsGenerated++;
             
             return `
         <tr>
@@ -1800,7 +1758,6 @@ export const downloadAllEnquiriesPDF = async (enquiries) => {
     if (__DEV__) {
       console.log('HTML preview (first 500 chars):', htmlContent.substring(0, 500));
       // Check if table has rows
-      const tableRowsMatch = htmlContent.match(/<tr>/g);
     }
 
     // Create filename

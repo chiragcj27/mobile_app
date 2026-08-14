@@ -444,7 +444,7 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
 
       // Only proceed with update if in edit mode
       if (isEditMode && enquiryToEdit?.id) {
-        const updateResult = await updateEnquiry({ id: enquiryToEdit.id, ...enquiryData }).unwrap();
+        await updateEnquiry({ id: enquiryToEdit.id, ...enquiryData }).unwrap();
         
         // Construct updated enquiry object from form data since API only returns _id
         // Normalize priority for display

@@ -1971,10 +1971,6 @@ export const api = createApi({
               [];
 
           // For admin, also check pagination total if available (more accurate than array length)
-          const paginationTotal =
-            enquiriesResult.data?.pagination?.total ||
-            enquiriesResult.data?.total ||
-            null;
 
           const clients =
             role === 'admin' && clientsResult.data
@@ -1992,14 +1988,7 @@ export const api = createApi({
                 ? dashHistory[dashHistory.length - 1]
                 : null;
             const currentStatus = dashLatest?.Status || 'pending';
-            const createdAt =
-              enquiry.CreatedDate ||
-              enquiry.CreatedAt ||
-              new Date().toISOString();
-            const updatedAt =
-              enquiry.AssignedDate || enquiry.UpdatedAt || createdAt;
 
-            let normalizedPriority = 'medium';
             const priority = (
               enquiry.Priority ||
               enquiry.priority ||
@@ -2010,9 +1999,7 @@ export const api = createApi({
               priority === 'high' ||
               priority === 'super high'
             ) {
-              normalizedPriority = 'high';
             } else if (priority === 'low') {
-              normalizedPriority = 'low';
             }
 
             let normalizedStatus = 'pending';
@@ -2101,8 +2088,6 @@ export const api = createApi({
                 0,
               );
 
-            const sumOfStatuses =
-              pendingEnquiries + approvalPendingEnquiries + completedEnquiries;
 
             return {
               data: {
@@ -2175,8 +2160,6 @@ export const api = createApi({
                 0,
               );
 
-            const clientSum =
-              pendingApprovals + approvalPending + completedOrders;
 
             return {
               data: {
@@ -3178,7 +3161,6 @@ export const api = createApi({
     // Save pricing for coral/CAD design
     savePricing: builder.mutation({
       query: ({ enquiryId, designType, version, pricingData, isOnlyMetalDesign }) => {
-        const startTime = Date.now();
 
         if (__DEV__) {
           console.log('ðŸ’¾ [savePricing API] ===== START API CALL =====');
@@ -4058,7 +4040,6 @@ export const api = createApi({
                 return { data };
               } else {
                 if (__DEV__) {
-                  const errorText = await response.text().catch(() => '');
                 }
               }
             } catch (error) {}
@@ -5246,48 +5227,39 @@ export const api = createApi({
           // Backend may send: UnreadCount, unreadCount, Unread, unread, UnreadMessages, unreadMessages, etc.
           // Also check nested objects like Unread.Count, Metadata.unreadCount, etc.
           let unreadCount = 0;
-          let unreadCountSource = 'none';
 
           // Direct fields (most common)
           if (chat.UnreadCount !== undefined && chat.UnreadCount !== null) {
             unreadCount = Number(chat.UnreadCount) || 0;
-            unreadCountSource = 'UnreadCount';
           } else if (
             chat.unreadCount !== undefined &&
             chat.unreadCount !== null
           ) {
             unreadCount = Number(chat.unreadCount) || 0;
-            unreadCountSource = 'unreadCount';
           } else if (chat.Unread !== undefined && chat.Unread !== null) {
             unreadCount = Number(chat.Unread) || 0;
-            unreadCountSource = 'Unread';
           } else if (chat.unread !== undefined && chat.unread !== null) {
             unreadCount = Number(chat.unread) || 0;
-            unreadCountSource = 'unread';
           } else if (
             chat.UnreadMessages !== undefined &&
             chat.UnreadMessages !== null
           ) {
             unreadCount = Number(chat.UnreadMessages) || 0;
-            unreadCountSource = 'UnreadMessages';
           } else if (
             chat.unreadMessages !== undefined &&
             chat.unreadMessages !== null
           ) {
             unreadCount = Number(chat.unreadMessages) || 0;
-            unreadCountSource = 'unreadMessages';
           } else if (
             chat.UnreadMessageCount !== undefined &&
             chat.UnreadMessageCount !== null
           ) {
             unreadCount = Number(chat.UnreadMessageCount) || 0;
-            unreadCountSource = 'UnreadMessageCount';
           } else if (
             chat.unreadMessageCount !== undefined &&
             chat.unreadMessageCount !== null
           ) {
             unreadCount = Number(chat.unreadMessageCount) || 0;
-            unreadCountSource = 'unreadMessageCount';
           }
           // Check nested objects
           else if (
@@ -5296,42 +5268,36 @@ export const api = createApi({
             chat.Unread.Count !== undefined
           ) {
             unreadCount = Number(chat.Unread.Count) || 0;
-            unreadCountSource = 'Unread.Count';
           } else if (
             chat.unread &&
             typeof chat.unread === 'object' &&
             chat.unread.count !== undefined
           ) {
             unreadCount = Number(chat.unread.count) || 0;
-            unreadCountSource = 'unread.count';
           } else if (
             chat.Metadata &&
             typeof chat.Metadata === 'object' &&
             chat.Metadata.unreadCount !== undefined
           ) {
             unreadCount = Number(chat.Metadata.unreadCount) || 0;
-            unreadCountSource = 'Metadata.unreadCount';
           } else if (
             chat.metadata &&
             typeof chat.metadata === 'object' &&
             chat.metadata.unreadCount !== undefined
           ) {
             unreadCount = Number(chat.metadata.unreadCount) || 0;
-            unreadCountSource = 'metadata.unreadCount';
           } else if (
             chat.Stats &&
             typeof chat.Stats === 'object' &&
             chat.Stats.UnreadCount !== undefined
           ) {
             unreadCount = Number(chat.Stats.UnreadCount) || 0;
-            unreadCountSource = 'Stats.UnreadCount';
           } else if (
             chat.stats &&
             typeof chat.stats === 'object' &&
             chat.stats.unreadCount !== undefined
           ) {
             unreadCount = Number(chat.stats.unreadCount) || 0;
-            unreadCountSource = 'stats.unreadCount';
           }
 
           // Debug logging for unread count - log always to help diagnose missing counts
@@ -5560,7 +5526,6 @@ export const api = createApi({
                 'text';
               let text =
                 message.message || message.Message || message.text || '';
-              let mediaKey = message.mediaKey || message.mediaUrl || '';
               let mediaName = message.mediaName || message.filename || '';
 
               // For image/file messages, set appropriate text

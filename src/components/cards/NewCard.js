@@ -83,11 +83,10 @@ export default function NewEnquiryCard({
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   
-  const { data: users, isLoading } = useGetUsersQuery();
+  const { data: users } = useGetUsersQuery();
 
   const [imagesData, setImagesData] = useState([]);
   const [imageLoading, setImageLoading] = useState(false);
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [isImageModalVisible, setImageModalVisible] = useState(false);
   const [modalCurrentIndex, setModalCurrentIndex] = useState(0);
   const [isModalZoomed, setIsModalZoomed] = useState(false);
@@ -126,7 +125,7 @@ export default function NewEnquiryCard({
 
   const [updateAssetData] = useUpdateAssetDataMutation();
   const [updateEnquiryDirect] = useUpdateEnquiryMutation();
-  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
+  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel } = useEnquiryActions({ onAlert: showAlert });
 
   const getVersionFromLast = useCallback((designType) => {
     const src = fullEnquiryData?._originalData || fullEnquiryData || item;
@@ -310,7 +309,6 @@ export default function NewEnquiryCard({
   const shouldShowAssignCad = has(ACTION.ASSIGN) && !hasAssignedUser && (cardActions?.assignType === 'cad' || (isCadPending && isAssignPending));
   const shouldShowApprovalButtons = has(ACTION.ACCEPT_APPROVAL) || has(ACTION.REJECT_APPROVAL);
 
-  const handleScroll = e => setCurrentIndex(Math.round(e.nativeEvent.contentOffset.x / screenWidth));
   const handleImagePress = useCallback(index => { setModalCurrentIndex(index); setImageModalVisible(true); }, []);
   const closeImageModal = useCallback(() => { setImageModalVisible(false); setIsModalZoomed(false); }, []);
 

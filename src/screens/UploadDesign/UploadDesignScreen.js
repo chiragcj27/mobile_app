@@ -26,14 +26,12 @@ import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useValidateImageUploadMutation, useGetEnquiriesQuery } from '../../store/api';
-import { useAuth } from '../../context/AuthContext';
 import BrandedAlert from '../../components/common/BrandedAlert';
 
 const UploadDesignScreen = ({ route, navigation }) => {
   const { designType, enquiry, enquiryId, returnRoute, isFinalVersion } = route.params || {};
 
 
-  const { user } = useAuth();
 
   const originalData = enquiry?._originalData || enquiry;
 
