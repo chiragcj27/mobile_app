@@ -187,23 +187,14 @@ export default function PricingCalci({ route, navigation }) {
     setExtractPhase('');
   }, []);
 
-  // Count missing stones — optionally filter by a specific type
-  const countMissingStones = useCallback((filterType) => {
-    let count = 0;
-    Object.values(groupedDataRef.current).forEach((catData) => {
-      catData.types.forEach((type) => {
-        if (filterType && type !== filterType) return;
+  const hasMissingStones = useCallback(() =>
+    Object.values(groupedDataRef.current).some((catData) =>
+      catData.types.some((type) => {
         const d = catData.byType[type];
-        if (!d || !Array.isArray(d.editableStones)) return;
-        d.editableStones.forEach((s, idx) => {
-          if (parseFloat(s.Price) <= 0) {
-            count++;
-          }
-        });
-      });
-    });
-    return count;
-  }, []);
+        return Array.isArray(d?.editableStones)
+          && d.editableStones.some((s) => parseFloat(s.Price) <= 0);
+      }),
+    ), []);
 
   // Auto-recalculate: when stone types change, trigger recalc after extraction settles
   useEffect(() => {
@@ -227,8 +218,7 @@ export default function PricingCalci({ route, navigation }) {
     let debounceTimer = null;
     const subscription = Keyboard.addListener('keyboardDidHide', () => {
       if (dataChangedRef.current && clientId && Object.keys(groupedData).length > 0) {
-        const currentMissing = countMissingStones();
-        if (currentMissing > 0) return;
+        if (hasMissingStones()) return;
         dataChangedRef.current = false;
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
