@@ -943,13 +943,18 @@ const s = StyleSheet.create({
   typeCard: {
     backgroundColor: colors.primaryExtraLight || '#E6F0F1',
     borderRadius: 12,
-    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.borderLight || '#F0F0F0',
+    ...(Platform.OS === 'ios'
+      ? {
+          overflow: 'visible',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+        }
+      : null),
   },
   typeCardHeader: {
     padding: 12,
