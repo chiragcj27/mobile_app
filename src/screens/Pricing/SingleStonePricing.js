@@ -327,14 +327,14 @@ export default function SingleStonePricing({
   }, [requestRecalculate]);
 
   const getApplicableFields = useCallback((type) => {
-    const applicable = localGrouped[type]?.pricingResult?.Applicable;
+    const applicable = (catData?.byType?.[type]?.pricingResult ?? localGrouped[type]?.pricingResult)?.Applicable;
     return CHARGE_FIELDS.filter(f => {
       if (f.key === 'SilverAndLabsDuties' && metalKt?.includes('Silver')) return true;
       if (!f.applicableKey) return true;
       if (!applicable) return true;
       return applicable[f.applicableKey] === true;
     });
-  }, [localGrouped, metalKt]);
+  }, [catData, localGrouped, metalKt]);
 
   const renderChargesSection = (type) => {
     const fields = getApplicableFields(type);
@@ -418,7 +418,7 @@ export default function SingleStonePricing({
     const stones = data.editableStones || [];
     const missing = getTypeMissingIndices(type);
     const hasMissing = missing.size > 0;
-    const result = data.pricingResult;
+    const result = catData?.byType?.[type]?.pricingResult ?? data.pricingResult;
 
     if (hasMissing) {
       const missingStones = stones
