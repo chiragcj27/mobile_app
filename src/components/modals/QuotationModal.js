@@ -555,6 +555,42 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     updateEntry(activeEntryIndex, updater);
   }, [activeEntryIndex, updateEntry]);
 
+  // Metal and stones are shared across every quotation of an enquiry, so any entry
+  // left blank takes the value another entry already has. Fills gaps only, and
+  // returns the same array when there is nothing to fill so it is safe to re-run.
+  const fillCommonFields = useCallback(() => {
+    const METAL_KEYS = ['metalWeight', 'metalRate', 'metalOunce'];
+    setPricingEntries(prev => {
+      if (prev.length < 2) return prev;
+      const blank = v => String(v ?? '').trim() === '' || num(v) === 0;
+      const common = {};
+      METAL_KEYS.forEach(k => {
+        const donor = prev.find(e => !blank(e[k]));
+        if (donor) common[k] = donor[k];
+      });
+      const stoneDonor = prev.find(e => (e.stones || []).length > 0);
+      let changed = false;
+      const next = prev.map(entry => {
+        const patch = {};
+        METAL_KEYS.forEach(k => {
+          if (common[k] !== undefined && blank(entry[k])) patch[k] = common[k];
+        });
+        if (stoneDonor && !entry.isOnlyMetalDesign && (entry.stones || []).length === 0) {
+          patch.stones = stoneDonor.stones.map(st => ({ ...st, localId: makeId() }));
+          patch.missingIndices = new Set(
+            patch.stones.map((st, i) => (num(st.Price) > 0 ? -1 : i)).filter(i => i >= 0),
+          );
+        }
+        if (Object.keys(patch).length === 0) return entry;
+        changed = true;
+        return { ...entry, ...patch };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  useEffect(() => { fillCommonFields(); }, [pricingEntries, fillCommonFields]);
+
   const active = pricingEntries[activeEntryIndex] || null;
 
   const metalWeight = active?.metalWeight || '';
@@ -2242,7 +2278,12 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                   >
                     <Icon name="chevron-left" size={20} color={activeEntryIndex === 0 ? '#CCC' : colors.primary} />
                   </TouchableOpacity>
-                  <View style={s.entryNavTabs}>
+                  <ScrollView
+                    style={s.entryNavTabs}
+                    contentContainerStyle={s.entryNavTabsContent}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                  >
                     {pricingEntries.map((entry, idx) => {
                       const stoneTypes = [...new Set((entry.stones || []).map(s => s.Type).filter(Boolean))];
                       const label = stoneTypes.length > 0 ? stoneTypes[0] : 'Metal';
@@ -2253,13 +2294,13 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                           onPress={() => setActiveEntryIndex(idx)}
                           activeOpacity={0.8}
                         >
-                          <Text style={[s.entryNavTabText, idx === activeEntryIndex && s.entryNavTabTextActive]} numberOfLines={1}>
+                          <Text style={[s.entryNavTabText, idx === activeEntryIndex && s.entryNavTabTextActive]}>
                             {label}
                           </Text>
                         </TouchableOpacity>
                       );
                     })}
-                  </View>
+                  </ScrollView>
                   <TouchableOpacity
                     style={[s.entryNavBtn, activeEntryIndex === pricingEntries.length - 1 && s.entryNavBtnDisabled]}
                     onPress={() => setActiveEntryIndex(Math.min(pricingEntries.length - 1, activeEntryIndex + 1))}
@@ -2824,10 +2865,13 @@ const s = StyleSheet.create({
   },
   entryNavBtnDisabled: { opacity: 0.4 },
   entryNavTabs: {
-    flex: 1, flexDirection: 'row', gap: 4,
+    flex: 1,
+  },
+  entryNavTabsContent: {
+    flexDirection: 'row', gap: 4, alignItems: 'center',
   },
   entryNavTab: {
-    flex: 1, paddingVertical: 7, paddingHorizontal: 6,
+    paddingVertical: 7, paddingHorizontal: 12,
     borderRadius: 8, alignItems: 'center',
   },
   entryNavTabActive: {
