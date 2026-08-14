@@ -3,7 +3,7 @@ import React, {
 } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView,
-  TextInput, ActivityIndicator, Platform, Animated, Keyboard,
+  TextInput, ActivityIndicator, Platform, Animated, Keyboard, RefreshControl,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Clipboard from '@react-native-clipboard/clipboard';
@@ -493,6 +493,26 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     skip: !visible || !enquiryId,
     refetchOnMountOrArgChange: true,
   });
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handlePullRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refetchEnquiry();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchEnquiry]);
+
+  const pullRefreshControl = (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={handlePullRefresh}
+      tintColor={colors.primary}
+      colors={[colors.primary]}
+    />
+  );
 
   const rawEnquiry  = fullEnquiryData?._originalData || fullEnquiryData;
   const fullEnquiry = rawEnquiry;
@@ -1968,6 +1988,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             style={s.scrollBody}
             contentContainerStyle={s.scrollContent}
             showsVerticalScrollIndicator={false}
+            refreshControl={pullRefreshControl}
           >
             {isAutoRecalculating && (
               <View style={s.recalcBanner}>
@@ -2209,6 +2230,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               contentContainerStyle={s.scrollContent}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              refreshControl={pullRefreshControl}
             >
               {pricingEntries.length > 1 && (
                 <View style={s.entryNavRow}>
