@@ -4,7 +4,7 @@
  */
 
 import Share from 'react-native-share';
-import { Platform, Alert } from 'react-native';
+import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FILE_BASE_URL, API_BASE_URL } from '../config/apiConfig';
@@ -812,27 +812,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
       }
       return url;
     } catch { return url; }
-  };
-
-  const getDesignImages = async (design, label) => {
-    if (!design?.Images || !Array.isArray(design.Images) || design.Images.length === 0) {
-      return `<tr><td colspan="2" style="text-align:center;padding:16px;color:#999;">No ${label} image available</td></tr>`;
-    }
-    const rows = await Promise.all(design.Images.map(async (img, idx) => {
-      const imgUrl = await getImageUrl(img);
-      const desc = img.Description || img.description || `${label} ${idx + 1}`;
-      if (!imgUrl) return '';
-      return `<tr>
-        <td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${idx === 0 ? label : ''}</td>
-        <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;">
-          <img src="${imgUrl}" alt="${desc}" style="max-width:200px;max-height:200px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);" />
-          ${design.Version ? `<br><span style="font-size:11px;color:#999;">Version ${design.Version}</span>` : ''}
-          ${design.CoralCode ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CoralCode}</span>` : ''}
-          ${design.CadCode   ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CadCode}</span>`   : ''}
-        </td>
-      </tr>`;
-    }));
-    return rows.filter(Boolean).join('');
   };
 
   // ── Checklist ──────────────────────────────────────────────────────────

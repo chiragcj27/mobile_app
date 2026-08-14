@@ -28,8 +28,6 @@ import { useAuth } from '../../context/AuthContext';
 import {
   useGetEnquiryByIdQuery,
   useDeleteEnquiryMutation,
-  useApproveDesignVersionMutation,
-  useRejectDesignVersionMutation,
   useUploadReferenceImagesMutation,
   useUpdateAssetDataMutation,
   useUpdateAssetDescriptionMutation,
@@ -333,10 +331,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   };
 
   // Local UI state
-  const [approvalMessage, setApprovalMessage] = useState('');
-  const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [showVersionSelector, setShowVersionSelector] = useState(false);
   const [selectedDesignType, setSelectedDesignType] = useState(null); // 'coral' or 'cad'
   const [selectedVersionIndex, setSelectedVersionIndex] = useState(null);
   const [selectedImageUri, setSelectedImageUri] = useState(null);
@@ -704,10 +699,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   );
 
   // API mutations
-  const [approveDesignVersion] =
-    useApproveDesignVersionMutation();
-  const [rejectDesignVersion] =
-    useRejectDesignVersionMutation();
   const [uploadReferenceImages, { isLoading: isUploadingReference }] =
     useUploadReferenceImagesMutation();
 
@@ -1488,66 +1479,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       </View>
     );
   }
-
-  const confirmReject = async () => {
-    if (!approvalMessage.trim()) {
-      showAlert('Error', 'Please provide a reason for rejection', 'error');
-      return;
-    }
-
-    if (!selectedDesignType || selectedVersionIndex === null) {
-      showAlert('Error', 'Design version information is missing', 'error');
-      return;
-    }
-
-    try {
-      const originalData = enquiry?._originalData || enquiry;
-      const versions =
-        selectedDesignType === 'coral'
-          ? originalData?.Coral || enquiry?.Coral || []
-          : originalData?.Cad || enquiry?.Cad || [];
-
-      if (selectedVersionIndex >= versions.length) {
-        showAlert('Error', 'Selected version not found', 'error');
-        return;
-      }
-
-      const version =
-        versions[selectedVersionIndex]?.Version ||
-        `Version ${selectedVersionIndex + 1}`;
-      const enquiryId = enquiry.id || enquiry._id;
-
-      await rejectDesignVersion({
-        enquiryId,
-        designType: selectedDesignType,
-        version,
-        reason: approvalMessage.trim(),
-      }).unwrap();
-
-      showAlert(
-        'Success',
-        `${selectedDesignType.toUpperCase()} ${version} rejected successfully`,
-        'success',
-      );
-
-      // Reset state
-      setShowApprovalModal(false);
-      setApprovalMessage('');
-      setSelectedDesignType(null);
-      setSelectedVersionIndex(null);
-
-      // Refetch enquiry data to get updated rejection status
-      refetch();
-    } catch (error) {
-      showAlert(
-        'Error',
-        error?.data?.error ||
-          error?.message ||
-          'Failed to reject design version. Please try again.',
-        'error',
-      );
-    }
-  };
 
   const getReturnRoute = () => {
     const state = navigation.getState();
@@ -4025,71 +3956,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     );
   };
 
-  const renderApprovalModal = () => {
-    // Get version info for display
-    const originalData = enquiry?._originalData || enquiry;
-    const versions =
-      selectedDesignType === 'coral'
-        ? originalData?.Coral || enquiry?.Coral || []
-        : originalData?.Cad || enquiry?.Cad || [];
-    const version =
-      selectedVersionIndex !== null && selectedVersionIndex < versions.length
-        ? versions[selectedVersionIndex]?.Version ||
-          `Version ${selectedVersionIndex + 1}`
-        : 'this version';
-
-    return (
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text
-            style={{
-              fontSize: 16,
-              fontWeight: 'bold',
-              color: colors.textPrimary,
-            }}
-          >
-            Reject Design Version
-          </Text>
-          <Text
-            style={{ color: colors.textSecondary, fontSize: 13, marginTop: 8 }}
-          >
-            {selectedDesignType
-              ? `${selectedDesignType.toUpperCase()} ${version}`
-              : 'Design version'}
-          </Text>
-          <Text
-            style={{ color: colors.textSecondary, fontSize: 13, marginTop: 8 }}
-          >
-            Please provide a reason for rejection:
-          </Text>
-
-          <Input
-            placeholder="Enter rejection reason..."
-            value={approvalMessage}
-            onChangeText={setApprovalMessage}
-            multiline
-            numberOfLines={3}
-            style={styles.modalInput}
-          />
-
-          <View style={styles.modalButtons}>
-            <Button
-              title="Cancel"
-              variant="outline"
-              onPress={() => setShowApprovalModal(false)}
-              style={styles.modalButton}
-            />
-            <Button
-              title="Reject"
-              onPress={confirmReject}
-              style={[styles.modalButton, styles.rejectButton]}
-            />
-          </View>
-        </View>
-      </View>
-    );
-  };
-
   return (
     <View style={styles.container}>
       <ScrollView
@@ -4701,8 +4567,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           />
         </FinalLookModal>
       )}
-
-      {showApprovalModal && renderApprovalModal()}
 
       <ShareEnquiryModal
         visible={showShareModal}

@@ -93,7 +93,6 @@ export default function NewEnquiryCard({
   const [isModalZoomed, setIsModalZoomed] = useState(false);
   const modalFlatListRef = useRef(null);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
-  const [isRemarkExpanded, setIsRemarkExpanded] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // ── Assign modal state ────────────────────────────────────────────────────
@@ -285,16 +284,6 @@ export default function NewEnquiryCard({
   }, [assignedVal]);
 
   const hasAssignedUser = assignedIdStr.length > 0;
-
-  const resolveAssignedId = (val) => {
-    if (!val) return null;
-    if (typeof val === 'object') {
-      return String(val.id || val.Id || val._id || val.userId || '').trim() || null;
-    }
-    const s = String(val).trim();
-    if (!s || s === 'null' || s === 'undefined' || s === '0' || s === 'false') return null;
-    return s;
-  };
 
   const assignedUserName = useMemo(() => {
     if (!assignedIdStr) return null;

@@ -105,11 +105,6 @@ export default function PricingCalci({ route, navigation }) {
   const [showAllPricesModal, setShowAllPricesModal] = useState(false);
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editingContext, setEditingContext] = useState({
-    type: null,
-    index: null,
-  });
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '', Ounce: '' });
   const [stoneRecalcStatus, setStoneRecalcStatus] = useState({});
@@ -168,8 +163,6 @@ export default function PricingCalci({ route, navigation }) {
     setCommonMetal({ Weight: '', Rate: '', Ounce: '' });
     setMetalKt('18K');
     setImageFile(null);
-    setEditModalVisible(false);
-    setEditingContext({ type: null, index: 0 });
     setIsRecalculating(false);
     setPdfHtml(null);
     setShowPdfModal(false);
@@ -189,8 +182,6 @@ export default function PricingCalci({ route, navigation }) {
     setShowPdfModal(false);
     setSingleStoneCatKey(null);
     setShowSingleStoneModal(false);
-    setEditModalVisible(false);
-    setEditingContext({ type: null, index: 0 });
     setIsRecalculating(false);
     setIsExtracting(false);
     setExtractPhase('');
@@ -256,29 +247,6 @@ export default function PricingCalci({ route, navigation }) {
     };
   }, [clientId, groupedData]);
 
-  // Auto-recalculate: when edit modal closes after editing, trigger recalc
-  // only if all missing stones of the EDITED TYPE are now filled
-  useEffect(() => {
-    if (editModalVisible) return;
-    const editedType = editingContext.type;
-    if (clientId && Object.keys(groupedData).length > 0) {
-      const currentMissing = editedType ? countMissingStones(editedType) : countMissingStones();
-      if (currentMissing > 0) {
-        return;
-      }
-      dataChangedRef.current = false;
-      const timer = setTimeout(() => {
-        if (!isAutoRecalculatingRef.current) {
-          isAutoRecalculatingRef.current = true;
-          handleRecalculateAllRef.current?.().finally(() => {
-            isAutoRecalculatingRef.current = false;
-          });
-        }
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [editModalVisible]);
-
   // Auto-focus metal weight input when grouped data appears and weight is missing
   useEffect(() => {
     if (
@@ -342,53 +310,6 @@ export default function PricingCalci({ route, navigation }) {
       return !data.pricingResult.TotalPrice || parseFloat(data.pricingResult.TotalPrice) <= 0;
     });
   }, [groupedData]);
-
-  const updateStone = (type, index, field, value) => {
-    dataChangedRef.current = true;
-    setGroupedData((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((cat) => {
-        if (next[cat].byType[type]) {
-          const typeData = next[cat].byType[type];
-          if (!Array.isArray(typeData.editableStones)) return;
-          const nextStones = [...typeData.editableStones];
-          nextStones[index] = { ...nextStones[index], [field]: value };
-          next[cat] = {
-            ...next[cat],
-            byType: {
-              ...next[cat].byType,
-              [type]: { ...typeData, editableStones: nextStones },
-            },
-          };
-        }
-      });
-      return next;
-    });
-  };
-
-  const deleteStone = (type, index) => {
-    dataChangedRef.current = true;
-    setGroupedData((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((cat) => {
-        if (next[cat].byType[type]) {
-          const typeData = next[cat].byType[type];
-          if (!Array.isArray(typeData.editableStones)) return;
-          next[cat] = {
-            ...next[cat],
-            byType: {
-              ...next[cat].byType,
-              [type]: {
-                ...typeData,
-                editableStones: typeData.editableStones.filter((_, i) => i !== index),
-              },
-            },
-          };
-        }
-      });
-      return next;
-    });
-  };
 
   const hasStoneTypeBeenRecalculated = type => Boolean(stoneRecalcStatus[type]);
 
@@ -950,14 +871,6 @@ export default function PricingCalci({ route, navigation }) {
       if (e?.message && !e.message.includes('cancel'))
         showAlert('Share Failed', 'Failed to share PDF.', 'error');
     }
-  };
-
-  const findTypeData = (type) => {
-    let found = null;
-    Object.values(groupedData).forEach((catData) => {
-      if (catData.byType[type]) found = catData.byType[type];
-    });
-    return found;
   };
 
   const openSingleStoneModal = (category) => {
@@ -1576,240 +1489,6 @@ export default function PricingCalci({ route, navigation }) {
         </TouchableOpacity>
       </Modal>
 
-      {/* UNIFIED EDIT STONE MODAL */}
-      <Modal
-        visible={editModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setEditModalVisible(false)}
-      >
-        <View style={styles.editModalOverlay}>
-          <View style={styles.editModalContent}>
-            <View style={styles.editModalHeader}>
-              <Text style={styles.editModalTitle}>Edit Stone</Text>
-              <View style={styles.editModalHeaderActions}>
-                <TouchableOpacity
-                  style={styles.deleteButton}
-                  onPress={() => {
-                    if (editingContext.type && editingContext.index !== null) {
-                      deleteStone(editingContext.type, editingContext.index);
-                      setEditModalVisible(false);
-                      setEditingContext({ type: null, index: null });
-                    }
-                  }}
-                >
-                  <Icon name="delete" size={20} color={colors.error} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setEditModalVisible(false)}>
-                  <Icon name="close" size={22} color={colors.textPrimary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <ScrollView>
-              {editingContext.type !== null &&
-                editingContext.index !== null &&
-                findTypeData(editingContext.type) &&
-                Array.isArray(findTypeData(editingContext.type).editableStones) &&
-                (() => {
-                  const typeData = findTypeData(editingContext.type);
-                  const stone =
-                    typeData.editableStones[
-                      editingContext.index
-                    ];
-                  if (!stone) return null;
-                  return (
-                    <View style={styles.editModalFields}>
-                      <View style={styles.editFieldRow}>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Type</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            value={stone.Type || editingContext.type}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'Type',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>MM</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            value={stone.MmSize}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'MmSize',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                      </View>
-                      <View style={styles.editFieldRow}>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Color</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            value={stone.Color}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'Color',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Shape</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            value={stone.Shape}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'Shape',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                      </View>
-                      <View style={styles.editFieldRow}>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Sieve</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            value={stone.SieveSize}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'SieveSize',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Pcs</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            keyboardType="number-pad"
-                            value={String(stone.Pcs ?? 0)}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'Pcs',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                      </View>
-                      <View style={styles.editFieldRow}>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Avg Wt</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            keyboardType="decimal-pad"
-                            value={String(stone.Weight ?? 0)}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'Weight',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Ct Wt</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            keyboardType="decimal-pad"
-                            value={String(stone.CtWeight ?? 0)}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'CtWeight',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                      </View>
-                      <View style={styles.editFieldRow}>
-                        <View style={styles.editFieldHalf}>
-                          <Text style={styles.editFieldLabel}>Markup</Text>
-                          <TextInput
-                            style={styles.editFieldInput}
-                            keyboardType="decimal-pad"
-                            value={String(stone.Markup ?? 0)}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'Markup',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                        <View style={styles.editFieldHalf}>
-                          <Text
-                            style={[
-                              styles.editFieldLabel,
-                              (!stone.Price || parseFloat(stone.Price) <= 0) &&
-                                styles.fieldLabelError,
-                            ]}
-                          >
-                            $/Ct *
-                          </Text>
-                          <TextInput
-                            style={[
-                              styles.editFieldInput,
-                              (!stone.Price || parseFloat(stone.Price) <= 0) &&
-                                styles.fieldInputError,
-                            ]}
-                            keyboardType="decimal-pad"
-                            value={String(stone.Price ?? 0)}
-                            onChangeText={v =>
-                              updateStone(
-                                editingContext.type,
-                                editingContext.index,
-                                'Price',
-                                v,
-                              )
-                            }
-                          />
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })()}
-            </ScrollView>
-            <TouchableOpacity
-              style={styles.editModalSaveButton}
-              onPress={() => setEditModalVisible(false)}
-            >
-              <Text style={styles.editModalSaveText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {/* PDF VIEWER MODAL */}
       <Modal visible={showPdfModal} animationType="slide" transparent>
         <View style={styles.pdfModalOverlay}>
@@ -2207,71 +1886,6 @@ const styles = StyleSheet.create({
     fontSize: fonts.md,
   },
 
-  editModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  editModalContent: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: '80%',
-    paddingBottom: 24,
-    elevation: 10,
-  },
-  editModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  editModalTitle: {
-    fontSize: fonts.md,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  editModalHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  deleteButton: { padding: 4 },
-  editModalFields: { padding: 16 },
-  editFieldRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  editFieldHalf: { flex: 1 },
-  editFieldLabel: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  editFieldInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    backgroundColor: colors.backgroundSecondary,
-  },
-  editModalSaveButton: {
-    marginHorizontal: 16,
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  editModalSaveText: {
-    color: colors.textWhite,
-    fontFamily: fonts.bold,
-    fontSize: fonts.md,
-  },
   fieldLabelError: { color: colors.error },
   fieldInputError: { borderColor: colors.error, borderWidth: 2 },
 
