@@ -510,15 +510,26 @@ export default function SingleStonePricing({
       );
     }
 
+    const hasResult = !!result && num(result.TotalPrice) > 0;
+    const isPending = isRecalculating || !hasResult;
+    const money = v => (isPending ? '—' : `$${num(v)}`);
+
     return (
       <View key={type} style={s.typeSection}>
         <View style={s.typeSectionHeader}>
           <Icon name="diamond" size={18} color={colors.primary} />
           <Text style={s.typeSectionTitle}>{type}</Text>
-          <View style={s.successBadge}>
-            <Icon name="check-circle" size={12} color={colors.success} />
-            <Text style={s.successBadgeText}>Calculated</Text>
-          </View>
+          {isPending ? (
+            <View style={s.pendingBadge}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={s.pendingBadgeText}>Calculating</Text>
+            </View>
+          ) : (
+            <View style={s.successBadge}>
+              <Icon name="check-circle" size={12} color={colors.success} />
+              <Text style={s.successBadgeText}>Calculated</Text>
+            </View>
+          )}
         </View>
 
         <View style={[s.typeCard, isRecalculating && s.typeCardCalculating]}>
@@ -534,19 +545,19 @@ export default function SingleStonePricing({
           <View style={s.typeCardBody}>
             <View style={s.typeCardRow}>
               <Text style={s.typeCardLabel}>Metal Price</Text>
-              <Text style={s.typeCardValue}>${num(result?.MetalPrice)}</Text>
+              <Text style={s.typeCardValue}>{money(result?.MetalPrice)}</Text>
             </View>
             <View style={s.typeCardRow}>
               <Text style={s.typeCardLabel}>Diamonds</Text>
-              <Text style={s.typeCardValue}>${num(result?.DiamondsPrice)}</Text>
+              <Text style={s.typeCardValue}>{money(result?.DiamondsPrice)}</Text>
             </View>
             <View style={s.typeCardRow}>
               <Text style={s.typeCardLabel}>Labour & Duties</Text>
-              <Text style={s.typeCardValue}>${num(result?.DutiesAmount)}</Text>
+              <Text style={s.typeCardValue}>{money(result?.DutiesAmount)}</Text>
             </View>
             <View style={[s.typeCardRow, { borderBottomWidth: 0 }]}>
               <Text style={s.typeCardLabelTotal}>Total Price</Text>
-              <Text style={s.typeCardValueTotal}>${num(result?.TotalPrice)}</Text>
+              <Text style={s.typeCardValueTotal}>{money(result?.TotalPrice)}</Text>
             </View>
           </View>
         </View>
@@ -788,6 +799,21 @@ const s = StyleSheet.create({
     fontSize: 11,
     fontFamily: fonts.bold,
     color: colors.success,
+  },
+
+  pendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.backgroundSecondary || '#F8F9FB',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  pendingBadgeText: {
+    fontSize: 11,
+    fontFamily: fonts.bold,
+    color: colors.textSecondary,
   },
 
   stoneTable: {
