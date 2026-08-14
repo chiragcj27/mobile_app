@@ -1321,27 +1321,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
-  previewDetailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || colors.border,
-  },
-  previewDetailLabel: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-    flex: 1,
-  },
-  previewDetailValue: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    flex: 1.5,
-    textAlign: 'right',
-  },
   previewActions: {
     flexDirection: 'row',
     gap: 12,

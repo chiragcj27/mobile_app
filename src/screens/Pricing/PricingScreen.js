@@ -27,6 +27,7 @@ import * as XLSX from 'xlsx';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
 import { DUTY_FIELDS, computeApplicable, readDutyRates } from '../../utils/pricingDuties';
 import { extraChargesValue, extraChargesType, makeExtraCharges, formatExtraChargesLabel } from '../../utils/extraCharges';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -281,10 +282,7 @@ const PricingScreen = ({ route, navigation }) => {
   const [savePricing, { isLoading: isSaving }] = useSavePricingMutation();
   
   // Alert state for BrandedAlert
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
 
   // Sync client pricing loading state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -2587,36 +2585,12 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     lineHeight: 16,
   },
-  pricingCard: {
-    marginBottom: 10,
-    padding: 12,
-    backgroundColor: colors.background,
-    borderRadius: 8,
-  },
-  sectionTitle: {
-    marginBottom: 10,
-    color: colors.textPrimary,
-    fontFamily: fonts.bold,
-    fontSize: fonts.base,
-  },
   pricingGrid: {
     gap: 6,
   },
   pricingGridTablet: {
     gap: 12,
     maxWidth: '100%',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  inputRowTablet: {
-    gap: 12,
-  },
-  gridInput: {
-    flex: 1,
-    minWidth: '30%',
   },
   inputRowThree: {
     flexDirection: 'row',
@@ -2630,10 +2604,6 @@ const styles = StyleSheet.create({
   gridInputThird: {
     flexBasis: '32%',
     marginBottom: 4,
-  },
-  gridInputThirdTablet: {
-    flexBasis: '32%',
-    marginBottom: 8,
   },
   inputRowFour: {
     flexDirection: 'row',
@@ -2676,44 +2646,12 @@ const styles = StyleSheet.create({
   extraChargesTypeTextActive: {
     color: colors.textWhite,
   },
-  undercutCard: {
-    marginBottom: 16,
-    padding: 20,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-  },
-  undercutHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  undercutLabel: {
-    marginLeft: 12,
-    fontSize: fonts.base,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  undercutInput: {
-    marginTop: 8,
-  },
-  stonesCard: {
-    marginBottom: 16,
-    padding: 20,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-  },
   stonesHeader: {
     marginBottom: 6,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 8,
-  },
-  stonesButtonsContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-    flexWrap: 'wrap',
   },
   stoneFilterRow: {
     flexDirection: 'row',
@@ -2789,13 +2727,6 @@ const styles = StyleSheet.create({
   downloadButton: {
     backgroundColor: colors.primary,
   },
-  stonesTableContainer: {
-    marginTop: 12,
-  },
-  stonesTableContainerTablet: {
-    marginTop: 16,
-    width: '100%',
-  },
   tableScrollView: {
     maxHeight: 400,
   },
@@ -2852,21 +2783,8 @@ const styles = StyleSheet.create({
   tableHeaderTextTablet: {
     fontSize: 11,
   },
-  tableScrollContainer: {
-    // Removed - using flex layout instead
-  },
   tableBody: {
     backgroundColor: colors.background,
-  },
-  noFilteredDataRow: {
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  noFilteredDataText: {
-    color: colors.textSecondary,
-    fontFamily: fonts.medium,
   },
   tableRow: {
     flexDirection: 'row',
@@ -2926,27 +2844,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     fontSize: 11,
     minWidth: 50,
-  },
-  tableCellNumber: {
-    width: 25,
-    minWidth: 25,
-  },
-  tableCellType: {
-    width: 80,
-    minWidth: 80,
-  },
-  tableCellSmall: {
-    width: 50,
-    minWidth: 50,
-  },
-  tableCellMedium: {
-    width: 65,
-    minWidth: 65,
-  },
-  tableCellAction: {
-    width: 40,
-    minWidth: 40,
-    borderRightWidth: 0,
   },
   // Flex-based column widths for responsive table
   tableCellFlexNumber: {
@@ -3014,10 +2911,6 @@ const styles = StyleSheet.create({
   tableCellFlexPriceTablet: {
     flex: 1.5,
     maxWidth: 150,
-  },
-  tableCellCompact: {
-    minHeight: 20,
-    paddingVertical: 1,
   },
   // Compact styles for view mode table
   tableRowView: {
@@ -3087,34 +2980,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     color: colors.textPrimary,
   },
-  deleteStoneButton: {
-    padding: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 6,
-  },
-  emptyStonesContainer: {
-    padding: 40,
-    alignItems: 'center',
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-  },
-  emptyStonesText: {
-    color: colors.textSecondary,
-    fontSize: fonts.base,
-    fontFamily: fonts.bold,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyStonesSubtext: {
-    color: colors.textLight,
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    textAlign: 'center',
-  },
   messageCard: {
     marginBottom: 10,
     padding: 10,
@@ -3145,66 +3010,6 @@ const styles = StyleSheet.create({
     minHeight: 60,
     textAlignVertical: 'top',
   },
-  messageDisplayBox: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.background,
-    minHeight: 60,
-    marginTop: 8,
-  },
-  messageDisplayText: {
-    fontSize: fonts.base,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  actionButtonsCard: {
-    marginTop: 6,
-    padding: 10,
-    backgroundColor: colors.background,
-    borderRadius: 8,
-  },
-  actionButtons: {
-    gap: 8,
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionBtn: {
-    borderRadius: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    minHeight: 38,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionBtnHalf: {
-    flex: 1,
-  },
-  btnContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  btnText: {
-    color: colors.textWhite,
-    fontFamily: fonts.bold,
-    fontSize: fonts.xs,
-    letterSpacing: 0.1,
-  },
-  saveBtn: {
-    backgroundColor: colors.primary,
-    width: '100%',
-  },
-  cancelBtn: {
-    backgroundColor: colors.textSecondary,
-    width: '100%',
-  },
   calculateBtn: {
     backgroundColor: colors.primary,
     shadowColor: colors.primary,
@@ -3223,14 +3028,6 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     shadowOpacity: 0.1,
     elevation: 1,
-  },
-  filterCard: {
-    marginBottom: 20,
-    padding: 16,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.primary,
   },
   allPricingEntriesContainer: {
     marginBottom: 12,
@@ -3376,15 +3173,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
-  modalFooterTopRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 6,
-  },
-  modalFooterActionRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
   modalFooterSingleRow: {
     flexDirection: 'row',
     gap: 4,
@@ -3430,9 +3218,6 @@ const styles = StyleSheet.create({
   },
   saveModalButtonText: {
     color: colors.textWhite,
-  },
-  disabledButtonText: {
-    opacity: 0.5,
   },
   modalActionButton: {
     flex: 1,

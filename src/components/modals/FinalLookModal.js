@@ -310,7 +310,6 @@ const s = StyleSheet.create({
     paddingVertical: 10, borderRadius: 8,
   },
   saveBtn: { backgroundColor: colors.primary },
-  approveBtn: { backgroundColor: colors.success || '#10B981' },
   pdfBarBtnText: { fontFamily: fonts.medium, fontSize: fonts.xs || 12, color: '#fff' },
 });
 

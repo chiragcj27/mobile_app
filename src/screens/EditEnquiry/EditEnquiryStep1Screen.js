@@ -765,12 +765,6 @@ const styles = StyleSheet.create({
     paddingRight: 8,
     fontWeight: '500',
   },
-  readOnlyHint: {
-    marginTop: 6,
-    fontSize: fonts.sm,
-    color: colors.textSecondary,
-    fontFamily: fonts.regular,
-  },
   priorityContainer: {
     marginBottom: 16,
   },

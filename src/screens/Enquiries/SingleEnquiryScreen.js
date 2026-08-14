@@ -5371,9 +5371,6 @@ const styles = StyleSheet.create({
   actionButton: {
     flex: 1,
   },
-  rejectButton: {
-    backgroundColor: colors.error,
-  },
   historyButton: {
     backgroundColor: colors.info || '#2196F3',
     marginBottom: 16,
@@ -5399,33 +5396,6 @@ const styles = StyleSheet.create({
     color: colors.textWhite,
     fontFamily: fonts.medium,
     fontSize: 14,
-  },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.modalOverlay,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: colors.modalBackground,
-    borderRadius: 12,
-    padding: 20,
-    width: '100%',
-  },
-  modalInput: {
-    marginBottom: 20,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  modalButton: {
-    flex: 1,
   },
   fullscreenImageBackdrop: {
     flex: 1,
