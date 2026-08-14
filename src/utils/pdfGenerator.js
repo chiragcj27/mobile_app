@@ -832,11 +832,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
     ? new Date(checklist.GeneratedAt).toLocaleString()
     : 'N/A';
 
-  const checklistHtml = checklistFields.map(f => {
-    const val = checklist[f.key] || 'N/A';
-    return `<tr><td style="padding:4px 8px;font-size:8px;border:1px solid #d1d5db;font-weight:500;">${f.label}</td><td style="padding:4px 8px;font-size:8px;border:1px solid #d1d5db;white-space:pre-line;line-height:1.4;font-weight:700;">${val}</td></tr>`;
-  }).join('');
-
   // ── Reference images (fetched as base64 so PDF renderer can display them) ─
   const referenceImages = Array.isArray(src?.ReferenceImages) ? src.ReferenceImages : [];
   const refImagesHtml = referenceImages.length > 0
@@ -1082,6 +1077,23 @@ ${specialRemarks ? `
     </td>
   </tr>
 </table>
+
+<!-- Section 06: Status History -->
+<section style="margin:0 24px 24px;">
+  <table style="width:100%;border-collapse:collapse;font-size:9px;">
+    <thead>
+      <tr>
+        <th colspan="3" style="background-color:#235A63;color:#ffffff;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">06 STATUS HISTORY</th>
+      </tr>
+      <tr style="background-color:#f3f4f6;">
+        <th style="padding:6px 7px;border:1px solid #d1d5db;color:#6B7280;font-size:9px;text-align:left;width:30%;">Date</th>
+        <th style="padding:6px 7px;border:1px solid #d1d5db;color:#6B7280;font-size:9px;text-align:left;width:35%;">Status</th>
+        <th style="padding:6px 7px;border:1px solid #d1d5db;color:#6B7280;font-size:9px;text-align:left;width:35%;">Sub Status</th>
+      </tr>
+    </thead>
+    <tbody style="border:1px solid #d1d5db;">${statusHistoryHtml}</tbody>
+  </table>
+</section>
 
 </main>
 </body>
