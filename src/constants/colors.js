@@ -42,3 +42,23 @@ export const colors = {
   modalOverlay: 'rgba(0, 0, 0, 0.5)',
   modalBackground: '#FFFFFF',
 };
+
+export const stoneColorMap = {
+  'white': '#F5F5F5', 'diamond': '#F5F5F5', 'clear': '#F5F5F5',
+  'green': '#E8F5E9', 'emerald': '#E8F5E9',
+  'red': '#FFEBEE', 'ruby': '#FFEBEE',
+  'blue': '#E3F2FD', 'sapphire': '#E3F2FD',
+  'yellow': '#FFF8E1', 'canary': '#FFF8E1',
+  'pink': '#FCE4EC', 'rose': '#FCE4EC',
+  'purple': '#F3E5F5', 'amethyst': '#F3E5F5',
+  'orange': '#FFF3E0', 'padparadscha': '#FFF3E0',
+  'black': '#ECEFF1', 'brown': '#EFEBE9', 'champagne': '#EFEBE9',
+  'peach': '#FDEBD0', 'mint': '#E0F2F1',
+  'grey': '#ECEFF1', 'gray': '#ECEFF1',
+  'lilac': '#EDE7F6', 'coral': '#FBE9E7',
+};
+
+export const getStoneBg = (color) => {
+  const key = (color || '').trim().toLowerCase();
+  return stoneColorMap[key] || '';
+};
