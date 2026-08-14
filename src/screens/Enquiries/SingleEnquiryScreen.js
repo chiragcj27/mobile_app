@@ -332,6 +332,8 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
 
   // Local UI state
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedImageUri, setSelectedImageUri] = useState(null);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [isImageModalVisible, setImageModalVisible] = useState(false);
   const [modalImages, setModalImages] = useState([]); // Store image objects for modal
   const modalFlatListRef = useRef(null);

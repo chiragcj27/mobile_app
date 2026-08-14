@@ -1989,19 +1989,6 @@ export const api = createApi({
                 : null;
             const currentStatus = dashLatest?.Status || 'pending';
 
-            const priority = (
-              enquiry.Priority ||
-              enquiry.priority ||
-              ''
-            ).toLowerCase();
-            if (
-              priority.includes('urgent') ||
-              priority === 'high' ||
-              priority === 'super high'
-            ) {
-            } else if (priority === 'low') {
-            }
-
             let normalizedStatus = 'pending';
             const status = currentStatus.toLowerCase();
             if (status === 'enquiry created' || status === 'pending') {
