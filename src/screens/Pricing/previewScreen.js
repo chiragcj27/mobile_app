@@ -47,7 +47,7 @@ const num = v => {
 const METAL_QUALITY_CHOICES = ['3K', '9K', '10K', '14K', '18K', '22K', '24K', 'Silver 925', 'Platinum'];
 
 
-const buildEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false, isClientPreview=false, isEditable=false) => {
+const buildEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false, isEditable=false) => {
   const p = entry;
   const stones = p.Stones || [];
   
@@ -577,7 +577,7 @@ const buildCombinedHtml = (pricingEntries, clientName, metalKt, preCropImageUrl,
   const sectionsHtml = pricingEntries
     .map((entry, index) => isClientPreview
       ? buildClientEntryHtml(entry, index, metalKt, clientName, false)
-      : buildEntryHtml(entry, index, metalKt, clientName, false, isClientPreview, isEditable))
+      : buildEntryHtml(entry, index, metalKt, clientName, false, isEditable))
     .join('');
 
   const logoSrc = `data:image/png;base64,${LOGO_BASE64}`;

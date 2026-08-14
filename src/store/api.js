@@ -5548,9 +5548,7 @@ export const api = createApi({
                 timestamp = timestamp.$date;
               } else if (timestamp?.Timestamp) {
                 timestamp = timestamp.Timestamp;
-              } else if (typeof timestamp === 'string') {
-                timestamp = timestamp;
-              } else {
+              } else if (typeof timestamp !== 'string') {
                 timestamp = new Date().toISOString();
               }
 

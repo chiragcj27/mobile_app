@@ -5597,15 +5597,6 @@ const styles = StyleSheet.create({
     fontSize: fonts.sm,
     color: colors.error,
   },
-  videoContainer: {
-    marginRight: 12,
-    width: 150,
-    height: 150,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: colors.backgroundSecondary,
-    position: 'relative',
-  },
   fullscreenVideo: {
     width: '100%',
     height: '100%',
