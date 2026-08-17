@@ -64,19 +64,12 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
   const currentQuality = data?.editableMetal?.Quality || metalKt;
-  const priorQuality = previousMetalQuality ?? data?.pricingResult?.Metal?.Quality;
-  const normQuality = v => String(v ?? '').trim().toUpperCase();
-  // On a quality switch the backend needs both sides: Quality stays the one the
-  // stones were last priced against, UpdatedmetalQuality carries the new pick.
-  const qualityChanged =
-    isRecalculate &&
-    !!normQuality(priorQuality) &&
-    !!normQuality(currentQuality) &&
-    normQuality(priorQuality) !== normQuality(currentQuality);
+  const lastPricedQuality =
+    previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality;
 
   const metalPayload = {
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
-    Quality: qualityChanged ? priorQuality : currentQuality,
+    Quality: lastPricedQuality,
   };
   if (ounceVal > 0) {
     metalPayload.GoldRatePerOunce = ounceVal;
@@ -103,9 +96,7 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
     isRecalculate,
   };
 
-  if (qualityChanged) {
-    payload.UpdatedmetalQuality = currentQuality;
-  }
+  payload.UpdatedmetalQuality = currentQuality;
 
   return payload;
 };
