@@ -347,6 +347,7 @@ export default function PricingCalci({ route, navigation }) {
         Object.keys(newByType).forEach((type) => {
           newByType[type] = {
             ...newByType[type],
+            previousQuality: newByType[type].editableMetal?.Quality || metalKt,
             editableMetal: { ...newByType[type].editableMetal, Quality: newKt, Rate: '' },
           };
         });
