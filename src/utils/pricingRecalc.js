@@ -42,7 +42,7 @@ function resolveDutyRates(data, selectedClient) {
   return result;
 }
 
-export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true }) => {
+export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true, previousMetalQuality }) => {
   const formattedStones = (Array.isArray(data?.editableStones) ? data.editableStones : [])
     .map(s => ({
       Type: s.Type,
@@ -63,9 +63,10 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
+  const currentQuality = data?.editableMetal?.Quality || metalKt;
   const metalPayload = {
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
-    Quality: data?.editableMetal?.Quality || metalKt,
+    Quality: currentQuality,
   };
   if (ounceVal > 0) {
     metalPayload.GoldRatePerOunce = ounceVal;
@@ -91,6 +92,14 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
     clientId,
     isRecalculate,
   };
+
+  // Only sent when the quality actually changed against what was last priced,
+  // so the backend can tell a quality switch apart from a plain recalculation.
+  const priorQuality = previousMetalQuality ?? data?.pricingResult?.Metal?.Quality;
+  const norm = v => String(v ?? '').trim().toUpperCase();
+  if (isRecalculate && norm(priorQuality) && norm(currentQuality) && norm(priorQuality) !== norm(currentQuality)) {
+    payload.UpdatedmetalQuality = currentQuality;
+  }
 
   return payload;
 };

@@ -4598,17 +4598,21 @@ export const api = createApi({
       },
     }),
     calculatePricing: builder.mutation({
-      query: ({ details, clientId, isRecalculate = false }) => {
+      query: ({ details, clientId, isRecalculate = false, UpdatedmetalQuality }) => {
+        const body = { details, clientId, isRecalculate };
+        if (UpdatedmetalQuality) {
+          body.UpdatedmetalQuality = UpdatedmetalQuality;
+        }
         if (__DEV__) {
           console.log(
             'ðŸ’° [calculatePricing] Payload:',
-            JSON.stringify({ details, clientId, isRecalculate }, null, 2),
+            JSON.stringify(body, null, 2),
           );
         }
         return {
           url: '/api/enquiries/pricingCalculate',
           method: 'POST',
-          body: { details, clientId, isRecalculate },
+          body,
         };
       },
       transformResponse: response => {
