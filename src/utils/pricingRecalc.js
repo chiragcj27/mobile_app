@@ -98,5 +98,16 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   payload.UpdatedmetalQuality = currentQuality;
 
+  console.log('[buildRecalculatePayload] quality', {
+    currentQuality,
+    lastPricedQuality,
+    previousMetalQualityArg: previousMetalQuality,
+    fromPricingResult: data?.pricingResult?.Metal?.Quality,
+    metalKt,
+    'details.Metal.Quality': payload.details.Metal.Quality,
+    UpdatedmetalQuality: payload.UpdatedmetalQuality,
+    topLevelKeys: Object.keys(payload),
+  });
+
   return payload;
 };
