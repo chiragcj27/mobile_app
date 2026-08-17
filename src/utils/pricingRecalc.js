@@ -63,7 +63,7 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
-  const currentQuality = metalKt || data?.editableMetal?.Quality;
+  const currentQuality = data?.editableMetal?.Quality || metalKt;
   const lastPricedQuality =
     previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality;
 
