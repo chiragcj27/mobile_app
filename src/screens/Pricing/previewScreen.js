@@ -30,6 +30,7 @@ import {
   useSavePricingMutation,
 } from '../../store/api';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
+import { selectQuality, getSelectedQuality } from '../../utils/metalQualitySelector';
 import { LOGO_BASE64 } from '../../constants/logo';
 import { normalizeExtraCharges } from '../../utils/extraCharges';
 
@@ -895,7 +896,7 @@ export default function PreviewScreen({ route, navigation }) {
     if (!currentEntries || currentEntries.length === 0 || !clientId) return;
     setIsRecalculating(true);
     try {
-      const payloads = currentEntries.map(entry => {
+      const payloads = currentEntries.map((entry, entryIdx) => {
         const editableStones = (entry.Stones || []).map(s => ({
           Type: s.Type || '',
           Color: s.Color || '',
@@ -910,6 +911,7 @@ export default function PreviewScreen({ route, navigation }) {
         }));
         return buildRecalculatePayload({
           clientId,
+          previousMetalQuality: getSelectedQuality(entryIdx)?.current,
           data: {
             editableStones,
             editableMetal: {
@@ -1017,6 +1019,7 @@ export default function PreviewScreen({ route, navigation }) {
 
     const entry = { ...target };
     if (type === 'MetalKT') {
+      selectQuality(entryIdx, value, target.MetalKT || target.Metal?.Quality);
       entry.MetalKT = value;
       entry.Metal = { ...(entry.Metal || {}), Quality: value };
     } else {

@@ -26,6 +26,7 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
+import { selectQuality, getSelectedQuality } from '../../utils/metalQualitySelector';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -338,6 +339,7 @@ export default function PricingCalci({ route, navigation }) {
   };
 
   const handleMetalKtChange = (newKt) => {
+    selectQuality(clientId || 'pricing', newKt, metalKt);
     setMetalKt(newKt);
     setCommonMetal({ ...commonMetal, Rate: '' });
     setGroupedData((prev) => {
@@ -498,6 +500,7 @@ export default function PricingCalci({ route, navigation }) {
         clientId,
         data,
         metalKt,
+        previousMetalQuality: getSelectedQuality(clientId || 'pricing')?.current,
         selectedClient,
         commonMetal,
         // New types go through their first calculation so the backend prices
