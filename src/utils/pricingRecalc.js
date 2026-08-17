@@ -42,7 +42,7 @@ function resolveDutyRates(data, selectedClient) {
   return result;
 }
 
-export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true, previousMetalQuality }) => {
+export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true, previousMetalQuality, updatedMetalQuality }) => {
   const formattedStones = (Array.isArray(data?.editableStones) ? data.editableStones : [])
     .map(s => ({
       Type: s.Type,
@@ -63,7 +63,8 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
-  const currentQuality = data?.editableMetal?.Quality || metalKt;
+  const currentQuality =
+    updatedMetalQuality || data?.editableMetal?.Quality || metalKt;
   const lastPricedQuality =
     previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality;
 

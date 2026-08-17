@@ -912,6 +912,7 @@ export default function PreviewScreen({ route, navigation }) {
         return buildRecalculatePayload({
           clientId,
           previousMetalQuality: getSelectedQuality(entryIdx)?.current,
+          updatedMetalQuality: getSelectedQuality(entryIdx)?.updated,
           data: {
             editableStones,
             editableMetal: {
