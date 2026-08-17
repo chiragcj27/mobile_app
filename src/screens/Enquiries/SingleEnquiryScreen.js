@@ -1696,7 +1696,12 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     // Extract metal details - check ALL possible locations (originalData, enquiry normalized, enquiry raw)
     const metal = originalData?.Metal || enquiry?.Metal || enquiry?.metal || {};
     const metalColor = metal.Color || metal.color || null;
-    const metalQuality = metal.Quality || metal.quality || null;
+    const metalQualityList = metal.Qualities || metal.qualities;
+    const metalQuality =
+      (Array.isArray(metalQualityList) ? metalQualityList.filter(Boolean).join(', ') : '') ||
+      metal.Quality ||
+      metal.quality ||
+      null;
 
     // Extract weights - check ALL possible locations with comprehensive fallback
     const metalWeight =
@@ -1745,7 +1750,13 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       enquiry?.category ||
       originalData?.category ||
       null;
+    const stoneTypeList =
+      originalData?.StoneTypes ||
+      enquiry?.StoneTypes ||
+      enquiry?.stoneTypes ||
+      originalData?.stoneTypes;
     const stoneType =
+      (Array.isArray(stoneTypeList) ? stoneTypeList.filter(Boolean).join(', ') : '') ||
       originalData?.StoneType ||
       enquiry?.StoneType ||
       enquiry?.stoneType ||
