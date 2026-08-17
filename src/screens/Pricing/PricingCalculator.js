@@ -121,7 +121,6 @@ export default function PricingCalci({ route, navigation }) {
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
   const metalWeightRef = useRef(null);
-  const prevQualityRef = useRef(null);
   const singleStoneCatKeyRef = useRef(singleStoneCatKey);
   const groupedDataRef = useRef(groupedData);
   const handleRecalculateAllRef = useRef(null);
@@ -339,9 +338,6 @@ export default function PricingCalci({ route, navigation }) {
   };
 
   const handleMetalKtChange = (newKt) => {
-    if (newKt !== metalKt) {
-      prevQualityRef.current = metalKt;
-    }
     setMetalKt(newKt);
     setCommonMetal({ ...commonMetal, Rate: '' });
     setGroupedData((prev) => {
@@ -502,7 +498,6 @@ export default function PricingCalci({ route, navigation }) {
         clientId,
         data,
         metalKt,
-        previousMetalQuality: prevQualityRef.current,
         selectedClient,
         commonMetal,
         // New types go through their first calculation so the backend prices
@@ -569,7 +564,6 @@ export default function PricingCalci({ route, navigation }) {
           Ounce: first.result.GoldRatePerOunce ? first.result.GoldRatePerOunce.toString() : commonMetal.Ounce,
         });
       }
-      prevQualityRef.current = null;
     }
 
     setIsRecalculating(false);
