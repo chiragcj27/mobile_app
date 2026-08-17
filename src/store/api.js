@@ -4598,14 +4598,8 @@ export const api = createApi({
       },
     }),
     calculatePricing: builder.mutation({
-      query: (arg) => {
-        const { details, clientId, isRecalculate = false, UpdatedmetalQuality } = arg;
+      query: ({ details, clientId, isRecalculate = false, UpdatedmetalQuality }) => {
         const body = { details, clientId, isRecalculate, UpdatedmetalQuality };
-        console.log('[calculatePricing] arg keys:', Object.keys(arg));
-        console.log('[calculatePricing] arg.UpdatedmetalQuality:', arg.UpdatedmetalQuality);
-        console.log('[calculatePricing] body.UpdatedmetalQuality:', body.UpdatedmetalQuality);
-        console.log('[calculatePricing] body.details.Metal:', JSON.stringify(body.details?.Metal));
-        console.log('[calculatePricing] POST /api/enquiries/pricingCalculate body:', JSON.stringify(body));
         if (__DEV__) {
           console.log(
             'ðŸ’° [calculatePricing] Payload:',

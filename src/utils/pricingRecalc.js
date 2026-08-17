@@ -63,9 +63,12 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
-  const currentQuality = data?.editableMetal?.Quality || metalKt;
+  const currentQuality = metalKt || data?.editableMetal?.Quality;
   const lastPricedQuality =
-    previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality;
+    previousMetalQuality ||
+    data?.pricingResult?.Metal?.Quality ||
+    data?.editableMetal?.Quality ||
+    currentQuality;
 
   const metalPayload = {
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
@@ -98,16 +101,7 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   payload.UpdatedmetalQuality = currentQuality;
 
-  console.log('[buildRecalculatePayload] quality', {
-    currentQuality,
-    lastPricedQuality,
-    previousMetalQualityArg: previousMetalQuality,
-    fromPricingResult: data?.pricingResult?.Metal?.Quality,
-    metalKt,
-    'details.Metal.Quality': payload.details.Metal.Quality,
-    UpdatedmetalQuality: payload.UpdatedmetalQuality,
-    topLevelKeys: Object.keys(payload),
-  });
+  console.log('[pricing] quality old ->', lastPricedQuality, '| new ->', currentQuality);
 
   return payload;
 };
