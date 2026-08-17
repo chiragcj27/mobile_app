@@ -2009,7 +2009,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                         <Text style={styles.specAvatarText}>{assignedTo ? assignedTo.charAt(0).toUpperCase() : '?'}</Text>
                       </View>
                     ) : null}
-                    <Text style={styles.specValue} numberOfLines={1}>{s.value}</Text>
+                    <Text style={styles.specValue}>{s.value}</Text>
                   </View>
                 </View>
               ))}
@@ -4760,6 +4760,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   specValue: {
+    flex: 1,
+    flexWrap: 'wrap',
     fontSize: 14,
     fontFamily: fonts.bold,
     color: colors.textPrimary,
