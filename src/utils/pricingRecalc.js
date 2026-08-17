@@ -42,10 +42,7 @@ function resolveDutyRates(data, selectedClient) {
   return result;
 }
 
-const savedQualities = new Map();
-
 export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true, previousMetalQuality }) => {
-  const oldMetalQuality =[];
   const formattedStones = (Array.isArray(data?.editableStones) ? data.editableStones : [])
     .map(s => ({
       Type: s.Type,
@@ -60,27 +57,15 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
       Markup: parseFloat(s.Markup || 0) || 0,
     }))
     .filter(s => s.Type);
-  const pickedQuality = data?.editableMetal?.Quality || metalKt;
-  const qualityKey = `${clientId || ''}|${formattedStones[0]?.Type || 'metal'}`;
-  const rememberedQuality = savedQualities.get(qualityKey);
-
-  const oldForThisCall = !isRecalculate
-    ? pickedQuality
-    : previousMetalQuality || rememberedQuality || pickedQuality;
-
-  formattedStones.forEach(() => {
-    oldMetalQuality.push(oldForThisCall);
-  });
-  savedQualities.set(qualityKey, pickedQuality);
-
 
   const previousCharges = resolveCharges(data);
   const previousDutyRates = resolveDutyRates(data, selectedClient);
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
+  const currentQuality = data?.editableMetal?.Quality || metalKt;
   const lastPricedQuality =
-    oldMetalQuality.length > 0 ? oldMetalQuality[oldMetalQuality.length - 1] : oldForThisCall;
+    previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality;
 
   const metalPayload = {
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
@@ -111,9 +96,7 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
     isRecalculate,
   };
 
-  payload.UpdatedmetalQuality = pickedQuality;
-
-  console.log('[pricing] quality old ->', lastPricedQuality, '| new ->', pickedQuality);
+  payload.UpdatedmetalQuality = currentQuality;
 
   return payload;
 };
