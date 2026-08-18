@@ -1,10 +1,3 @@
-export const getMetalRateLabel = quality => {
-  const q = String(quality || '');
-  if (/silver/i.test(q)) return 'Silver Rate ($/g)';
-  if (/platinum/i.test(q)) return 'Platinum Rate ($/g)';
-  return '24K Rate ($/g)';
-};
-
 export const METAL_QUALITY_OPTIONS = [
   { label: '3K', value: '3K' },
   { label: '9K', value: '9K' },

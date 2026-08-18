@@ -16,7 +16,6 @@ import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { extraChargesSuffix } from '../../utils/extraCharges';
-import { getMetalRateLabel } from '../../constants/metalQualities';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
@@ -627,7 +626,7 @@ export default function SingleStonePricing({
                   </View>
                 </View>
                 <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>{getMetalRateLabel(metalKt)}</Text>
+                  <Text style={s.chargeLabel}>Metal Rate ($/g)</Text>
                   <View style={s.chargeInputWrap}>
                     <TextInput
                       style={s.chargeInput}

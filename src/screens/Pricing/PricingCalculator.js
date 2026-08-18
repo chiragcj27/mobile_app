@@ -26,7 +26,6 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
-import { getMetalRateLabel } from '../../constants/metalQualities';
 import { selectQuality, getSelectedQuality, commitQuality } from '../../utils/metalQualitySelector';
 import {
   groupStoneDataByCategory,
@@ -108,7 +107,7 @@ export default function PricingCalci({ route, navigation }) {
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
-  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '', Ounce: '' });
+  const [commonMetal, setCommonMetal] = useState({ Ounce: '' });
   const [stoneRecalcStatus, setStoneRecalcStatus] = useState({});
   const [showSingleStoneModal, setShowSingleStoneModal] = useState(false);
   const [singleStoneCatKey, setSingleStoneCatKey] = useState(null);
@@ -122,7 +121,6 @@ export default function PricingCalci({ route, navigation }) {
 
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
-  const metalWeightRef = useRef(null);
   const singleStoneCatKeyRef = useRef(singleStoneCatKey);
   const groupedDataRef = useRef(groupedData);
   const handleRecalculateAllRef = useRef(null);
@@ -162,7 +160,7 @@ export default function PricingCalci({ route, navigation }) {
     }
     setGroupedData({});
     setStoneRecalcStatus({});
-    setCommonMetal({ Weight: '', Rate: '', Ounce: '' });
+    setCommonMetal({ Ounce: '' });
     setMetalKt('');
     setImageFile(null);
     setIsRecalculating(false);
@@ -179,7 +177,7 @@ export default function PricingCalci({ route, navigation }) {
     setImageFile(null);
     setGroupedData({});
     setStoneRecalcStatus({});
-    setCommonMetal({ Weight: '', Rate: '', Ounce: '' });
+    setCommonMetal({ Ounce: '' });
     setPdfHtml(null);
     setShowPdfModal(false);
     setSingleStoneCatKey(null);
@@ -225,7 +223,7 @@ export default function PricingCalci({ route, navigation }) {
       });
     }, 900);
     return () => clearTimeout(timer);
-  }, [commonMetal.Weight, commonMetal.Rate, commonMetal.Ounce, metalKt]);
+  }, [commonMetal.Ounce, metalKt]);
 
   // Auto-recalculate: listen for keyboard hide, debounce, then recalc
   // skip if missing stones remain so user can finish editing all first
@@ -251,16 +249,6 @@ export default function PricingCalci({ route, navigation }) {
       clearTimeout(debounceTimer);
     };
   }, [clientId, groupedData]);
-
-  // Auto-focus metal weight input when grouped data appears and weight is missing
-  useEffect(() => {
-    if (
-      Object.keys(groupedData).length > 0 &&
-      (!commonMetal.Weight || parseFloat(commonMetal.Weight) <= 0)
-    ) {
-      setTimeout(() => metalWeightRef.current?.focus(), 400);
-    }
-  }, [groupedData]);
 
   // Auto-recalc after image extraction: trigger calculatePricing for all types
   useEffect(() => {
@@ -355,7 +343,6 @@ export default function PricingCalci({ route, navigation }) {
   const handleMetalKtChange = (newKt) => {
     selectQuality(clientId || 'pricing', newKt, metalKt);
     setMetalKt(newKt);
-    setCommonMetal({ ...commonMetal, Rate: '' });
     setGroupedData((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((cat) => {
@@ -385,11 +372,6 @@ export default function PricingCalci({ route, navigation }) {
   const updateCommonMetal = (field, value) => {
     dataChangedRef.current = true;
     const updated = { ...commonMetal, [field]: value };
-    if (field === 'Rate' && value !== '' && parseFloat(value) > 0) {
-      updated.Ounce = '';
-    } else if (field === 'Ounce' && value !== '' && parseFloat(value) > 0) {
-      updated.Rate = '';
-    }
     setCommonMetal(updated);
     setGroupedData((prev) => {
       const next = { ...prev };
@@ -577,8 +559,6 @@ export default function PricingCalci({ route, navigation }) {
       const first = succeededTypes[0];
       if (first) {
         setCommonMetal({
-          Weight: first.result.Metal?.Weight ? first.result.Metal.Weight.toString() : commonMetal.Weight,
-          Rate: first.result.Metal?.Rate ? first.result.Metal.Rate.toString() : commonMetal.Rate,
           Ounce: first.result.GoldRatePerOunce ? first.result.GoldRatePerOunce.toString() : commonMetal.Ounce,
         });
       }
@@ -716,8 +696,6 @@ export default function PricingCalci({ route, navigation }) {
           if (firstData) {
             const m = firstData.editableMetal;
             setCommonMetal({
-              Weight: m.Weight ? String(m.Weight) : commonMetal.Weight,
-              Rate: m.Rate ? String(m.Rate) : commonMetal.Rate,
               Ounce: firstData.pricingResult?.GoldRatePerOunce ? firstData.pricingResult.GoldRatePerOunce.toString() : commonMetal.Ounce,
             });
           }
@@ -1254,57 +1232,11 @@ export default function PricingCalci({ route, navigation }) {
         {Object.keys(groupedData).length > 0 && (
           <Card style={[styles.card, { marginTop: 16, borderBottomWidth: 0 }]}>
 
-            {(!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && (
-              <View style={styles.validationWarning}>
-                <Icon name="warning" size={16} color={colors.warning} />
-                <Text style={styles.validationWarningText}>
-                  Fill metal rate before recalculating
-                </Text>
-              </View>
-            )}
-
             <View style={styles.commonSectionHeader}>
-              <Text style={styles.commonSectionTitle}>Metal Weight & Rate</Text>
+              <Text style={styles.commonSectionTitle}>Metal Rate</Text>
             </View>
 
               <View style={styles.chargesRow}>
-                <View style={styles.chargeField}>
-                  <Text style={[
-                    styles.fieldLabel,
-                    (!commonMetal.Weight || parseFloat(commonMetal.Weight) <= 0) && styles.fieldLabelError,
-                  ]}>Weight (g) *</Text>
-                  <TextInput
-                    ref={metalWeightRef}
-                    style={[
-                      styles.fieldInput,
-                      (!commonMetal.Weight || parseFloat(commonMetal.Weight) <= 0) && styles.fieldInputError,
-                    ]}
-                    keyboardType="decimal-pad"
-                    value={String(commonMetal.Weight || '')}
-                    onChangeText={v => updateCommonMetal('Weight', v)}
-                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                  />
-                </View>
-                <View style={styles.chargeField}>
-                  <Text
-                    style={[
-                      styles.fieldLabel,
-                      (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && styles.fieldLabelError,
-                    ]}
-                  >
-                    {getMetalRateLabel(metalKt)} *
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.fieldInput,
-                      (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && styles.fieldInputError,
-                    ]}
-                    keyboardType="decimal-pad"
-                    value={String(commonMetal.Rate || '')}
-                    onChangeText={v => updateCommonMetal('Rate', v)}
-                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                  />
-                </View>
                 <View style={styles.chargeField}>
                   <Text style={styles.fieldLabel}>Per Ounce ($)</Text>
                   <TextInput
