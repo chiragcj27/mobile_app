@@ -17,6 +17,7 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { extraChargesSuffix } from '../../utils/extraCharges';
 import { METAL_QUALITY_OPTIONS } from '../../constants/metalQualities';
+import { selectQuality } from '../../utils/metalQualitySelector';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
@@ -91,9 +92,11 @@ export default function SingleStonePricing({
 
   const localChargesRef = useRef(localCharges);
   const localGroupedRef = useRef(localGrouped);
+  const localMetalRef = useRef(localMetal);
   const onRecalculatedRef = useRef(onRecalculated);
   useEffect(() => { localChargesRef.current = localCharges; }, [localCharges]);
   useEffect(() => { localGroupedRef.current = localGrouped; }, [localGrouped]);
+  useEffect(() => { localMetalRef.current = localMetal; }, [localMetal]);
   useEffect(() => { onRecalculatedRef.current = onRecalculated; }, [onRecalculated]);
 
   useEffect(() => {
@@ -275,6 +278,13 @@ export default function SingleStonePricing({
   const updateLocalMetal = useCallback((type, field, value) => {
     metalTouchedRef.current = true;
     const clean = field === 'Weight' ? limitDecimals(value, 3) : value;
+    if (field === 'Quality') {
+      const prevQuality =
+        localMetalRef.current[type]?.Quality
+        ?? localGroupedRef.current[type]?.editableMetal?.Quality
+        ?? metalKt;
+      selectQuality(type, clean, prevQuality);
+    }
     setLocalMetal(prev => {
       const next = { ...(prev[type] || {}), [field]: clean };
       if (field === 'Rate' && parseFloat(clean) > 0) next.Ounce = '';
@@ -282,7 +292,7 @@ export default function SingleStonePricing({
       return { ...prev, [type]: next };
     });
     if (field === 'Quality') setTimeout(() => requestRecalculate(), 0);
-  }, [requestRecalculate]);
+  }, [requestRecalculate, metalKt]);
 
   useEffect(() => {
     if (!onRecalculatedRef.current) return;
@@ -348,8 +358,11 @@ export default function SingleStonePricing({
     const m = localGrouped[type]?.editableMetal || {};
     const r = localGrouped[type]?.pricingResult;
     const edit = localMetal[type] || {};
-    const shown = (key, fallback) =>
-      edit[key] !== undefined ? String(edit[key]) : fallback != null && fallback !== '' ? String(fallback) : '';
+    const shown = (key, fallback) => {
+      const raw = edit[key] !== undefined ? edit[key] : fallback;
+      if (raw == null || raw === '') return '';
+      return key === 'Weight' ? limitDecimals(raw, 3) : String(raw);
+    };
     const quality = edit.Quality ?? m.Quality ?? metalKt;
 
     const FIELDS = [

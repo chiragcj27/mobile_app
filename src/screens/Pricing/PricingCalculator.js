@@ -482,8 +482,10 @@ export default function PricingCalci({ route, navigation }) {
         clientId,
         data,
         metalKt,
-        previousMetalQuality: getSelectedQuality(clientId || 'pricing')?.current,
-        updatedMetalQuality: getSelectedQuality(clientId || 'pricing')?.updated,
+        previousMetalQuality:
+          getSelectedQuality(type)?.current ?? getSelectedQuality(clientId || 'pricing')?.current,
+        updatedMetalQuality:
+          getSelectedQuality(type)?.updated ?? getSelectedQuality(clientId || 'pricing')?.updated,
         selectedClient,
         // New types go through their first calculation so the backend prices
         // the stones for the selected type; existing types recalculate.
