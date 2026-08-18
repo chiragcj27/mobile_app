@@ -342,7 +342,16 @@ export default function PricingCalci({ route, navigation }) {
   const handleMetalKtChange = (newKt) => {
     selectQuality(clientId || 'pricing', newKt, metalKt);
     setMetalKt(newKt);
-    setCommonMetal({ ...commonMetal, Rate: '' });
+
+    const prices = metalPricesData?.prices || {};
+    const nonKaratRate = /silver/i.test(newKt)
+      ? prices.silver?.price
+      : /platinum/i.test(newKt)
+        ? prices.platinum?.price
+        : null;
+    const seededRate = nonKaratRate ? String(nonKaratRate) : '';
+
+    setCommonMetal({ ...commonMetal, Rate: seededRate, Ounce: nonKaratRate ? '' : commonMetal.Ounce });
     setGroupedData((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((cat) => {
@@ -350,7 +359,12 @@ export default function PricingCalci({ route, navigation }) {
         Object.keys(newByType).forEach((type) => {
           newByType[type] = {
             ...newByType[type],
-            editableMetal: { ...newByType[type].editableMetal, Quality: newKt, Rate: '' },
+            editableMetal: {
+              ...newByType[type].editableMetal,
+              Quality: newKt,
+              Rate: seededRate,
+              ...(nonKaratRate ? { Ounce: '' } : {}),
+            },
           };
         });
         next[cat] = { ...next[cat], byType: newByType };

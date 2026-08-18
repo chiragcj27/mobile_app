@@ -73,12 +73,14 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
     Quality: lastPricedQuality,
   };
-  if (!isNonKaratMetal(currentQuality)) {
-    if (ounceVal > 0) {
-      metalPayload.GoldRatePerOunce = ounceVal;
-    } else if (metalRate > 0) {
+  if (isNonKaratMetal(currentQuality)) {
+    if (metalRate > 0) {
       metalPayload.Rate = metalRate;
     }
+  } else if (ounceVal > 0) {
+    metalPayload.GoldRatePerOunce = ounceVal;
+  } else if (metalRate > 0) {
+    metalPayload.Rate = metalRate;
   }
 
   const payload = {
