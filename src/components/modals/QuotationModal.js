@@ -538,7 +538,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [showAddEntryModal, setShowAddEntryModal] = useState(false);
   const [addStoneType, setAddStoneType] = useState('');
-  const [addMetalQuality, setAddMetalQuality] = useState('10K');
+  const [addMetalQuality, setAddMetalQuality] = useState('');
   const [isAddingEntry, setIsAddingEntry] = useState(false);
 
   const updateEntry = useCallback((idx, updater) => {

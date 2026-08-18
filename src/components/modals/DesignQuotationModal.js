@@ -19,6 +19,7 @@ import {
 import { num, makeId, METAL_QUALITY_OPTIONS } from './QuotationModal';
 import { normalizeExtraCharges } from '../../utils/extraCharges';
 import { getClientStoneOptions } from '../../utils/stoneTypeMapping';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 const DesignQuotationModal = ({ visible, designId, designData, designGroupData, navigation, onClose }) => {
   const [selectedVersion, setSelectedVersion] = useState(null);
@@ -64,7 +65,7 @@ const DesignQuotationModal = ({ visible, designId, designData, designGroupData, 
   });
   const [showClientDropdown, setShowClientDropdown] = useState(false);
 
-  const [metalKt, setMetalKt] = useState('10K');
+  const [metalKt, setMetalKt] = useState('');
   const [showKtModal, setShowKtModal] = useState(false);
   const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '', Ounce: '' });
 
@@ -96,10 +97,7 @@ const DesignQuotationModal = ({ visible, designId, designData, designGroupData, 
     return `$${ktRate.toFixed(2)}/g`;
   };
 
-  const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = useCallback((title, message, type = 'info', buttons = []) =>
-    setAlertCfg({ visible: true, title, message, type, buttons }), []);
-  const hideAlert = useCallback(() => setAlertCfg(p => ({ ...p, visible: false })), []);
+  const { alertConfig: alertCfg, showAlert, hideAlert } = useBrandedAlert();
 
   const seededForRef = useRef(null);
 

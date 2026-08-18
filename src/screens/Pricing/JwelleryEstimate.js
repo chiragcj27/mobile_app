@@ -36,7 +36,7 @@ export default function JwelleryEstimate() {
   const { clients = [] } = useClients();
 
   const [stoneType, setStoneType] = useState('NaturalRegular');
-  const [metalKt, setMetalKt] = useState('18K');
+  const [metalKt, setMetalKt] = useState('');
   const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
 
   const [topView, setTopView] = useState(null);

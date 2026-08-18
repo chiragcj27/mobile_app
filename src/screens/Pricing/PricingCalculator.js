@@ -83,7 +83,7 @@ try {
 export default function PricingCalci({ route, navigation }) {
   const [clientId, setClientId] = useState(route?.params?.clientId || '');
   const [selectedStoneTypes, setSelectedStoneTypes] = useState([]);
-  const [metalKt, setMetalKt] = useState('18K');
+  const [metalKt, setMetalKt] = useState('');
   const [imageFile, setImageFile] = useState(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
@@ -163,7 +163,7 @@ export default function PricingCalci({ route, navigation }) {
     setGroupedData({});
     setStoneRecalcStatus({});
     setCommonMetal({ Weight: '', Rate: '', Ounce: '' });
-    setMetalKt('18K');
+    setMetalKt('');
     setImageFile(null);
     setIsRecalculating(false);
     setPdfHtml(null);
