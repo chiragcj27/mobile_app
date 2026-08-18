@@ -30,7 +30,7 @@ import {
   useSavePricingMutation,
 } from '../../store/api';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
-import { selectQuality, getSelectedQuality } from '../../utils/metalQualitySelector';
+import { selectQuality, getSelectedQuality, commitQuality } from '../../utils/metalQualitySelector';
 import { LOGO_BASE64 } from '../../constants/logo';
 import { normalizeExtraCharges } from '../../utils/extraCharges';
 
@@ -958,6 +958,7 @@ export default function PreviewScreen({ route, navigation }) {
       const next = [...currentEntries];
       results.forEach((result, i) => {
         if (!result) return;
+        commitQuality(i);
         const prevEntry = currentEntries[i] || {};
         next[i] = {
           ...result,

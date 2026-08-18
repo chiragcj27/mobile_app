@@ -27,7 +27,7 @@ import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
 import { getMetalRateLabel } from '../../constants/metalQualities';
-import { selectQuality, getSelectedQuality } from '../../utils/metalQualitySelector';
+import { selectQuality, getSelectedQuality, commitQuality } from '../../utils/metalQualitySelector';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -213,6 +213,19 @@ export default function PricingCalci({ route, navigation }) {
       return () => clearTimeout(timer);
     }
   }, [selectedStoneTypes]);
+
+  useEffect(() => {
+    if (!dataChangedRef.current || !clientId || Object.keys(groupedData).length === 0) return;
+    const timer = setTimeout(() => {
+      if (hasMissingStones() || isAutoRecalculatingRef.current) return;
+      dataChangedRef.current = false;
+      isAutoRecalculatingRef.current = true;
+      handleRecalculateAllRef.current?.().finally(() => {
+        isAutoRecalculatingRef.current = false;
+      });
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [commonMetal.Weight, commonMetal.Rate, commonMetal.Ounce, metalKt]);
 
   // Auto-recalculate: listen for keyboard hide, debounce, then recalc
   // skip if missing stones remain so user can finish editing all first
@@ -569,6 +582,7 @@ export default function PricingCalci({ route, navigation }) {
           Ounce: first.result.GoldRatePerOunce ? first.result.GoldRatePerOunce.toString() : commonMetal.Ounce,
         });
       }
+      commitQuality(clientId || 'pricing');
     }
 
     setIsRecalculating(false);
