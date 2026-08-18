@@ -1,5 +1,4 @@
 import { makeExtraCharges } from './extraCharges';
-import { isNonKaratMetal } from '../constants/metalQualities';
 
 function resolveCharges(data) {
   const src = data?.editableCharges ?? {};
@@ -73,11 +72,7 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
     Quality: lastPricedQuality,
   };
-  if (isNonKaratMetal(currentQuality)) {
-    if (metalRate > 0) {
-      metalPayload.Rate = metalRate;
-    }
-  } else if (ounceVal > 0) {
+  if (ounceVal > 0) {
     metalPayload.GoldRatePerOunce = ounceVal;
   } else if (metalRate > 0) {
     metalPayload.Rate = metalRate;
@@ -103,7 +98,6 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
   };
 
   payload.UpdatedmetalQuality = currentQuality;
-  console.log('buildRecalculatePayload', { payload, previousMetalQuality, updatedMetalQuality, currentQuality, lastPricedQuality });
 
   return payload;
 };

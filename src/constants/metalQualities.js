@@ -1,5 +1,3 @@
-export const isNonKaratMetal = quality => /silver|platinum/i.test(String(quality || ''));
-
 export const getMetalRateLabel = quality => {
   const q = String(quality || '');
   if (/silver/i.test(q)) return 'Silver Rate ($/g)';

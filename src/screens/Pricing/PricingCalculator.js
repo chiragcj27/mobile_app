@@ -26,8 +26,8 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
+import { getMetalRateLabel } from '../../constants/metalQualities';
 import { selectQuality, getSelectedQuality } from '../../utils/metalQualitySelector';
-import { getMetalRateLabel, isNonKaratMetal } from '../../constants/metalQualities';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -342,16 +342,7 @@ export default function PricingCalci({ route, navigation }) {
   const handleMetalKtChange = (newKt) => {
     selectQuality(clientId || 'pricing', newKt, metalKt);
     setMetalKt(newKt);
-
-    const prices = metalPricesData?.prices || {};
-    const nonKaratRate = /silver/i.test(newKt)
-      ? prices.silver?.price
-      : /platinum/i.test(newKt)
-        ? prices.platinum?.price
-        : null;
-    const seededRate = nonKaratRate ? String(nonKaratRate) : '';
-
-    setCommonMetal({ ...commonMetal, Rate: seededRate, Ounce: nonKaratRate ? '' : commonMetal.Ounce });
+    setCommonMetal({ ...commonMetal, Rate: '' });
     setGroupedData((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((cat) => {
@@ -359,12 +350,7 @@ export default function PricingCalci({ route, navigation }) {
         Object.keys(newByType).forEach((type) => {
           newByType[type] = {
             ...newByType[type],
-            editableMetal: {
-              ...newByType[type].editableMetal,
-              Quality: newKt,
-              Rate: seededRate,
-              ...(nonKaratRate ? { Ounce: '' } : {}),
-            },
+            editableMetal: { ...newByType[type].editableMetal, Quality: newKt, Rate: '' },
           };
         });
         next[cat] = { ...next[cat], byType: newByType };
@@ -1289,19 +1275,15 @@ export default function PricingCalci({ route, navigation }) {
                   <Text
                     style={[
                       styles.fieldLabel,
-                      !isNonKaratMetal(metalKt) &&
-                        (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) &&
-                        styles.fieldLabelError,
+                      (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && styles.fieldLabelError,
                     ]}
                   >
-                    {getMetalRateLabel(metalKt)}{isNonKaratMetal(metalKt) ? '' : ' *'}
+                    {getMetalRateLabel(metalKt)} *
                   </Text>
                   <TextInput
                     style={[
                       styles.fieldInput,
-                      !isNonKaratMetal(metalKt) &&
-                        (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) &&
-                        styles.fieldInputError,
+                      (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && styles.fieldInputError,
                     ]}
                     keyboardType="decimal-pad"
                     value={String(commonMetal.Rate || '')}
