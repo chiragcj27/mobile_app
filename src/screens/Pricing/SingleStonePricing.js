@@ -20,6 +20,13 @@ import { METAL_QUALITY_OPTIONS } from '../../constants/metalQualities';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
+const limitDecimals = (v, places) => {
+  const t = String(v ?? '').replace(/[^0-9.]/g, '');
+  const [whole, ...rest] = t.split('.');
+  if (rest.length === 0) return whole;
+  return `${whole}.${rest.join('').slice(0, places)}`;
+};
+
 const CHARGE_FIELDS = [
   { key: 'Loss', label: 'Loss', suffix: '%', source: 'charges' },
   { key: 'Labour', label: 'Labour', suffix: '/g', source: 'charges' },
@@ -70,6 +77,7 @@ export default function SingleStonePricing({
   const [localGrouped, setLocalGrouped] = useState({});
   const [localCharges, setLocalCharges] = useState({});
   const [localMetal, setLocalMetal] = useState({});
+  const [ktPickerType, setKtPickerType] = useState(null);
   const metalTouchedRef = useRef(false);
 
   const [inlineEditIndex, setInlineEditIndex] = useState(null);
@@ -266,10 +274,11 @@ export default function SingleStonePricing({
 
   const updateLocalMetal = useCallback((type, field, value) => {
     metalTouchedRef.current = true;
+    const clean = field === 'Weight' ? limitDecimals(value, 3) : value;
     setLocalMetal(prev => {
-      const next = { ...(prev[type] || {}), [field]: value };
-      if (field === 'Rate' && parseFloat(value) > 0) next.Ounce = '';
-      if (field === 'Ounce' && parseFloat(value) > 0) next.Rate = '';
+      const next = { ...(prev[type] || {}), [field]: clean };
+      if (field === 'Rate' && parseFloat(clean) > 0) next.Ounce = '';
+      if (field === 'Ounce' && parseFloat(clean) > 0) next.Rate = '';
       return { ...prev, [type]: next };
     });
     if (field === 'Quality') setTimeout(() => requestRecalculate(), 0);
@@ -352,22 +361,20 @@ export default function SingleStonePricing({
     return (
       <View style={s.chargesSection}>
         <Text style={s.chargesTitle}>Metal Details</Text>
-        <View style={s.ktRow}>
-          {METAL_QUALITY_OPTIONS.map(opt => {
-            const active = quality === opt.value;
-            return (
-              <TouchableOpacity
-                key={opt.value}
-                style={[s.ktBtn, active && s.ktBtnActive]}
-                activeOpacity={0.85}
-                onPress={() => updateLocalMetal(type, 'Quality', opt.value)}
-              >
-                <Text style={[s.ktText, active && s.ktTextActive]}>{opt.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
         <View style={s.chargesGrid}>
+          <View style={s.chargeField}>
+            <Text style={s.chargeLabel}>Metal KT</Text>
+            <TouchableOpacity
+              style={s.ktDropdown}
+              activeOpacity={0.8}
+              onPress={() => setKtPickerType(type)}
+            >
+              <Text style={[s.ktDropdownText, !quality && s.ktDropdownPlaceholder]}>
+                {quality || 'Select KT'}
+              </Text>
+              <Icon name="arrow-drop-down" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
           {FIELDS.map(f => (
             <View key={f.key} style={s.chargeField}>
               <Text style={s.chargeLabel}>{f.label}</Text>
@@ -708,6 +715,47 @@ export default function SingleStonePricing({
           </View>
         </View>
       </View>
+
+      <Modal
+        visible={!!ktPickerType}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setKtPickerType(null)}
+      >
+        <TouchableOpacity
+          style={s.ktPickerOverlay}
+          activeOpacity={1}
+          onPress={() => setKtPickerType(null)}
+        >
+          <TouchableOpacity activeOpacity={1} style={s.ktPickerSheet}>
+            <Text style={s.ktPickerTitle}>Select Metal KT</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {METAL_QUALITY_OPTIONS.map(opt => {
+                const active =
+                  (localMetal[ktPickerType]?.Quality
+                    ?? localGrouped[ktPickerType]?.editableMetal?.Quality
+                    ?? metalKt) === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[s.ktPickerOption, active && s.ktPickerOptionActive]}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      updateLocalMetal(ktPickerType, 'Quality', opt.value);
+                      setKtPickerType(null);
+                    }}
+                  >
+                    <Text style={[s.ktPickerOptionText, active && s.ktPickerOptionTextActive]}>
+                      {opt.label}
+                    </Text>
+                    {active && <Icon name="check" size={20} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </Modal>
   );
 }
@@ -867,33 +915,61 @@ const s = StyleSheet.create({
     color: colors.textPrimary,
     textAlign: 'center',
   },
-  ktRow: {
+  ktDropdown: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 10,
-  },
-  ktBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: colors.borderLight || '#E8E8E8',
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 12,
     backgroundColor: colors.background,
   },
-  ktBtnActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+  ktDropdownText: {
+    fontSize: fonts.md,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    flex: 1,
   },
-  ktText: {
-    fontFamily: fonts.medium,
-    fontSize: 11,
-    color: colors.textSecondary,
+  ktDropdownPlaceholder: { color: colors.textLight },
+  ktPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  ktTextActive: {
-    color: '#fff',
+  ktPickerSheet: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    minWidth: 280,
+    maxHeight: '60%',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
+    elevation: 5,
+  },
+  ktPickerTitle: {
+    padding: 16,
+    fontSize: fonts.lg,
     fontFamily: fonts.bold,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+    textAlign: 'center',
+    color: colors.textPrimary,
   },
+  ktPickerOption: {
+    flexDirection: 'row',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  ktPickerOptionActive: { backgroundColor: colors.backgroundSecondary },
+  ktPickerOptionText: {
+    fontSize: fonts.base,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+  },
+  ktPickerOptionTextActive: { fontFamily: fonts.bold, color: colors.primary },
 
   chargesSection: {
     marginTop: 4,
