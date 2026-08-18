@@ -31,6 +31,7 @@ import {
 } from '../../store/api';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
 import { selectQuality, getSelectedQuality } from '../../utils/metalQualitySelector';
+import { isNonKaratMetal } from '../../constants/metalQualities';
 import { LOGO_BASE64 } from '../../constants/logo';
 import { normalizeExtraCharges } from '../../utils/extraCharges';
 
@@ -90,7 +91,7 @@ const buildEntryHtml = (entry, index, metalKt, clientName, simpleMetal = false, 
 
   const hasLabStone = stones.some(s => /lab/i.test(s.Type));
   const displayMetalKt = p.MetalKT || metalKt;
-  const isSilverOrPlat = displayMetalKt?.includes('Silver') || displayMetalKt?.includes('Platinum');
+  const isSilverOrPlat = isNonKaratMetal(displayMetalKt);
 
   const m = p.Metal || {};
   const mBase = m.MetalBase || {};
@@ -371,7 +372,7 @@ const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = f
 
   const hasLabStone = stones.some(s => /lab/i.test(s.Type));
   const displayMetalKt = p.MetalKT || metalKt;
-  const isSilverOrPlat = displayMetalKt?.includes('Silver') || displayMetalKt?.includes('Platinum');
+  const isSilverOrPlat = isNonKaratMetal(displayMetalKt);
   const dutyLabels = {
     Natural: 'Natural',
     Lab: 'Lab',
@@ -477,7 +478,7 @@ const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = f
             <thead>
               <tr style="background-color:#235A63;color:#ffffff;text-align:center;font-weight:700;">
                 <th style="padding:4px;border:1px solid #0F3236;font-size:9px;">KT</th>
-                <th style="padding:4px;border:1px solid #0F3236;font-size:9px;">${isSilverOrPlat ? 'METAL RATE PER OUNCE' : 'METAL RATE PER OUNCE (24k)'}</th>
+                ${!isSilverOrPlat ? `<th style="padding:4px;border:1px solid #0F3236;font-size:9px;">METAL RATE PER OUNCE (24k)</th>` : ''}
                 <th style="padding:4px;border:1px solid #0F3236;font-size:9px;">METAL WEIGHT</th>
                 <th style="padding:4px;border:1px solid #0F3236;font-size:9px;">METAL RATE PER GRAM</th>
                 <th style="padding:4px;border:1px solid #0F3236;font-size:9px;">METAL Price</th>
@@ -487,8 +488,8 @@ const buildClientEntryHtml = (entry, index, metalKt, clientName, simpleMetal = f
             <tbody>
               <tr style="text-align:center;font-weight:600;font-size:11px;">
                 <td style="padding:6px;border:1px solid #E6F0F1;">${ec(index, null, 'MetalKT', p.MetalKT || metalKt, true)}</td>
-                <td style="padding:6px;border:1px solid #E6F0F1;">$${goldRatePerOunce}</td>
-                <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;">${num(p.GoldWeight).toFixed(1)} grm</td>                
+                ${!isSilverOrPlat ? `<td style="padding:6px;border:1px solid #E6F0F1;">$${goldRatePerOunce}</td>` : ''}
+                <td style="padding:6px;border:1px solid #E6F0F1;font-weight:700;">${num(p.GoldWeight).toFixed(1)} grm</td>
                 <td style="padding:6px;border:1px solid #E6F0F1;">$${num(p.GoldRateKT)}</td>
                 <td style="padding:6px;border:1px solid #E6F0F1;">$${num(p.MetalPrice).toFixed(2)}</td>
 
