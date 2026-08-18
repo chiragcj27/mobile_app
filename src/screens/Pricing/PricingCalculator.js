@@ -27,6 +27,7 @@ import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
 import { selectQuality, getSelectedQuality, commitQuality } from '../../utils/metalQualitySelector';
+import { toQualityString } from '../../constants/metalQualities';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -49,7 +50,7 @@ const buildTypeEntry = ({ type, src, imageData, metalKt, clientPricing = {}, for
   editableStones: (src.Stones || []).map(st => ({ ...st, Type: forceType ? type : (st.Type || type) })),
   editableMetal: {
     Weight: src.Metal?.Weight || 0,
-    Quality: src.Metal?.Quality || metalKt,
+    Quality: toQualityString(src.Metal?.Quality || metalKt),
     Rate: src.Metal?.Rate || '',
     Ounce: src.GoldRatePerOunce ? String(src.GoldRatePerOunce) : '',
   },
@@ -340,8 +341,8 @@ export default function PricingCalci({ route, navigation }) {
     });
   };
 
-  const handleMetalKtChange = (newKt) => {
-    console.log('[metalKt] picked:', typeof newKt, newKt);
+  const handleMetalKtChange = (rawKt) => {
+    const newKt = toQualityString(rawKt);
     selectQuality(clientId || 'pricing', newKt, metalKt);
     setMetalKt(newKt);
     setGroupedData((prev) => {

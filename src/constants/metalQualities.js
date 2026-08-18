@@ -1,3 +1,12 @@
+// Quality must always be a plain string. Pickers hand back a bare value or a
+// { label, value } option, and an API response can carry a { Quality } object.
+export const toQualityString = v => {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') return String(v.value ?? v.Quality ?? v.label ?? '');
+  return String(v);
+};
+
 export const METAL_QUALITY_OPTIONS = [
   { label: '3K', value: '3K' },
   { label: '9K', value: '9K' },

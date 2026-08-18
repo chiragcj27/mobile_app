@@ -1,19 +1,6 @@
 import { makeExtraCharges } from './extraCharges';
 
-// Quality must reach the backend as a plain string. Pickers hand back either a
-// bare value or a { label, value } option depending on the screen.
-const asQuality = v => {
-  if (v == null) return '';
-  if (typeof v === 'string'){ 
-    console.log('asQuality: string', v);
-    return v; }
-  if (typeof v === 'object') {
-    console.log('asQuality: object', v);
-    return String(v.value ?? v.Quality ?? v.label ?? '');
-  }
-  console.log('asQuality: other', v);
-  return String(v);
-};
+import { toQualityString as asQuality } from '../constants/metalQualities';
 
 function resolveCharges(data) {
   const src = data?.editableCharges ?? {};
