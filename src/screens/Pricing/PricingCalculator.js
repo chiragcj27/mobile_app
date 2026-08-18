@@ -27,6 +27,7 @@ import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
 import { selectQuality, getSelectedQuality } from '../../utils/metalQualitySelector';
+import { getMetalRateLabel, isNonKaratMetal } from '../../constants/metalQualities';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -1274,15 +1275,19 @@ export default function PricingCalci({ route, navigation }) {
                   <Text
                     style={[
                       styles.fieldLabel,
-                      (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && styles.fieldLabelError,
+                      !isNonKaratMetal(metalKt) &&
+                        (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) &&
+                        styles.fieldLabelError,
                     ]}
                   >
-                    24K Rate ($/g) *
+                    {getMetalRateLabel(metalKt)}{isNonKaratMetal(metalKt) ? '' : ' *'}
                   </Text>
                   <TextInput
                     style={[
                       styles.fieldInput,
-                      (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) && styles.fieldInputError,
+                      !isNonKaratMetal(metalKt) &&
+                        (!commonMetal.Rate || parseFloat(commonMetal.Rate) <= 0) &&
+                        styles.fieldInputError,
                     ]}
                     keyboardType="decimal-pad"
                     value={String(commonMetal.Rate || '')}
