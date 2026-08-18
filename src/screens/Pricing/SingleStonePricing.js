@@ -16,6 +16,7 @@ import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { extraChargesSuffix } from '../../utils/extraCharges';
+import { METAL_QUALITY_OPTIONS } from '../../constants/metalQualities';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
@@ -68,7 +69,7 @@ export default function SingleStonePricing({
 }) {
   const [localGrouped, setLocalGrouped] = useState({});
   const [localCharges, setLocalCharges] = useState({});
-  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '', Ounce: '' });
+  const [localMetal, setLocalMetal] = useState({});
   const metalTouchedRef = useRef(false);
 
   const [inlineEditIndex, setInlineEditIndex] = useState(null);
@@ -93,6 +94,7 @@ export default function SingleStonePricing({
     setEditedPrices({});
     setInlineEditIndex(null);
     setInlineEditPrice('');
+    setLocalMetal({});
     metalTouchedRef.current = false;
   }, [visible]);
 
@@ -103,16 +105,6 @@ export default function SingleStonePricing({
       if (catData.byType?.[type]) grouped[type] = catData.byType[type];
     });
     setLocalGrouped(grouped);
-    // Seed the common Metal Weight & Rate from the first type (same idea as PricingCalculator)
-    if (metalTouchedRef.current) return;
-    const firstType = Object.keys(grouped)[0];
-    const m = firstType ? grouped[firstType]?.editableMetal : null;
-    const r = firstType ? grouped[firstType]?.pricingResult : null;
-    setCommonMetal({
-      Weight: m?.Weight != null && m.Weight !== '' ? String(m.Weight) : '',
-      Rate: m?.Rate != null && m.Rate !== '' ? String(m.Rate) : '',
-      Ounce: m?.Ounce != null ? String(m.Ounce) : r?.GoldRatePerOunce ? String(r.GoldRatePerOunce) : '',
-    });
   }, [visible, catData]);
 
   useEffect(() => {
@@ -272,32 +264,33 @@ export default function SingleStonePricing({
     }
   }, [requestRecalculate]);
 
-  // Common Metal Weight & Rate — one value applied to every stone type (same as PricingCalculator).
-  const updateCommonMetal = useCallback((field, value) => {
+  const updateLocalMetal = useCallback((type, field, value) => {
     metalTouchedRef.current = true;
-    setCommonMetal(prev => {
-      const next = { ...prev, [field]: value };
+    setLocalMetal(prev => {
+      const next = { ...(prev[type] || {}), [field]: value };
       if (field === 'Rate' && parseFloat(value) > 0) next.Ounce = '';
       if (field === 'Ounce' && parseFloat(value) > 0) next.Rate = '';
-      return next;
+      return { ...prev, [type]: next };
     });
-  }, []);
+    if (field === 'Quality') setTimeout(() => requestRecalculate(), 0);
+  }, [requestRecalculate]);
 
-  // Push metal changes to the parent on every edit (recalc happens on keyboard dismiss).
   useEffect(() => {
-    if (!metalTouchedRef.current || !onRecalculatedRef.current) return;
+    if (!onRecalculatedRef.current) return;
+    const types = Object.keys(localMetal);
+    if (types.length === 0) return;
     const grouped = localGroupedRef.current;
     const updated = {};
-    Object.keys(grouped).forEach(type => {
+    types.forEach(type => {
       if (!grouped[type]) return;
       updated[type] = {
         ...grouped[type],
-        editableMetal: { ...grouped[type].editableMetal, ...commonMetal },
+        editableMetal: { ...grouped[type].editableMetal, ...localMetal[type] },
       };
     });
     setLocalGrouped(prev => ({ ...prev, ...updated }));
     Object.keys(updated).forEach(type => onRecalculatedRef.current(type, updated[type]));
-  }, [commonMetal]);
+  }, [localMetal]);
 
   // Push charge changes to parent on every edit (local state sync)
   useEffect(() => {
@@ -315,7 +308,7 @@ export default function SingleStonePricing({
     if (!visible || !metalTouchedRef.current) return;
     const timer = setTimeout(() => requestRecalculate(), 900);
     return () => clearTimeout(timer);
-  }, [visible, commonMetal.Weight, commonMetal.Rate, commonMetal.Ounce, requestRecalculate]);
+  }, [visible, localMetal, requestRecalculate]);
 
   // Trigger recalculation when keyboard closes after editing duties
   useEffect(() => {
@@ -341,6 +334,60 @@ export default function SingleStonePricing({
       return applicable[f.applicableKey] === true;
     });
   }, [catData, localGrouped, metalKt]);
+
+  const renderMetalSection = (type) => {
+    const m = localGrouped[type]?.editableMetal || {};
+    const r = localGrouped[type]?.pricingResult;
+    const edit = localMetal[type] || {};
+    const shown = (key, fallback) =>
+      edit[key] !== undefined ? String(edit[key]) : fallback != null && fallback !== '' ? String(fallback) : '';
+    const quality = edit.Quality ?? m.Quality ?? metalKt;
+
+    const FIELDS = [
+      { key: 'Weight', label: 'Weight (g)', suffix: 'g', fallback: m.Weight },
+      { key: 'Rate', label: 'Metal Rate ($/g)', suffix: '$/g', fallback: m.Rate },
+      { key: 'Ounce', label: 'Per Ounce ($)', suffix: '$/oz', fallback: m.Ounce ?? r?.GoldRatePerOunce },
+    ];
+
+    return (
+      <View style={s.chargesSection}>
+        <Text style={s.chargesTitle}>Metal Details</Text>
+        <View style={s.ktRow}>
+          {METAL_QUALITY_OPTIONS.map(opt => {
+            const active = quality === opt.value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[s.ktBtn, active && s.ktBtnActive]}
+                activeOpacity={0.85}
+                onPress={() => updateLocalMetal(type, 'Quality', opt.value)}
+              >
+                <Text style={[s.ktText, active && s.ktTextActive]}>{opt.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <View style={s.chargesGrid}>
+          {FIELDS.map(f => (
+            <View key={f.key} style={s.chargeField}>
+              <Text style={s.chargeLabel}>{f.label}</Text>
+              <View style={s.chargeInputWrap}>
+                <TextInput
+                  style={s.chargeInput}
+                  value={shown(f.key, f.fallback)}
+                  onChangeText={(v) => updateLocalMetal(type, f.key, v)}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={colors.textLight}
+                />
+                <Text style={s.chargeSuffix}>{f.suffix}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
 
   const renderChargesSection = (type) => {
     const fields = getApplicableFields(type);
@@ -511,6 +558,7 @@ export default function SingleStonePricing({
             })}
           </View>
 
+          {renderMetalSection(type)}
           {renderChargesSection(type)}
         </View>
       );
@@ -568,6 +616,7 @@ export default function SingleStonePricing({
           </View>
         </View>
 
+        {renderMetalSection(type)}
         {renderChargesSection(type)}
       </View>
     );
@@ -607,55 +656,6 @@ export default function SingleStonePricing({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Common Metal Weight & Rate — kept at the top, applies to all types */}
-            <View style={s.chargesSection}>
-              <Text style={s.chargesTitle}>Metal Weight & Rate</Text>
-              <View style={s.chargesGrid}>
-                <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>Weight (g)</Text>
-                  <View style={s.chargeInputWrap}>
-                    <TextInput
-                      style={s.chargeInput}
-                      value={String(commonMetal.Weight || '')}
-                      onChangeText={(v) => updateCommonMetal('Weight', v)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textLight}
-                    />
-                    <Text style={s.chargeSuffix}>g</Text>
-                  </View>
-                </View>
-                <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>Metal Rate ($/g)</Text>
-                  <View style={s.chargeInputWrap}>
-                    <TextInput
-                      style={s.chargeInput}
-                      value={String(commonMetal.Rate || '')}
-                      onChangeText={(v) => updateCommonMetal('Rate', v)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textLight}
-                    />
-                    <Text style={s.chargeSuffix}>$/g</Text>
-                  </View>
-                </View>
-                <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>Per Ounce ($)</Text>
-                  <View style={s.chargeInputWrap}>
-                    <TextInput
-                      style={s.chargeInput}
-                      value={String(commonMetal.Ounce ?? '')}
-                      onChangeText={(v) => updateCommonMetal('Ounce', v)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textLight}
-                    />
-                    <Text style={s.chargeSuffix}>$/oz</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-
             {hasAnyMissing && (
               <View style={s.globalWarningBanner}>
                 <Icon name="warning" size={15} color={colors.secondary} />
@@ -867,6 +867,34 @@ const s = StyleSheet.create({
     color: colors.textPrimary,
     textAlign: 'center',
   },
+  ktRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 10,
+  },
+  ktBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.borderLight || '#E8E8E8',
+    backgroundColor: colors.background,
+  },
+  ktBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  ktText: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+  ktTextActive: {
+    color: '#fff',
+    fontFamily: fonts.bold,
+  },
+
   chargesSection: {
     marginTop: 4,
     marginBottom: 8,
