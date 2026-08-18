@@ -4555,7 +4555,7 @@ export const api = createApi({
       transformResponse: response => {
         if (__DEV__) {
           console.log(
-            'âœ… [calculatePricing] Response:',
+            'âœ… [ImagepriceData] Response:',
             JSON.stringify(response, null, 2),
           );
         }
@@ -4564,7 +4564,7 @@ export const api = createApi({
       transformErrorResponse: response => {
         if (__DEV__) {
           console.error(
-            'âŒ [calculatePricing] Error:',
+            'âŒ [ImagepriceData] Error:',
             JSON.stringify(response, null, 2),
           );
 
