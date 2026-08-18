@@ -83,6 +83,9 @@ export default function PricingCalci({ route, navigation }) {
   const [clientId, setClientId] = useState(route?.params?.clientId || '');
   const [selectedStoneTypes, setSelectedStoneTypes] = useState([]);
   const [metalKt, setMetalKt] = useState('');
+  const ktString = (v) =>
+    typeof v === 'string' ? v : String(v?.value ?? v?.Quality ?? v?.label ?? '');
+
   const [imageFile, setImageFile] = useState(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
@@ -311,7 +314,7 @@ export default function PricingCalci({ route, navigation }) {
         image: imageFile,
         clientId,
         stoneType: type,
-        metalQuality: metalKt,
+        metalQuality: ktString(metalKt),
       }).unwrap();
 
       return { type, data };
@@ -338,6 +341,7 @@ export default function PricingCalci({ route, navigation }) {
   };
 
   const handleMetalKtChange = (newKt) => {
+    console.log('[metalKt] picked:', typeof newKt, newKt);
     selectQuality(clientId || 'pricing', newKt, metalKt);
     setMetalKt(newKt);
     setGroupedData((prev) => {
@@ -578,7 +582,7 @@ export default function PricingCalci({ route, navigation }) {
         image: file,
         clientId: clientId,
         stoneType: firstType,
-        metalQuality: metalKt,
+        metalQuality: ktString(metalKt),
         cropX: crop?.x,
         cropY: crop?.y,
         cropW: crop?.w,

@@ -4,8 +4,14 @@ import { makeExtraCharges } from './extraCharges';
 // bare value or a { label, value } option depending on the screen.
 const asQuality = v => {
   if (v == null) return '';
-  if (typeof v === 'string') return v;
-  if (typeof v === 'object') return String(v.value ?? v.Quality ?? v.label ?? '');
+  if (typeof v === 'string'){ 
+    console.log('asQuality: string', v);
+    return v; }
+  if (typeof v === 'object') {
+    console.log('asQuality: object', v);
+    return String(v.value ?? v.Quality ?? v.label ?? '');
+  }
+  console.log('asQuality: other', v);
   return String(v);
 };
 
