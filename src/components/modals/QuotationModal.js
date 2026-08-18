@@ -51,7 +51,7 @@ const createBlankEntry = (metalPricesData) => {
   if (prices.gold?.price) autoRate = String(prices.gold.price);
   return {
     id: makeId(),
-    metalQuality: '10K',
+    metalQuality: '',
     metalWeight: '',
     metalRate: autoRate,
     metalOunce: '',
@@ -714,7 +714,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           );
           return {
             id: makeId(),
-            metalQuality: p.Metal?.Quality || enq?.Metal?.Quality || '10K',
+            metalQuality: p.Metal?.Quality || enq?.Metal?.Quality || '',
             metalWeight: String(p.Metal?.Weight ?? p.GoldWeight ?? 0),
             metalRate: autoRate,
             metalOunce: p.Metal?.Ounce != null ? String(p.Metal.Ounce) : (p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '0'),
