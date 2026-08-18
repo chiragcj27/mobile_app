@@ -686,7 +686,7 @@ export default function PreviewScreen({ route, navigation }) {
   const {
     pricingEntries = [],
     clientName = 'Client',
-    metalKt = '18K',
+    metalKt = '',
     modify = false,
     preCropImageKey = null,
     preCropImageUrl: preCropImageUrlParam = null,
