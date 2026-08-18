@@ -107,7 +107,6 @@ export default function PricingCalci({ route, navigation }) {
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
-  const [commonMetal, setCommonMetal] = useState({ Ounce: '' });
   const [stoneRecalcStatus, setStoneRecalcStatus] = useState({});
   const [showSingleStoneModal, setShowSingleStoneModal] = useState(false);
   const [singleStoneCatKey, setSingleStoneCatKey] = useState(null);
@@ -160,7 +159,6 @@ export default function PricingCalci({ route, navigation }) {
     }
     setGroupedData({});
     setStoneRecalcStatus({});
-    setCommonMetal({ Ounce: '' });
     setMetalKt('');
     setImageFile(null);
     setIsRecalculating(false);
@@ -177,7 +175,6 @@ export default function PricingCalci({ route, navigation }) {
     setImageFile(null);
     setGroupedData({});
     setStoneRecalcStatus({});
-    setCommonMetal({ Ounce: '' });
     setPdfHtml(null);
     setShowPdfModal(false);
     setSingleStoneCatKey(null);
@@ -223,7 +220,7 @@ export default function PricingCalci({ route, navigation }) {
       });
     }, 900);
     return () => clearTimeout(timer);
-  }, [commonMetal.Ounce, metalKt]);
+  }, [metalKt]);
 
   // Auto-recalculate: listen for keyboard hide, debounce, then recalc
   // skip if missing stones remain so user can finish editing all first
@@ -369,22 +366,6 @@ export default function PricingCalci({ route, navigation }) {
     }
   };
 
-  const updateCommonMetal = (field, value) => {
-    dataChangedRef.current = true;
-    const updated = { ...commonMetal, [field]: value };
-    setCommonMetal(updated);
-    setGroupedData((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((cat) => {
-        const newByType = { ...next[cat].byType };
-        Object.keys(newByType).forEach((type) => {
-          newByType[type] = { ...newByType[type], editableMetal: { ...updated } };
-        });
-        next[cat] = { ...next[cat], byType: newByType };
-      });
-      return next;
-    });
-  };
 
   const handleRecalculateAll = async () => {
     dataChangedRef.current = false;
@@ -499,7 +480,6 @@ export default function PricingCalci({ route, navigation }) {
         previousMetalQuality: getSelectedQuality(clientId || 'pricing')?.current,
         updatedMetalQuality: getSelectedQuality(clientId || 'pricing')?.updated,
         selectedClient,
-        commonMetal,
         // New types go through their first calculation so the backend prices
         // the stones for the selected type; existing types recalculate.
         isRecalculate: !newTypes.includes(type),
@@ -556,12 +536,6 @@ export default function PricingCalci({ route, navigation }) {
         return next;
       });
 
-      const first = succeededTypes[0];
-      if (first) {
-        setCommonMetal({
-          Ounce: first.result.GoldRatePerOunce ? first.result.GoldRatePerOunce.toString() : commonMetal.Ounce,
-        });
-      }
       commitQuality(clientId || 'pricing');
     }
 
@@ -693,12 +667,6 @@ export default function PricingCalci({ route, navigation }) {
           Object.values(grouped).forEach((catData) => {
             if (catData.byType[firstGroupType]) firstData = catData.byType[firstGroupType];
           });
-          if (firstData) {
-            const m = firstData.editableMetal;
-            setCommonMetal({
-              Ounce: firstData.pricingResult?.GoldRatePerOunce ? firstData.pricingResult.GoldRatePerOunce.toString() : commonMetal.Ounce,
-            });
-          }
         }
         setExtractPhase('calculating');
         needsAutoRecalcRef.current = true;
@@ -1228,30 +1196,6 @@ export default function PricingCalci({ route, navigation }) {
             </TouchableOpacity>
           </View>
         </Card>
-
-        {Object.keys(groupedData).length > 0 && (
-          <Card style={[styles.card, { marginTop: 16, borderBottomWidth: 0 }]}>
-
-            <View style={styles.commonSectionHeader}>
-              <Text style={styles.commonSectionTitle}>Metal Rate</Text>
-            </View>
-
-              <View style={styles.chargesRow}>
-                <View style={styles.chargeField}>
-                  <Text style={styles.fieldLabel}>Per Ounce ($)</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    keyboardType="decimal-pad"
-                    value={String(commonMetal.Ounce || '')}
-                    onChangeText={v => updateCommonMetal('Ounce', v)}
-                    onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
-                  />
-                </View>
-              </View>
-   
-
-          </Card>
-        )}
 
         {/* ACCORDION SECTIONS */}
         {Object.entries(groupedData).map(([category, catData]) => {
