@@ -1,5 +1,14 @@
 import { makeExtraCharges } from './extraCharges';
 
+// Quality must reach the backend as a plain string. Pickers hand back either a
+// bare value or a { label, value } option depending on the screen.
+const asQuality = v => {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') return String(v.value ?? v.Quality ?? v.label ?? '');
+  return String(v);
+};
+
 function resolveCharges(data) {
   const src = data?.editableCharges ?? {};
   return {
@@ -63,10 +72,12 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
-  const currentQuality =
-    updatedMetalQuality || data?.editableMetal?.Quality || metalKt;
-  const lastPricedQuality =
-    previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality;
+  const currentQuality = asQuality(
+    updatedMetalQuality || data?.editableMetal?.Quality || metalKt,
+  );
+  const lastPricedQuality = asQuality(
+    previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality,
+  );
 
   const metalPayload = {
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,

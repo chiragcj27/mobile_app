@@ -4505,7 +4505,12 @@ export const api = createApi({
         }
 
         if (metalQuality) {
-          formData.append('metalQuality', metalQuality);
+          formData.append(
+            'metalQuality',
+            typeof metalQuality === 'string'
+              ? metalQuality
+              : String(metalQuality?.value ?? metalQuality?.Quality ?? metalQuality?.label ?? ''),
+          );
         }
 
         // Crop region as fractions (0..1) of the ORIGINAL image. The backend crops
