@@ -727,6 +727,10 @@ export default function PricingCalci({ route, navigation }) {
       showAlert('Validation Error', 'Please select at least one stone type', 'warning');
       return;
     }
+    if (!toQualityString(metalKt)) {
+      showAlert('Validation Error', 'Please select the metal Kt first', 'warning');
+      return;
+    }
 
     try {
       // Pick the ORIGINAL image with NO on-device cropping (that was the iOS-degrading step).
