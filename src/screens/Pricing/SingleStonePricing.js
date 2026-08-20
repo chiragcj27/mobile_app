@@ -323,12 +323,6 @@ export default function SingleStonePricing({
     });
   }, [localCharges]);
 
-  useEffect(() => {
-    if (!visible || !metalTouchedRef.current) return;
-    const timer = setTimeout(() => requestRecalculate(), 900);
-    return () => clearTimeout(timer);
-  }, [visible, localMetal, requestRecalculate]);
-
   // Trigger recalculation when keyboard closes after editing duties
   useEffect(() => {
     const subscription = Keyboard.addListener('keyboardDidHide', () => {

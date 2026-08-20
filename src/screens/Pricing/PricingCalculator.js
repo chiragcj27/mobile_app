@@ -226,19 +226,6 @@ export default function PricingCalci({ route, navigation }) {
     }
   }, [selectedStoneTypes]);
 
-  useEffect(() => {
-    if (!dataChangedRef.current || !clientId || Object.keys(groupedData).length === 0) return;
-    const timer = setTimeout(() => {
-      if (hasMissingStones() || isAutoRecalculatingRef.current) return;
-      dataChangedRef.current = false;
-      isAutoRecalculatingRef.current = true;
-      handleRecalculateAllRef.current?.().finally(() => {
-        isAutoRecalculatingRef.current = false;
-      });
-    }, 900);
-    return () => clearTimeout(timer);
-  }, [metalKt]);
-
   // Auto-recalculate: listen for keyboard hide, debounce, then recalc
   // skip if missing stones remain so user can finish editing all first
   useEffect(() => {
