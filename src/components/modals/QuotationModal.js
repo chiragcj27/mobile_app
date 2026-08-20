@@ -860,7 +860,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         };
       }).filter(st => st.Type);
       return {
-        isOnlyMetalDesign: stones.length === 0,
+        isOnlyMetalDesign: e?.isOnlyMetalDesign === true && stones.length === 0,
         IsSentForApproaval: !!e?.isSentForApproaval,
         Metal: {
           Weight: num(e?.metalWeight),
@@ -888,7 +888,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     };
 
     const pricingData = entries.map(buildPricingForSave);
-    const isOnlyMetalDesign = pricingData.every(p => (p.Stones || []).length === 0);
+    const isOnlyMetalDesign = pricingData.every(p => p.isOnlyMetalDesign === true);
 
     const pool = [
       ...(Array.isArray(fullEnquiry?.Cad)   ? fullEnquiry.Cad.map(e => ({ ...e, _type: 'cad' }))   : []),
@@ -1134,7 +1134,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       Price: num(st.Price), Markup: num(st.Markup),
     }));
     return {
-      isOnlyMetalDesign: stones.length === 0,
+      isOnlyMetalDesign: e?.isOnlyMetalDesign === true && stones.length === 0,
       IsSentForApproaval: !!e?.isSentForApproaval,
       Metal: {
         Weight: num(e?.metalWeight),
@@ -1197,7 +1197,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       try {
         const result = await calculatePricing({
           details: {
-            isOnlyMetalDesign: stones.length === 0,
+            isOnlyMetalDesign: entry?.isOnlyMetalDesign === true && stones.length === 0,
             Metal: {
               Weight: num(entry.metalWeight),
               Quality: entry.metalQuality,
@@ -1254,7 +1254,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             designType: latestDesign._type,
             version: latestDesign.Version,
             pricingData,
-            isOnlyMetalDesign: pricingData.every(p => (p.Stones || []).length === 0),
+            isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
           }).unwrap();
         }
 
@@ -1305,7 +1305,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         try {
           return await calculatePricing({
             details: {
-              isOnlyMetalDesign: stones.length === 0,
+              isOnlyMetalDesign: en?.isOnlyMetalDesign === true && stones.length === 0,
               Metal: { Weight: num(en.metalWeight), Quality: en.metalQuality, ...(ounce > 0 ? { GoldRatePerOunce: ounce } : { Rate: num(en.metalRate) }) },
               Stones: stones,
               Loss: num(r0.Client?.Loss ?? r0.Loss ?? 0),
@@ -1359,7 +1359,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           const pricingData = updated.map(entryToPricing);
           savePricing({
             enquiryId: resolvedId, designType: latestDesign._type, version: latestDesign.Version,
-            pricingData, isOnlyMetalDesign: pricingData.every(p => (p.Stones || []).length === 0),
+            pricingData, isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
           }).unwrap()
             .then(() => { setTimeout(() => { autoSaveInProgress.current = false; }, 1500); })
             .catch(() => { autoSaveInProgress.current = false; });
@@ -1842,7 +1842,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               designType: latestDesign._type,
               version: latestDesign.Version,
               pricingData,
-              isOnlyMetalDesign: pricingData.every(p => (p.Stones || []).length === 0),
+              isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
             }).unwrap();
             lastRecalcSigRef.current = null;
             setReseedToken(t => t + 1);
@@ -1937,7 +1937,7 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       designType: latestDesign._type,
       version: latestDesign.Version,
       pricingData,
-      isOnlyMetalDesign: pricingData.every(p => (p.Stones || []).length === 0),
+      isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
     }).unwrap().catch(err => console.warn('[QuotationModal][setDefault] failed', err?.status, err?.data?.message || err?.message));
   }, [entryToPricing, savePricing]);
 
