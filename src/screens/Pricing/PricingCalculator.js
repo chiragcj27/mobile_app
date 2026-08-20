@@ -404,7 +404,15 @@ export default function PricingCalci({ route, navigation }) {
         if (!selectedTypes.includes(type)) selectedTypes.push(type);
       });
     });
-    if (selectedTypes.length === 0 || !clientId) return;
+    if (!clientId) return;
+    if (selectedTypes.length === 0 || !metalKt) {
+      showAlert(
+        'Validation Error',
+        'Please fill the metal quality and stone types first for calculation',
+        'warning',
+      );
+      return;
+    }
 
     setIsRecalculating(true);
 
