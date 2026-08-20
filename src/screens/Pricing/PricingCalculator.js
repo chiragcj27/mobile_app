@@ -307,6 +307,7 @@ export default function PricingCalci({ route, navigation }) {
     if (!type || !clientId || !imageFile) return null;
 
     try {
+      console.log('[EXTRACT per-type] metalKt=', JSON.stringify(metalKt), 'type=', type);
       const data = await GetimagepriceData({
         image: imageFile,
         clientId,
@@ -404,6 +405,7 @@ export default function PricingCalci({ route, navigation }) {
         if (!selectedTypes.includes(type)) selectedTypes.push(type);
       });
     });
+    console.log('[RECALC] metalKt=', JSON.stringify(metalKt), 'types=', selectedTypes.length, 'clientId=', !!clientId);
     if (!clientId) return;
     if (selectedTypes.length === 0 || !metalKt) {
       showAlert(
@@ -614,6 +616,7 @@ export default function PricingCalci({ route, navigation }) {
     try {
       const firstType = selectedStoneTypes[0];
 
+      console.log('[EXTRACT first] metalKt=', JSON.stringify(metalKt), 'firstType=', firstType);
       const extractionPromise = GetimagepriceData({
         image: file,
         clientId: clientId,

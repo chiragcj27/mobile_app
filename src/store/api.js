@@ -4504,6 +4504,8 @@ export const api = createApi({
           formData.append('quantity', quantity);
         }
 
+        console.log('[SEND image-pricing] metalQuality=', JSON.stringify(metalQuality),
+          'typeof=', typeof metalQuality, 'appended=', !!metalQuality);
         if (metalQuality) {
           formData.append('metalQuality', metalQuality);
         }
