@@ -27,7 +27,6 @@ import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
 import { selectQuality, getSelectedQuality, commitQuality } from '../../utils/metalQualitySelector';
-import { toQualityString } from '../../constants/metalQualities';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -50,7 +49,7 @@ const buildTypeEntry = ({ type, src, imageData, metalKt, clientPricing = {}, for
   editableStones: (src.Stones || []).map(st => ({ ...st, Type: forceType ? type : (st.Type || type) })),
   editableMetal: {
     Weight: src.Metal?.Weight || 0,
-    Quality: toQualityString(src.Metal?.Quality || metalKt),
+    Quality: src.Metal?.Quality || metalKt,
     Rate: src.Metal?.Rate || '',
     Ounce: src.GoldRatePerOunce ? String(src.GoldRatePerOunce) : '',
   },
@@ -312,7 +311,6 @@ export default function PricingCalci({ route, navigation }) {
         image: imageFile,
         clientId,
         stoneType: type,
-        metalQuality: toQualityString(metalKt),
       }).unwrap();
 
       return { type, data };
@@ -338,8 +336,7 @@ export default function PricingCalci({ route, navigation }) {
     });
   };
 
-  const handleMetalKtChange = (rawKt) => {
-    const newKt = toQualityString(rawKt);
+  const handleMetalKtChange = (newKt) => {
     selectQuality(clientId || 'pricing', newKt, metalKt);
     setMetalKt(newKt);
     setGroupedData((prev) => {
@@ -582,7 +579,6 @@ export default function PricingCalci({ route, navigation }) {
         image: file,
         clientId: clientId,
         stoneType: firstType,
-        metalQuality: toQualityString(metalKt),
         cropX: crop?.x,
         cropY: crop?.y,
         cropW: crop?.w,
@@ -727,7 +723,7 @@ export default function PricingCalci({ route, navigation }) {
       showAlert('Validation Error', 'Please select at least one stone type', 'warning');
       return;
     }
-    if (!toQualityString(metalKt)) {
+    if (!metalKt) {
       showAlert('Validation Error', 'Please select the metal Kt first', 'warning');
       return;
     }

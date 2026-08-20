@@ -4505,12 +4505,7 @@ export const api = createApi({
         }
 
         if (metalQuality) {
-          formData.append(
-            'metalQuality',
-            typeof metalQuality === 'string'
-              ? metalQuality
-              : String(metalQuality?.value ?? metalQuality?.Quality ?? metalQuality?.label ?? ''),
-          );
+          formData.append('metalQuality', metalQuality);
         }
 
         // Crop region as fractions (0..1) of the ORIGINAL image. The backend crops
@@ -4605,18 +4600,6 @@ export const api = createApi({
     calculatePricing: builder.mutation({
       query: ({ details, clientId, isRecalculate = false, UpdatedmetalQuality }) => {
         const body = { details, clientId, isRecalculate, UpdatedmetalQuality };
-        console.log('[SEND pricingCalculate]', {
-          isRecalculate,
-          'Metal.Quality': details?.Metal?.Quality,
-          'typeof Metal.Quality': typeof details?.Metal?.Quality,
-          UpdatedmetalQuality,
-          'typeof UpdatedmetalQuality': typeof UpdatedmetalQuality,
-          bodyJson: JSON.stringify({
-            Metal: details?.Metal,
-            UpdatedmetalQuality,
-            isRecalculate,
-          }),
-        });
         if (__DEV__) {
           console.log(
             'ðŸ’° [calculatePricing] Payload:',

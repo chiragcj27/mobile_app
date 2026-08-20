@@ -1,5 +1,4 @@
 import { getStoneCategory, getStoneCategoryLabel } from './stoneTypeMapping';
-import { toQualityString } from '../constants/metalQualities';
 import { extraChargesValue, extraChargesType } from './extraCharges';
 
 export const groupStoneDataByCategory = (rawMultiData, categoryMap = {}) => {
@@ -67,7 +66,7 @@ export const regroupApiResults = (apiResults, existingGroupedData, categoryMap =
       editableStones: result.Stones?.map((s) => ({ Type: type, ...s })) || [],
       editableMetal: {
         Weight: result.Metal?.Weight ?? prevMetal?.Weight ?? 0,
-        Quality: toQualityString(result.Metal?.Quality ?? prevMetal?.Quality ?? ''),
+        Quality: result.Metal?.Quality ?? prevMetal?.Quality ?? '',
         Rate: result.Metal?.Rate ?? prevMetal?.Rate ?? 0,
         Ounce: result.GoldRatePerOunce
           ? String(result.GoldRatePerOunce)

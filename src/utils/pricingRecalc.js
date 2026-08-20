@@ -1,6 +1,5 @@
 import { makeExtraCharges } from './extraCharges';
 
-import { toQualityString as asQuality } from '../constants/metalQualities';
 
 function resolveCharges(data) {
   const src = data?.editableCharges ?? {};
@@ -65,12 +64,9 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
 
   const metalRate = parseFloat(data?.editableMetal?.Rate ?? commonMetal.Rate);
   const ounceVal = parseFloat(data?.editableMetal?.Ounce ?? commonMetal.Ounce);
-  const currentQuality = asQuality(
-    updatedMetalQuality || data?.editableMetal?.Quality || metalKt,
-  );
-  const lastPricedQuality = asQuality(
-    previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality,
-  );
+  const currentQuality = updatedMetalQuality || data?.editableMetal?.Quality || metalKt;
+  const lastPricedQuality =
+    previousMetalQuality || data?.pricingResult?.Metal?.Quality || currentQuality;
 
   const metalPayload = {
     Weight: parseFloat(data?.editableMetal?.Weight || commonMetal.Weight || 0) || 0,
