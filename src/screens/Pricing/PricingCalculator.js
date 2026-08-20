@@ -120,6 +120,7 @@ export default function PricingCalci({ route, navigation }) {
   const [extractionTimeoutCrop, setExtractionTimeoutCrop] = useState(null);
 
   const metalWeightRef = useRef(null);
+  const pendingWeightRef = useRef(null);
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
   const singleStoneCatKeyRef = useRef(singleStoneCatKey);
@@ -233,6 +234,7 @@ export default function PricingCalci({ route, navigation }) {
       if (!dataChangedRef.current || !clientId || Object.keys(groupedData).length === 0) return;
       if (hasMissingStones() || isAutoRecalculatingRef.current) return;
       dataChangedRef.current = false;
+      applyPendingWeight();
       isAutoRecalculatingRef.current = true;
       handleRecalculateAllRef.current?.().finally(() => {
         isAutoRecalculatingRef.current = false;
@@ -332,7 +334,15 @@ export default function PricingCalci({ route, navigation }) {
 
   const updateMetalWeight = (value) => {
     dataChangedRef.current = true;
+    pendingWeightRef.current = value;
     setMetalWeight(value);
+  };
+
+  // Writes the typed weight into every stone type. Called on keyboard hide, not
+  // while typing, so groupedData is not rebuilt on each keystroke.
+  const applyPendingWeight = () => {
+    const value = pendingWeightRef.current;
+    if (value == null) return;
     setGroupedData((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((cat) => {
@@ -402,7 +412,10 @@ export default function PricingCalci({ route, navigation }) {
     Object.values(groupedData).forEach((catData) => {
       catData.types.forEach((type) => {
         if (catData.byType[type]) {
-          rawMultiData[type] = catData.byType[type];
+          const entry = catData.byType[type];
+          rawMultiData[type] = pendingWeightRef.current != null
+            ? { ...entry, editableMetal: { ...entry.editableMetal, Weight: pendingWeightRef.current } }
+            : entry;
         }
       });
     });
@@ -551,6 +564,7 @@ export default function PricingCalci({ route, navigation }) {
       });
 
       commitQuality(clientId || 'pricing');
+      pendingWeightRef.current = null;
     }
 
     setIsRecalculating(false);
