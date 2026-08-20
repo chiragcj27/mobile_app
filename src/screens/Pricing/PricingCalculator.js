@@ -83,6 +83,7 @@ export default function PricingCalci({ route, navigation }) {
   const [clientId, setClientId] = useState(route?.params?.clientId || '');
   const [selectedStoneTypes, setSelectedStoneTypes] = useState([]);
   const [metalKt, setMetalKt] = useState('');
+  const [metalWeight, setMetalWeight] = useState('');
   const [imageFile, setImageFile] = useState(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
@@ -118,6 +119,7 @@ export default function PricingCalci({ route, navigation }) {
   const [extractionTimeoutImage, setExtractionTimeoutImage] = useState(null);
   const [extractionTimeoutCrop, setExtractionTimeoutCrop] = useState(null);
 
+  const metalWeightRef = useRef(null);
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
   const singleStoneCatKeyRef = useRef(singleStoneCatKey);
@@ -160,6 +162,7 @@ export default function PricingCalci({ route, navigation }) {
     setGroupedData({});
     setStoneRecalcStatus({});
     setMetalKt('');
+    setMetalWeight('');
     setImageFile(null);
     setIsRecalculating(false);
     setPdfHtml(null);
@@ -183,6 +186,20 @@ export default function PricingCalci({ route, navigation }) {
     setIsExtracting(false);
     setExtractPhase('');
   }, []);
+
+  const typeHasWeight = (data) => parseFloat(data?.editableMetal?.Weight) > 0;
+
+  const isMetalWeightMissing =
+    Object.keys(groupedData).length > 0 &&
+    Object.values(groupedData).some(cat =>
+      (cat.types || []).some(type => !typeHasWeight(cat.byType?.[type])),
+    );
+
+  useEffect(() => {
+    if (!isMetalWeightMissing) return;
+    const id = setTimeout(() => metalWeightRef.current?.focus(), 400);
+    return () => clearTimeout(id);
+  }, [isMetalWeightMissing]);
 
   const hasMissingStones = useCallback(() =>
     Object.values(groupedDataRef.current).some((catData) =>
@@ -333,6 +350,25 @@ export default function PricingCalci({ route, navigation }) {
       metalKt,
       clientPricing: selectedClient?.Pricing,
       forceType: true,
+    });
+  };
+
+  const updateMetalWeight = (value) => {
+    dataChangedRef.current = true;
+    setMetalWeight(value);
+    setGroupedData((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((cat) => {
+        const newByType = { ...next[cat].byType };
+        Object.keys(newByType).forEach((type) => {
+          newByType[type] = {
+            ...newByType[type],
+            editableMetal: { ...newByType[type].editableMetal, Weight: value },
+          };
+        });
+        next[cat] = { ...next[cat], byType: newByType };
+      });
+      return next;
     });
   };
 
@@ -1201,6 +1237,35 @@ export default function PricingCalci({ route, navigation }) {
           </View>
         </Card>
 
+        {isMetalWeightMissing && (
+          <Card style={[styles.card, { marginTop: 16 }]}>
+            <View style={styles.validationWarning}>
+              <Icon name="warning" size={16} color={colors.warning} />
+              <Text style={styles.validationWarningText}>
+                Metal weight is missing — fill it first to price this design
+              </Text>
+            </View>
+            <View style={styles.commonSectionHeader}>
+              <Text style={styles.commonSectionTitle}>Metal Weight</Text>
+            </View>
+            <View style={styles.chargesRow}>
+              <View style={styles.chargeField}>
+                <Text style={[styles.fieldLabel, styles.fieldLabelError]}>Weight (g) *</Text>
+                <TextInput
+                  ref={metalWeightRef}
+                  style={[styles.fieldInput, styles.fieldInputError]}
+                  keyboardType="decimal-pad"
+                  value={String(metalWeight || '')}
+                  onChangeText={updateMetalWeight}
+                  placeholder="0"
+                  placeholderTextColor={colors.textSecondary}
+                  onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
+                />
+              </View>
+            </View>
+          </Card>
+        )}
+
         {/* ACCORDION SECTIONS */}
         {Object.entries(groupedData).map(([category, catData]) => {
           if (!catData || !catData.types || catData.types.length === 0) return null;
@@ -1209,6 +1274,9 @@ export default function PricingCalci({ route, navigation }) {
             const d = catData.byType[type];
             return d?.editableStones?.some(s => parseFloat(s.Price) <= 0);
           });
+          const missingMetalWeight = catData.types.some(
+            type => !typeHasWeight(catData.byType[type]),
+          );
 
           return (
             <Card
@@ -1218,6 +1286,11 @@ export default function PricingCalci({ route, navigation }) {
                 styles.accordionCard,
               ]}
             >
+              {missingMetalWeight && (
+                <Text style={styles.missingWarningText}>
+                  Metal weight missing
+                </Text>
+              )}
               {hasMissing && (
                 <Text style={styles.missingWarningText}>
                   Please fill all stone prices before recalculating
