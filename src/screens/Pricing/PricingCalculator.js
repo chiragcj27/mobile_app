@@ -153,13 +153,14 @@ export default function PricingCalci({ route, navigation }) {
     clients.find(c => c.id === clientId || c._id === clientId)?.Name ||
     'Client';
 
-  // Auto-fill stone types when client is selected
+  // Keep the stone types in step with the fetched client. Separate from the
+  // reset below so a refetch of the same client does not wipe the user's input.
   useEffect(() => {
-    if (clientId && selectedClient?.ApplicableStoneTypes) {
-      setSelectedStoneTypes(selectedClient.ApplicableStoneTypes);
-    } else {
-      setSelectedStoneTypes([]);
-    }
+    setSelectedStoneTypes(selectedClient?.ApplicableStoneTypes ?? []);
+  }, [selectedClient]);
+
+  // Only an actual change of client starts over.
+  useEffect(() => {
     setGroupedData({});
     setStoneRecalcStatus({});
     setMetalKt('');
@@ -171,7 +172,7 @@ export default function PricingCalci({ route, navigation }) {
     setShowPdfModal(false);
     setSingleStoneCatKey(null);
     setShowSingleStoneModal(false);
-  }, [clientId, selectedClient]);
+  }, [clientId]);
 
   // Wipe all extraction/pricing state back to a clean slate (keeps the selected client,
   // stone types and metal KT). Used whenever the image changes/removes or an extraction
