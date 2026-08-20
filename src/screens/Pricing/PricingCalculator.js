@@ -226,29 +226,19 @@ export default function PricingCalci({ route, navigation }) {
     }
   }, [selectedStoneTypes]);
 
-  // Auto-recalculate: listen for keyboard hide, debounce, then recalc
-  // skip if missing stones remain so user can finish editing all first
+  // Auto-recalculate on keyboard hide.
+  // Skip while stone prices are missing so the user can finish filling them.
   useEffect(() => {
-    let debounceTimer = null;
     const subscription = Keyboard.addListener('keyboardDidHide', () => {
-      if (dataChangedRef.current && clientId && Object.keys(groupedData).length > 0) {
-        if (hasMissingStones()) return;
-        dataChangedRef.current = false;
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-          if (!isAutoRecalculatingRef.current) {
-            isAutoRecalculatingRef.current = true;
-            handleRecalculateAllRef.current?.().finally(() => {
-              isAutoRecalculatingRef.current = false;
-            });
-          }
-        }, 500);
-      }
+      if (!dataChangedRef.current || !clientId || Object.keys(groupedData).length === 0) return;
+      if (hasMissingStones() || isAutoRecalculatingRef.current) return;
+      dataChangedRef.current = false;
+      isAutoRecalculatingRef.current = true;
+      handleRecalculateAllRef.current?.().finally(() => {
+        isAutoRecalculatingRef.current = false;
+      });
     });
-    return () => {
-      subscription?.remove();
-      clearTimeout(debounceTimer);
-    };
+    return () => subscription?.remove();
   }, [clientId, groupedData]);
 
   // Auto-recalc after image extraction: trigger calculatePricing for all types
@@ -1246,7 +1236,6 @@ export default function PricingCalci({ route, navigation }) {
                   onChangeText={updateMetalWeight}
                   placeholder="0"
                   placeholderTextColor={colors.textSecondary}
-                  onSubmitEditing={() => { dataChangedRef.current = false; handleRecalculateAll(); }}
                 />
               </View>
             </View>
