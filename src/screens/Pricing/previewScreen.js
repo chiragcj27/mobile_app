@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  TextInput,
   Clipboard,
   Platform,
   ActivityIndicator,
@@ -1158,17 +1157,17 @@ export default function PreviewScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            <TextInput
+            <ScrollView
               style={styles.clientMsgInput}
-              value={combinedMessage}
-              multiline
-              editable={false}
-              placeholder="No pricing message saved yet..."
-              placeholderTextColor={colors.textSecondary}
-              textAlignVertical="top"
-              scrollEnabled
+              contentContainerStyle={styles.clientMsgContent}
               nestedScrollEnabled
-            />
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={[styles.clientMsgText, !combinedMessage && styles.clientMsgPlaceholder]}>
+                {combinedMessage || 'No pricing message saved yet...'}
+              </Text>
+            </ScrollView>
           </View>
         ) : null}
 
@@ -1307,17 +1306,17 @@ const renderClientPreview = () => {
                 </Text>
               </TouchableOpacity>
             </View>
-            <TextInput
+            <ScrollView
               style={styles.clientMsgInput}
-              value={enquiryMsg}
-              multiline
-              editable={false}
-              placeholder="No pricing message saved yet..."
-              placeholderTextColor={colors.textSecondary}
-              textAlignVertical="top"
-              scrollEnabled
+              contentContainerStyle={styles.clientMsgContent}
               nestedScrollEnabled
-            />
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={[styles.clientMsgText, !enquiryMsg && styles.clientMsgPlaceholder]}>
+                {enquiryMsg || 'No pricing message saved yet...'}
+              </Text>
+            </ScrollView>
           </View>
         ) : null}
 
@@ -1529,11 +1528,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderLight || '#E0E0E0',
     borderRadius: 8,
+    backgroundColor: colors.background,
+  },
+  clientMsgContent: {
     padding: 10,
+  },
+  clientMsgText: {
     fontFamily: fonts.regular,
     fontSize: fonts.sm || 13,
     color: colors.textPrimary,
-    backgroundColor: colors.background,
+  },
+  clientMsgPlaceholder: {
+    color: colors.textSecondary,
   },
   editToggle: {
     flexDirection: 'row',
