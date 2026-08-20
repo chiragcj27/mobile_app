@@ -312,6 +312,7 @@ export default function PricingCalci({ route, navigation }) {
         image: imageFile,
         clientId,
         stoneType: type,
+        metalQuality: metalKt,
       }).unwrap();
 
       return { type, data };
@@ -621,6 +622,7 @@ export default function PricingCalci({ route, navigation }) {
         image: file,
         clientId: clientId,
         stoneType: firstType,
+        metalQuality: metalKt,
         cropX: crop?.x,
         cropY: crop?.y,
         cropW: crop?.w,
