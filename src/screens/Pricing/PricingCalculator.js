@@ -26,7 +26,7 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
-import { selectQuality, getSelectedQuality, commitQuality, resetSelectedQuality } from '../../utils/metalQualitySelector';
+import { selectQuality, getSelectedQuality, commitQuality } from '../../utils/metalQualitySelector';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -133,10 +133,6 @@ export default function PricingCalci({ route, navigation }) {
   useEffect(() => { singleStoneCatKeyRef.current = singleStoneCatKey; }, [singleStoneCatKey]);
   useEffect(() => { groupedDataRef.current = groupedData; }, [groupedData]);
 
-  // The quality pairs live at module level, so they outlive this screen. Clear
-  // them on unmount or a new calculation would compare against the last one.
-  useEffect(() => () => resetSelectedQuality(), []);
-
   const { clients = [] } = useClients();
   const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
   const { data: metalPricesData } = useGetMetalPricesQuery(false);
@@ -169,7 +165,6 @@ export default function PricingCalci({ route, navigation }) {
     setMetalKt('');
     setMetalWeight('');
     pendingWeightRef.current = null;
-    resetSelectedQuality();
     setImageFile(null);
     setIsRecalculating(false);
     setPdfHtml(null);
@@ -185,7 +180,6 @@ export default function PricingCalci({ route, navigation }) {
     setImageFile(null);
     setMetalWeight('');
     pendingWeightRef.current = null;
-    resetSelectedQuality();
     setGroupedData({});
     setStoneRecalcStatus({});
     setPdfHtml(null);
