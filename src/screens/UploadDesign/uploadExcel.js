@@ -1,19 +1,16 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Image,
   StyleSheet,
-  Platform,
 } from 'react-native';
-import Share from 'react-native-share';
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useUploadDesignMutation, useUpdateAssetDataMutation } from '../../store/api';
 import BrandedAlert from '../../components/common/BrandedAlert';
-import FinalLookModal from '../../components/modals/FinalLookModal';
 
 let DocumentPicker;
 try {
@@ -28,11 +25,10 @@ const requestStoragePermission = async () => {
 };
 
 export default function UploadExcelScreen({ route, navigation }) {
-  const { enquiryId, designType, designCode, images, validationResul, cost, isFinalVersion, version, designWithDiamonds } = route.params || {};
+  const { enquiryId, designType, designCode, images, validationResult, cost, isFinalVersion, version, designWithDiamonds } = route.params || {};
   const [selectedExcel, setSelectedExcel] = useState(null);
   const [uploadType, setUploadType] = useState(null);
-  const [showFinalLook, setShowFinalLook] = useState(false);
-  const [uploadedExcelFile, setUploadedExcelFile] = useState(null);
+
   const [uploadDesign, { isLoading: isUploading }] = useUploadDesignMutation();
   const [updateAssetData] = useUpdateAssetDataMutation();
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
@@ -202,7 +198,7 @@ export default function UploadExcelScreen({ route, navigation }) {
     try {
       const isOnlyMetalDesign = designWithDiamonds === false;
 
-      const result = await uploadDesign({
+      await uploadDesign({
         enquiryId,
         designType: designType,
         version: version,
@@ -214,7 +210,6 @@ export default function UploadExcelScreen({ route, navigation }) {
         isOnlyMetalDesign,
       }).unwrap();
 
-      console.log('[uploadExcel] uploadDesign succeeded, version:', version, 'result:', JSON.stringify(result));
 
       if (isFinalVersion) {
         try {
@@ -224,7 +219,6 @@ export default function UploadExcelScreen({ route, navigation }) {
             version: version,
             data: { IsFinalVersion: true },
           }).unwrap();
-          console.log('[uploadExcel] updateAssetData IsFinalVersion succeeded');
         } catch (assetErr) {
           console.error('[uploadExcel] updateAssetData failed:', assetErr);
         }
@@ -232,8 +226,11 @@ export default function UploadExcelScreen({ route, navigation }) {
 
       if (isFinalVersion) {
         await new Promise(resolve => setTimeout(resolve, 800));
-        setUploadedExcelFile(selectedExcel);
-        setShowFinalLook(true);
+        setSelectedExcel(null);
+        navigation.navigate('MainTabs', {
+          screen: 'Enquiries',
+          params: { filter: 'Order Placement' },
+        });
       } else {
         showAlert(
           'Success',
@@ -263,33 +260,6 @@ export default function UploadExcelScreen({ route, navigation }) {
   const handleContinueWithoutExcel = () => {
     handleUploadAll(true);
   };
-
-  const handleShareExcelFile = useCallback(async () => {
-    if (!uploadedExcelFile) return;
-    try {
-      await Share.open({
-        title: 'Share Excel File',
-        message: `Design cost sheet - ${uploadedExcelFile.name || 'cost_sheet.xlsx'}`,
-        url: uploadedExcelFile.uri,
-        type: uploadedExcelFile.type || 'application/vnd.ms-excel',
-        failOnCancel: false,
-      });
-    } catch (e) {
-      if (!String(e?.message || '').toLowerCase().includes('cancel')) {
-        showAlert('Share Failed', e?.message || 'Could not share Excel file.', 'error', [{ text: 'OK' }]);
-      }
-    }
-  }, [uploadedExcelFile]);
-
-  const handleCloseFinalLook = useCallback(() => {
-    setShowFinalLook(false);
-    setUploadedExcelFile(null);
-    setSelectedExcel(null);
-    navigation.navigate('MainTabs', {
-      screen: 'Enquiries',
-      params: { filter: 'Order Placement' },
-    });
-  }, [navigation]);
 
   return (
     <View style={styles.container}>
@@ -355,17 +325,7 @@ export default function UploadExcelScreen({ route, navigation }) {
         onClose={hideAlert}
       />
 
-      {showFinalLook && (
-        <FinalLookModal
-          visible={showFinalLook}
-          enquiryId={enquiryId}
-          clientName={''}
-          onClose={handleCloseFinalLook}
-          shareExcelMode
-          onShareExcel={handleShareExcelFile}
-          headerTitle="Upload Complete"
-        />
-      )}
+
     </View>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -21,6 +21,7 @@ import {
   useGetEnquiryBucketsQuery,
   useGetEnquiryByIdQuery,
   useUpdateEnquiryMutation,
+  useReorderEnquiryMutation,
   useDeleteEnquiryMutation,
   useUpdateAssetDataMutation,
 } from '../../store/api';
@@ -34,6 +35,7 @@ import {
 import { TAB, SUBSTATUS, STATUS } from '../../constants/enquiry';
 
 import NewCard from '../../components/cards/NewCard';
+import ReorderableList from '../../components/common/ReorderableList';
 import { SearchInput, AnimatedLogoLoader } from '../../components/common';
 import TopNavbar from '../../components/common/TopNavbar';
 import Icon from '../../components/common/Icon';
@@ -44,7 +46,6 @@ import ShareEnquiryModal from '../../components/modals/ShareEnquiryModal';
 import CreateEnquiryModal from '../EditEnquiry/createEnquiryModal';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import Clipboard from '@react-native-clipboard/clipboard';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
 import { useEnquiryActions } from '../../hooks/useEnquiryActions';
 
@@ -80,10 +81,6 @@ const DESIGNER_TAB = {
   WIP: 'designer_wip',
 };
 
-const ORDER_PLACEMENT_TABS=[
-  { key: TAB.Order_Placement, label: 'Order Placement', bucketKey: 'orderPlacement' },
-]
-
 const buildArg = ({ role, userId, page, search, filters, sortBy, sortOrder, tabFilter }) => ({
   role,
   userId,
@@ -93,7 +90,8 @@ const buildArg = ({ role, userId, page, search, filters, sortBy, sortOrder, tabF
   filters: {
     ...filters,
     ...tabFilter,
-    sortBy,
+    // Backend keys the priority + saved-order (OrderKey) sort off lowercase 'priority'.
+    sortBy: sortBy === 'Priority' ? 'priority' : sortBy,
     sortOrder,
   },
 });
@@ -134,48 +132,6 @@ const enrich = (rows, clientNameMap) =>
     }
     return { ...e, clientId: idStr || e.clientId, clientName: name || 'Unknown Client' };
   });
-
-const renderMdSummary = (input, s) => {
-  if (!input) return null;
-  const text = (typeof input === 'string' ? input : String(input)).replace(/\\n/g, '\n');
-  const sections = [];
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (/^#{1,3}\s/.test(trimmed)) {
-      const level = trimmed.match(/^#+/)[0].length;
-      sections.push({ type: 'heading', text: trimmed.replace(/^#+\s*/, '').replace(/\*\*/g, ''), level });
-    } else if (/^\*\*.*\*\*:/.test(trimmed)) {
-      const parts = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
-      sections.push(parts ? { type: 'row', label: parts[1].replace(/\*\*/g, ''), val: (parts[2] || '').replace(/\*\*/g, '') } : { type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    } else if (/^[-*•]\s/.test(trimmed)) {
-      sections.push({ type: 'bullet', text: trimmed.replace(/^[-*•]\s*/, '').replace(/\*\*/g, '') });
-    } else if (/^[A-Z][^:]+:/.test(trimmed) && !/^https?:\/\//i.test(trimmed) && trimmed.indexOf(':') < 60) {
-      const colonIdx = trimmed.indexOf(':');
-      sections.push({ type: 'row', label: trimmed.slice(0, colonIdx).replace(/\*\*/g, ''), val: trimmed.slice(colonIdx + 1).trim().replace(/\*\*/g, '') });
-    } else {
-      sections.push({ type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    }
-  }
-  if (!sections.length) return null;
-  return (
-    <View style={s.mdContainer}>
-      {sections.map((sec, i) => {
-        switch (sec.type) {
-          case 'heading':
-            return <Text key={i} style={[s.mdHeading, sec.level <= 2 && s.mdHeadingLg]}>{sec.text}</Text>;
-          case 'row':
-            return <View key={i} style={s.mdRow}><Text style={s.mdKey} numberOfLines={2}>{sec.label}</Text><Text style={s.mdVal}>{sec.val}</Text></View>;
-          case 'bullet':
-            return <View key={i} style={s.mdBullet}><Text style={s.mdDot}>•</Text><Text style={s.mdBulletTxt}>{sec.text}</Text></View>;
-          default:
-            return <Text key={i} style={s.mdPara}>{sec.text}</Text>;
-        }
-      })}
-    </View>
-  );
-};
 
 const dedupeById = (rows) => {
   const seen = new Set();
@@ -238,10 +194,6 @@ export default function EnquiryListScreen({ navigation }) {
   const [designerTab, setDesignerTab] = useState(DESIGNER_TAB.MINE);
   const [unassignedSubFilter, setUnassignedSubFilter] = useState('unassigned');
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [summaryEnquiryId, setSummaryEnquiryId] = useState(null);
-  const summaryTextRef = useRef('');
-  const { data: summaryData, isLoading: summaryLoading } = useGetEnquiryByIdQuery(summaryEnquiryId, { skip: !summaryEnquiryId });
-
   // When CH/Admin lands here via "ClientHandlerEnquiries" route with a selected client,
   // scope every query to that client only.
   const isUnassignedOnly = route.params?.filter === 'unassigned';
@@ -253,10 +205,6 @@ export default function EnquiryListScreen({ navigation }) {
   const selectedAssignedToRole = String(selectedAssignedTo?.role || '').toLowerCase();
   const isAssignedToOrderPlacement = selectedAssignedToRole === 'order_placement' || selectedAssignedToRole === 'op';
 
-  console.log('[EnquiryListScreen] assignedTo:', JSON.stringify(selectedAssignedTo));
-  console.log('[EnquiryListScreen] selectedAssignedToRole:', selectedAssignedToRole, 'isAssignedToOrderPlacement:', isAssignedToOrderPlacement);
-  console.log('[EnquiryListScreen] isAdminCh:', isAdminCh, 'isOrderPlacement:', isOrderPlacement, 'roleKind:', roleKind);
-  console.log('[EnquiryListScreen] activeTab:', activeTab);
 
   const scopedFilters = selectedClientId
     ? { ...filters, clientId: selectedClientId }
@@ -419,6 +367,10 @@ export default function EnquiryListScreen({ navigation }) {
   const sortedRows = useMemo(() => {
     if (sortBy !== 'Priority') return activeQuery.rows;
     const rows = [...(activeQuery.rows || [])];
+    const orderKeyOf = (x) => {
+      const k = x?.OrderKey ?? x?._originalData?.OrderKey;
+      return (k === null || k === undefined) ? Number.MAX_SAFE_INTEGER : Number(k);
+    };
     rows.sort((a, b) => {
       const aRaw = a?._originalData || a;
       const bRaw = b?._originalData || b;
@@ -426,14 +378,15 @@ export default function EnquiryListScreen({ navigation }) {
       const bP = (bRaw?.Priority || b?.Priority || b?.priority || '').toLowerCase().trim();
       const aIdx = PRIORITY_ORDER[aP] ?? 5;
       const bIdx = PRIORITY_ORDER[bP] ?? 5;
-      return sortOrder === 'asc' ? aIdx - bIdx : bIdx - aIdx;
+      if (aIdx !== bIdx) return sortOrder === 'asc' ? aIdx - bIdx : bIdx - aIdx;
+      // Same priority — respect the saved drag order (OrderKey ascending).
+      return orderKeyOf(a) - orderKeyOf(b);
     });
     return rows;
   }, [activeQuery.rows, sortBy, sortOrder]);
 
   useEffect(() => {
     if (__DEV__ && activeQuery.rows.length > 0) {
-      console.log('[EnquiryListScreen] enquiryData =', JSON.stringify(activeQuery.rows, null, 2));
     }
   }, [activeQuery.rows]);
 
@@ -451,9 +404,39 @@ export default function EnquiryListScreen({ navigation }) {
   }, [activeTab, isAdminCh, isDesigner]));
 
   const [updateEnquiry] = useUpdateEnquiryMutation();
+  const [reorderEnquiry] = useReorderEnquiryMutation();
   const [deleteEnquiry] = useDeleteEnquiryMutation();
   const [updateAssetData] = useUpdateAssetDataMutation();
   const { generateAndShareExcel } = useEnquiryActions({});
+
+  const idOf = (it) => it?._id || it?.Id || it?.id || it?._originalData?._id;
+  const keyOf = (it) => Number(it?.OrderKey ?? it?._originalData?.OrderKey);
+
+  // Persist a drag reorder to the backend (fractional OrderKey). Keeps the dropped
+  // order on screen and refetches after a short settle delay.
+  const handleReorder = useCallback(async ({ data, toIndex, changed }) => {
+    if (!changed || toIndex == null) return;
+    const dragged = data[toIndex];
+    const draggedId = idOf(dragged);
+    const draggedOrderKey = keyOf(dragged);
+    if (!draggedId || !Number.isFinite(draggedOrderKey)) return;
+    const previous = toIndex > 0 ? data[toIndex - 1] : null;
+    const next = toIndex < data.length - 1 ? data[toIndex + 1] : null;
+    const target = (next && previous && draggedOrderKey > keyOf(next)) ? next : (previous || next);
+    if (!target) return;
+    try {
+      await reorderEnquiry({
+        draggedId,
+        draggedOrderKey,
+        targetId: idOf(target),
+        targetOrderKey: keyOf(target),
+      }).unwrap();
+      setTimeout(() => { activeQuery.refetch(); }, 900);
+    } catch (e) {
+      console.warn('[EnquiryList] reorder failed:', e?.data?.message || e?.message);
+      activeQuery.refetch();
+    }
+  }, [reorderEnquiry, activeQuery]);
 
   const refreshAll = useCallback(() => {
     if (isAdminCh) refetchBuckets();
@@ -505,15 +488,11 @@ export default function EnquiryListScreen({ navigation }) {
   const [showSortModal, setShowSortModal] = useState(false);
 
   const sortOptions = [
-    { key: 'AssignedDate', label: 'Assigned Date', icon: 'schedule' },
     { key: 'CreatedDate', label: 'Date Created', icon: 'event' },
-    { key: 'Name', label: 'Name', icon: 'title' },
+    { key: 'ShippingDate', label: 'Shipping Date', icon: 'local-shipping' },
     { key: 'Priority', label: 'Priority', icon: 'priority-high' },
     { key: 'CurrentStatus', label: 'Status', icon: 'flag' },
     { key: 'Category', label: 'Category', icon: 'category' },
-    { key: 'ClientId', label: 'Client', icon: 'person' },
-    { key: 'StoneType', label: 'Stone Type', icon: 'diamond' },
-    { key: 'ShippingDate', label: 'Shipping Date', icon: 'local-shipping' },
   ];
 
   const currentSortLabel = useMemo(
@@ -526,7 +505,7 @@ export default function EnquiryListScreen({ navigation }) {
       const newOrder = sortOrder === 'asc' ? 'desc' : 'asc';
       dispatch(setSorting({ sortBy, sortOrder: newOrder }));
     } else {
-      const dateFields = ['AssignedDate', 'CreatedDate', 'ShippingDate'];
+      const dateFields = ['CreatedDate', 'ShippingDate'];
       const defaultOrder = dateFields.includes(newSortBy) ? 'desc' : 'asc';
       dispatch(setSorting({ sortBy: newSortBy, sortOrder: defaultOrder }));
     }
@@ -547,6 +526,7 @@ export default function EnquiryListScreen({ navigation }) {
       <TouchableOpacity
         style={[styles.tab, isActive && styles.tabActive]}
         onPress={() => handleTabChange(item.key)}
+        activeOpacity={0.8}
       >
         <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{item.label}</Text>
         <View style={[styles.countWrap, isActive && styles.countWrapActive]}>
@@ -562,15 +542,16 @@ export default function EnquiryListScreen({ navigation }) {
     { key: DESIGNER_TAB.WIP,  label: `All ${designerRoleLabel} (WIP)` },
   ], [designerRoleLabel]);
 
-  const renderItem = ({ item }) => {
+  const renderItem = ({ item, drag, isActive }) => {
     const id = item?._id || item?.Id || item?.id || item?._originalData?._id;
     return (
       <NewCard
         item={item}
         navigation={navigation}
         currentTab={isAdminCh ? activeTab : 'designer'}
+        onLongPress={drag}
+        isDragActive={isActive}
         onViewQuotation={() => {
-          if (__DEV__) console.log('[List] View Quotation click; id=', id, 'item keys=', Object.keys(item || {}));
           setQuotationEnquiry({ ...item, _resolvedId: id });
         }}
         onFinalLook={() => setFinalLookEnquiry(item)}
@@ -580,10 +561,8 @@ export default function EnquiryListScreen({ navigation }) {
         })}
         onUpdateEnquiry={onUpdateEnquiry}
         onDeleteEnquiry={onDeleteEnquiry}
-        onSummary={(enq) => setSummaryEnquiryId(enq?._id || enq?.Id || enq?.id)}
         onShare={(enq) => {
-          const id = enq?._id || enq?.Id || enq?.id;
-          setShareEnquiryId(id);
+          setShareEnquiryId(enq?._id || enq?.Id || enq?.id);
           setShareEnquiry(enq);
         }}
       />
@@ -711,6 +690,7 @@ export default function EnquiryListScreen({ navigation }) {
                     key={t.key}
                     style={[styles.tab, isActive && styles.tabActive]}
                     onPress={() => { setPage(1); setDesignerTab(t.key); }}
+                    activeOpacity={0.8}
                   >
                     <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{t.label}</Text>
                     <View style={[styles.countWrap, isActive && styles.countWrapActive]}>
@@ -779,10 +759,11 @@ export default function EnquiryListScreen({ navigation }) {
       {activeQuery.isLoading ? (
         <View style={styles.loader}><AnimatedLogoLoader /></View>
       ) : (
-        <FlatList
+        <ReorderableList
           data={sortedRows}
           renderItem={renderItem}
           keyExtractor={(item, idx) => item?._id || item?.Id || String(idx)}
+          onDragEnd={handleReorder}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={renderEmpty}
           refreshControl={
@@ -939,56 +920,6 @@ export default function EnquiryListScreen({ navigation }) {
           isDesigner={isDesigner}
         />
       )}
-
-      <Modal visible={!!summaryEnquiryId} transparent animationType="slide" onRequestClose={() => setSummaryEnquiryId(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox2}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Enquiry Summary</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (summaryTextRef.current) {
-                      Clipboard.setString(summaryTextRef.current);
-                    }
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Icon name="content-copy" size={20} color={colors.primaryDark} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setSummaryEnquiryId(null)}>
-                  <Icon name="close" size={24} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            {summaryLoading ? (
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
-                {(() => {
-                  const summaryCandidates = [
-                    summaryData?.Summary,
-                    summaryData?.summary,
-                    summaryData?._originalData?.Summary,
-                    summaryData?._originalData?.summary,
-                    summaryData?.data?.Summary,
-                    summaryData?.data?.summary,
-                    summaryData?.enquiry?.Summary,
-                    summaryData?.enquiry?.summary,
-                  ];
-                  const sm = summaryCandidates.find(
-                    value => typeof value === 'string' && value.trim().length > 0,
-                  );
-                  summaryTextRef.current = sm || '';
-                  return renderMdSummary(sm, styles) || <Text style={styles.noSummary}>No summary available for this enquiry.</Text>;
-                })()}
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
 
       <CreateEnquiryModal
         visible={showCreateModal}
@@ -1171,22 +1102,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
   },
   sortOrderIndicator: { marginLeft: 8 },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 8,
-    elevation: 6,
-  },
   infoBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1235,91 +1150,4 @@ const styles = StyleSheet.create({
     marginHorizontal: 2,
   },
 
-  modalBox2: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    width: '100%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  noSummary: {
-    padding: 20,
-    textAlign: 'center',
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm,
-    color: colors.textSecondary,
-  },
-  mdContainer: { padding: 16, paddingBottom: 8 },
-  mdHeading: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 13,
-    color: colors.primary,
-    marginTop: 14,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  mdHeadingLg: { fontSize: fonts.base || 14 },
-  mdRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || '#F0F0F0',
-  },
-  mdKey: {
-    flex: 1,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm || 13,
-    color: colors.textSecondary,
-    paddingRight: 8,
-  },
-  mdVal: {
-    flex: 1.5,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    textAlign: 'right',
-  },
-  mdBullet: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginVertical: 3,
-    paddingLeft: 4,
-  },
-  mdDot: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.base || 14,
-    color: colors.primary,
-    marginRight: 8,
-    lineHeight: 20,
-  },
-  mdBulletTxt: {
-    flex: 1,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  mdPara: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-    marginVertical: 4,
-  },
 });

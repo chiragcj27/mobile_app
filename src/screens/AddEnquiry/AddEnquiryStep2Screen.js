@@ -12,7 +12,6 @@ import {
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { Button } from '../../components/common';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import {
@@ -28,6 +27,7 @@ import {
   isEnquiryClientUser,
 } from '../../components/enquiry/EnquirySummaryCard';
 import BrandedAlert from '../../components/common/BrandedAlert';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 const normalizeEnquiryChat = (chat) => chat?._originalData || chat;
 
@@ -57,10 +57,7 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
   const { user } = useAuth();
   const [selectedImages, setSelectedImages] = useState([]);
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
   
   // Fetch and cache users for name resolution
   useUsers();
@@ -392,11 +389,11 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
         Quantity: parseInt(formData.quantity) || 1, // Convert to number as per API
         Metal: {
           Color: formData.metalColor || null,
-          Quality: formData.metalQuality || '10K',
+          Qualities: formData.metalQuality ? [formData.metalQuality] : [],
         },
         StyleNumber: formData.styleNumber || null,
         GatiOrderNumber: formData.GatiOrderNumber || null,
-        StoneType: formData.stoneType && formData.stoneType.trim() ? formData.stoneType.trim() : null,
+        StoneTypes: formData.stoneType && formData.stoneType.trim() ? [formData.stoneType.trim()] : [],
         MetalWeight: {
           From: formData.metalWeightFrom ? (() => {
             const cleaned = formData.metalWeightFrom.toString().replace(/[^0-9.]/g, '');
@@ -447,7 +444,7 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
 
       // Only proceed with update if in edit mode
       if (isEditMode && enquiryToEdit?.id) {
-        const updateResult = await updateEnquiry({ id: enquiryToEdit.id, ...enquiryData }).unwrap();
+        await updateEnquiry({ id: enquiryToEdit.id, ...enquiryData }).unwrap();
         
         // Construct updated enquiry object from form data since API only returns _id
         // Normalize priority for display
@@ -472,11 +469,11 @@ const AddEnquiryStep2Screen = ({ route, navigation }) => {
           Priority: normalizedPriority,
           ShippingDate: formData.deadline || null,
           Category: formData.category,
-          StoneType: formData.stoneType,
+          StoneTypes: formData.stoneType ? [formData.stoneType] : [],
           Quantity: parseInt(formData.quantity) || 1,
           Metal: {
             Color: formData.metalColor || 'Gold',
-            Quality: formData.metalQuality || '10K',
+            Qualities: formData.metalQuality ? [formData.metalQuality] : [],
           },
           MetalWeight: {
             From: formData.metalWeightFrom || null,

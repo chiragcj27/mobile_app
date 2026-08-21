@@ -11,7 +11,7 @@ import {
   KeyboardAvoidingView, Platform,
   TextInput,
 } from 'react-native';
-import { Input, Button } from '../../components/common';
+import { Input } from '../../components/common';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import IconComponent from '../../components/common/Icon';
@@ -24,10 +24,18 @@ import {
 } from '../../store/api';
 import { useClients } from '../../features/clients/clientsHooks';
 import { useAuth } from '../../context/AuthContext';
-import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
+import { launchImageLibrary } from 'react-native-image-picker';
 import BrandedAlert from '../../components/common/BrandedAlert';
 import { useSelector } from 'react-redux';
+import { buildStoneCategoryMap, getStoneCategory, getStoneCategoryLabel } from '../../utils/stoneTypeMapping';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
+import { METAL_QUALITY_OPTIONS } from '../../constants/metalQualities';
 
+const toArray = value =>
+  (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean);
+
+// Array-valued fields — each has its own picker below the missing-fields list
+const ARRAY_FIELDS = ['Metal.Qualities', 'StoneTypes'];
 
 export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated, onUpdate, route }) {
   const { user } = useAuth();
@@ -62,10 +70,7 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
   const [ImagesCommentModal, setImagesCommentModal] = useState(false);
   const [imageComments, setImageComments] = useState([]);
   const [createdEnquiryData, setCreatedEnquiryData] = useState(null);
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
 
   const descriptionRef = useRef(null);
   const [descriptionRequired, setDescriptionRequired] = useState(false);
@@ -82,8 +87,6 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
     if (!allUsers.length) return [];
 
     const statusLower = String(autoStatus).toLowerCase().trim();
-    console.log('🎯 [CreateEnquiry] Auto Status from parsed data:', autoStatus);
-    console.log('🔍 [CreateEnquiry] Roles from API:', rolesData);
 
     // Try to find a role in the roles API that matches the status name
     const matchedRole = Array.isArray(rolesData)
@@ -116,22 +119,11 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       return true;
     });
 
-    console.log('👥 [CreateEnquiry] Matched role:', matchedRole || 'none (showing all)');
-    console.log('👤 [CreateEnquiry] Filtered members for assign:', filtered.map(u => ({
-      id: u.id || u._id,
-      name: String(u.name || u.Name || '?'),
-      role: String(u.role || u.Role || ''),
-    })));
-    console.log('🔎 [CreateEnquiry] Raw user roles (first 5):', allUsers.slice(0, 5).map(u => ({
-      name: String(u.name || u.Name || '?'),
-      role: u.role, Role: u.Role, roleId: u.roleId, RoleId: u.RoleId,
-    })));
     return filtered;
   }, [usersData, rolesData, autoStatus]);
 
   useEffect(() => {
     if (visible) {
-      console.log('CreateEnquiryModal - clientId:', preSelectedClientIdResolved, 'clientName:', preSelectedClientName);
     }
     if (!visible) {
       setProjectType('coral');
@@ -171,18 +163,6 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
     }
   };
 
-  const handleCamera = async () => {
-    const result = await launchCamera({ mediaType: 'photo', quality: 0.8, saveToPhotos: true });
-    if (result.assets?.length > 0) {
-      const a = result.assets[0];
-      setReferenceImages(prev => [
-        ...prev,
-        { uri: a.uri, type: a.type || 'image/jpeg', name: a.fileName || `camera_${Date.now()}.jpg` },
-      ]);
-      setImagesCommentModal(true);
-    }
-  };
-
   const handleTextSubmit = async () => {
     try {
       const result = await parseEnquiry({
@@ -192,9 +172,12 @@ export default function CreateEnquiryModal({ visible, onClose, onEnquiryCreated,
       setParsedData(result.parsed);
       const missing = (result.missingFields || []).filter(f => f.field !== 'ClientId');
       setDynamicMissingFields(missing);
-      if (preSelectedClientIdResolved) {
-        setMissingFieldsData(prev => ({ ...prev, ClientId: preSelectedClientIdResolved }));
-      }
+      setMissingFieldsData(prev => ({
+        ...prev,
+        StoneTypes: toArray(result.parsed?.StoneTypes),
+        'Metal.Qualities': toArray(result.parsed?.Metal?.Qualities),
+        ...(preSelectedClientIdResolved ? { ClientId: preSelectedClientIdResolved } : {}),
+      }));
       setTextSubmitted(true);
     } catch (error) {
       showAlert(
@@ -255,6 +238,7 @@ const generateStyleNumber = (qty, category) => {
     if (isAIParsingFlow && dynamicMissingFields.length > 0) {
       const unfilled = dynamicMissingFields.find(field => {
         const value = missingFieldsData[field.field];
+        if (ARRAY_FIELDS.includes(field.field)) return toArray(value).length === 0;
         return value === undefined || value === null || value === '';
       });
       if (unfilled) {
@@ -264,11 +248,8 @@ const generateStyleNumber = (qty, category) => {
     }
 
     try {
-      const isAIParsingFlow = textSubmitted && parsedData !== null;
       let finalData;
 
-      console.log('[createEnquiry] dynamicMissingFields:', JSON.stringify(dynamicMissingFields.map(f => ({ field: f.field, label: f.label, options: f.options }))));
-      console.log('[createEnquiry] missingFieldsData keys:', Object.keys(missingFieldsData), 'MetalColor:', missingFieldsData.MetalColor, 'MetalQuality:', missingFieldsData.MetalQuality, 'parsedData.Metal:', JSON.stringify(parsedData?.Metal));
       if (isAIParsingFlow) {
         finalData = {
           Name: missingFieldsData.Name || parsedData?.Name || '',
@@ -279,9 +260,9 @@ const generateStyleNumber = (qty, category) => {
           Quantity: missingFieldsData.Quantity || parsedData?.Quantity || 1,
           Metal: {
             Color: missingFieldsData["Metal.Color"] || parsedData?.Metal?.Color || null,
-            Quality: missingFieldsData["Metal.Quality"] || parsedData?.Metal?.Quality || '10K',
+            Qualities: toArray(missingFieldsData["Metal.Qualities"]),
           },
-          StoneType: missingFieldsData.StoneType || parsedData?.StoneType || null,
+          StoneTypes: toArray(missingFieldsData.StoneTypes),
           Stamping: missingFieldsData.Stamping || parsedData?.Stamping || null,
           Remarks: missingFieldsData.Remarks || parsedData?.Remarks || '',
           Category: missingFieldsData.Category || parsedData?.Category || 'Ring',
@@ -317,8 +298,8 @@ const generateStyleNumber = (qty, category) => {
           Status: 'Enquiry Created',
           Priority: 'Normal',
           Quantity: 1,
-          Metal: { Color: null, Quality: '10K' },
-          StoneType: null,
+          Metal: { Color: null, Qualities: [] },
+          StoneTypes: [],
           Stamping: null,
           Remarks: '',
           Category: 'Ring',
@@ -363,8 +344,6 @@ const generateStyleNumber = (qty, category) => {
       ...img,
       Description: (imageComments[i] || '').trim(),
     }));
-    console.log('[handleConfirmCreate] comments being sent:',
-      imagesWithDescriptions.map(img => ({ name: img.name, Description: img.Description })));
 
     let enquiryId = null;
     try {
@@ -399,8 +378,8 @@ const generateStyleNumber = (qty, category) => {
       { label: 'Category', value: data.Category },
       { label: 'Quantity', value: data.Quantity },
       { label: 'Metal Color', value: data.Metal?.Color },
-      { label: 'Metal Quality', value: data.Metal?.Quality },
-      { label: 'Stone Type', value: data.StoneType },
+      { label: 'Metal Quality', value: toArray(data.Metal?.Qualities).join(', ') },
+      { label: 'Stone Type', value: toArray(data.StoneTypes).join(', ') },
       { label: 'Stamping', value: data.Stamping },
       { label: 'Budget', value: data.Budget },
       { label: 'Remarks', value: data.Remarks },
@@ -427,11 +406,14 @@ const generateStyleNumber = (qty, category) => {
   };
 
   const renderMissingFields = () => {
-    if (dynamicMissingFields.length === 0) return null;
+    const fields = dynamicMissingFields.filter(
+      f => !ARRAY_FIELDS.includes(f.field),
+    );
+    if (fields.length === 0) return null;
     return (
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Complete Missing Details</Text>
-        {dynamicMissingFields.map((item, index) => {
+        {fields.map((item, index) => {
           if (item.field === 'ClientId' && item.options.length > 0) {
             return (
               <View key={index} style={styles.tileGroup}>
@@ -455,11 +437,21 @@ const generateStyleNumber = (qty, category) => {
               </View>
             );
           } else if (item.options.length > 0) {
+            const resolvedOptions = (item.field === 'StoneType' || item.field === 'Stone')
+              ? (() => {
+                  const cId = preSelectedClientIdResolved || missingFieldsData.ClientId;
+                  const selectedClient = clients.find(c => (c.id || c._id) === cId);
+                  const applicable = selectedClient?.applicableStoneTypes || [];
+                  if (applicable.length === 0) return item.options;
+                  const allowed = new Set(applicable);
+                  return item.options.filter(opt => allowed.has(opt.value));
+                })()
+              : item.options;
             return (
               <View key={index} style={styles.tileGroup}>
                 <Text style={styles.dropdownLabel}>{item.label}</Text>
                 <View style={styles.chipRowWrap}>
-                  {item.options.map(option => {
+                  {resolvedOptions.map(option => {
                     const selected = missingFieldsData[item.field] === option.value;
                     return (
                         <TouchableOpacity
@@ -467,7 +459,6 @@ const generateStyleNumber = (qty, category) => {
                           style={[styles.choiceChip, selected && styles.choiceChipActive]}
                           activeOpacity={0.85}
                           onPress={() => {
-                            console.log('[createEnquiry] chip pressed field:', item.field, 'value:', option.value, 'label:', option.label);
                             setMissingFieldsData(prev => ({ ...prev, [item.field]: option.value }));
                           }}
                         >
@@ -497,6 +488,110 @@ const generateStyleNumber = (qty, category) => {
     );
   };
 
+  const renderMetalQualitySelection = () => {
+    const fromParse = dynamicMissingFields.find(f => f.field === 'Metal.Qualities')?.options;
+    const pool = Array.isArray(fromParse) && fromParse.length > 0 ? fromParse : METAL_QUALITY_OPTIONS;
+    if (!pool.length) return null;
+
+    const selected = toArray(missingFieldsData['Metal.Qualities']);
+
+    const toggle = value => {
+      setMissingFieldsData(prev => {
+        const current = toArray(prev['Metal.Qualities']);
+        return {
+          ...prev,
+          'Metal.Qualities': current.includes(value)
+            ? current.filter(v => v !== value)
+            : [...current, value],
+        };
+      });
+    };
+
+    return (
+      <View style={styles.tileGroup}>
+        <Text style={styles.dropdownLabel}>Metal Qualities</Text>
+        <View style={styles.chipRowWrap}>
+          {pool.map(option => {
+            const isSelected = selected.includes(option.value);
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={[styles.choiceChip, isSelected && styles.choiceChipActive]}
+                activeOpacity={0.85}
+                onPress={() => toggle(option.value)}
+              >
+                <Text style={[styles.choiceChipLabel, isSelected && styles.choiceChipLabelActive]}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    );
+  };
+
+  const renderStoneTypeSelection = () => {
+    if (!stoneTypesData.length) return null;
+
+    const cId = preSelectedClientIdResolved || missingFieldsData.ClientId;
+    const selectedClient = clients.find(c => (c.id || c._id) === cId);
+    const applicable =
+      (Array.isArray(selectedClient?.ApplicableStoneTypes) && selectedClient.ApplicableStoneTypes.length > 0
+        ? selectedClient.ApplicableStoneTypes
+        : (Array.isArray(selectedClient?.applicableStoneTypes) ? selectedClient.applicableStoneTypes : []));
+
+    // Pool of selectable types — filtered to the client's applicable types when present
+    const pool = stoneTypesData.filter(st =>
+      applicable.length === 0 || applicable.includes(st.value),
+    );
+    if (pool.length === 0) return null;
+
+    const categoryMap = buildStoneCategoryMap(pool.map(st => st.value));
+    const groups = {};
+    pool.forEach(st => {
+      const category = getStoneCategory(st.value, categoryMap);
+      if (!groups[category]) groups[category] = [];
+      groups[category].push(st);
+    });
+
+    const selected = Array.isArray(missingFieldsData.StoneTypes) ? missingFieldsData.StoneTypes : [];
+
+    const toggle = value => {
+      setMissingFieldsData(prev => {
+        const current = Array.isArray(prev.StoneTypes) ? prev.StoneTypes : [];
+        const next = current.includes(value)
+          ? current.filter(v => v !== value)
+          : [...current, value];
+        return { ...prev, StoneTypes: next };
+      });
+    };
+
+    return (
+      <View style={styles.tileGroup}>
+        <Text style={styles.dropdownLabel}>Stone Types</Text>
+        {Object.entries(groups).map(([category, opts]) => (
+          <View key={category} style={styles.stoneGroupBlock}>
+            <Text style={styles.stoneGroupTitle}>{getStoneCategoryLabel(category)}</Text>
+            <View style={styles.chipRowWrap}>
+              {opts.map(option => {
+                const isSelected = selected.includes(option.value);
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[styles.choiceChip, isSelected && styles.choiceChipActive]}
+                    activeOpacity={0.85}
+                    onPress={() => toggle(option.value)}
+                  >
+                    <Text style={[styles.choiceChipLabel, isSelected && styles.choiceChipLabelActive]}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   const renderParsedPreview = () => {
     if (!parsedData) return null;
     const displayClientName = preSelectedClientName;
@@ -508,8 +603,8 @@ const generateStyleNumber = (qty, category) => {
           <TextInput style={[styles.parsedDataLabel, styles.editableField]} value={missingFieldsData.Name !== undefined ? missingFieldsData.Name : (parsedData.Name || '')} onChangeText={value => setMissingFieldsData(prev => ({ ...prev, Name: value }))} placeholder="Name" />
           {!isClient && <Text style={styles.parsedDataLabel}>Client: <Text style={styles.parsedDataValue}>{displayClientName}</Text></Text>}
           <Text style={styles.parsedDataLabel}>Category: <Text style={styles.parsedDataValue}>{parsedData.Category || 'Not specified'}</Text></Text>
-          <Text style={styles.parsedDataLabel}>Metal: <Text style={styles.parsedDataValue}>{parsedData.Metal?.Quality || ''} {parsedData.Metal?.Color || ''}</Text></Text>
-          <Text style={styles.parsedDataLabel}>Stone Type: <Text style={styles.parsedDataValue}>{parsedData.StoneType || 'Not specified'}</Text></Text>
+          <Text style={styles.parsedDataLabel}>Metal: <Text style={styles.parsedDataValue}>{toArray(parsedData.Metal?.Qualities).join(', ')} {parsedData.Metal?.Color || ''}</Text></Text>
+          <Text style={styles.parsedDataLabel}>Stone Type: <Text style={styles.parsedDataValue}>{toArray(parsedData.StoneTypes).join(', ') || 'Not specified'}</Text></Text>
           <Text style={styles.parsedDataLabel}>Priority: <Text style={styles.parsedDataValue}>{parsedData.Priority || 'Normal'}</Text></Text>
           <Text style={styles.parsedDataLabel}>Status: <Text style={styles.parsedDataValue}>{parsedData.Status || 'Not specified'}</Text></Text>
         </View>
@@ -610,6 +705,8 @@ const generateStyleNumber = (qty, category) => {
             {!textSubmitted ? renderInitialInput() : (
               <View>
                 {renderParsedPreview()}
+                {renderMetalQualitySelection()}
+                {renderStoneTypeSelection()}
 
                 {/* Assign To — shown only after AI parsing, users filtered by parsed status */}
                 <View style={styles.assignRow}>
@@ -998,6 +1095,17 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 4,
   },
+  stoneGroupBlock: {
+    marginBottom: 8,
+  },
+  stoneGroupTitle: {
+    fontSize: fonts.xs,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
   chipRowWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1069,80 +1177,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     marginBottom: 6,
   },
-  confirmOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  confirmBox: {
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    padding: 24,
-    width: '100%',
-    maxWidth: 340,
-  },
-  confirmTitle: {
-    fontSize: fonts.lg,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  confirmDesc: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  confirmUploadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.primaryLight || colors.primary,
-    borderStyle: 'dashed',
-    marginBottom: 12,
-  },
-  confirmUploadText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  confirmActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 4,
-  },
-  confirmBtnSecondary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-  },
-  confirmBtnSecondaryText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.textPrimary,
-  },
-  confirmBtnPrimary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-  },
-  confirmBtnPrimaryText: {
-    fontSize: fonts.sm,
-    fontFamily: fonts.medium,
-    color: colors.textWhite,
-  },
 
   // Assign To row
   assignRow: {
@@ -1163,24 +1197,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primaryExtraLight || colors.backgroundSecondary,
     gap: 2,
   },
-  assignBtnMissing: {
-    borderColor: colors.error,
-    backgroundColor: '#FEF2F2',
-  },
   assignBtnText: {
     fontSize: fonts.sm,
     fontFamily: fonts.medium,
     color: colors.primary,
-  },
-  assignBtnTextMissing: {
-    color: colors.error,
-  },
-  validationError: {
-    fontSize: fonts.xs,
-    color: colors.error,
-    marginLeft: 24,
-    marginBottom: 12,
-    fontFamily: fonts.regular,
   },
   assignedBadge: {
     flexDirection: 'row',
@@ -1261,9 +1281,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.textWhite,
   },
-  assignUserInfo: {
-    flex: 1,
-  },
   assignUserName: {
     fontSize: fonts.sm,
     fontFamily: fonts.medium,
@@ -1272,13 +1289,6 @@ const styles = StyleSheet.create({
   assignUserNameActive: {
     color: colors.primary,
     fontFamily: fonts.bold,
-  },
-  assignUserRole: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    marginTop: 2,
-    textTransform: 'capitalize',
   },
 
   // Preview modal

@@ -12,6 +12,7 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useGetEnquiryByIdQuery } from '../../store/api';
 import { generateFinalLookHTML } from '../../utils/pdfGenerator';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 let generatePDFModule = null;
 try {
@@ -46,15 +47,11 @@ const FinalLookModal = ({
   const [isSharing, setIsSharing] = useState(false);
 
   const [isSaving,    setIsSaving]    = useState(false);
-  const [isApproving, setIsApproving] = useState(false);
 
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
-  const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = useCallback((title, message, type = 'info', buttons = []) =>
-    setAlertCfg({ visible: true, title, message, type, buttons }), []);
-  const hideAlert = useCallback(() => setAlertCfg(p => ({ ...p, visible: false })), []);
+  const { alertConfig: alertCfg, showAlert, hideAlert } = useBrandedAlert();
 
   useEffect(() => {
     if (!visible) {
@@ -85,7 +82,7 @@ const FinalLookModal = ({
     };
     build();
     return () => { cancelled = true; };
-  }, [visible, fullEnquiry, isFetching, showAlert]);
+  }, [visible, fullEnquiry, isFetching, clientName, showAlert]);
 
   const handleSavePdf = useCallback(async () => {
     if (!pdfHtml) return;
@@ -313,7 +310,6 @@ const s = StyleSheet.create({
     paddingVertical: 10, borderRadius: 8,
   },
   saveBtn: { backgroundColor: colors.primary },
-  approveBtn: { backgroundColor: colors.success || '#10B981' },
   pdfBarBtnText: { fontFamily: fonts.medium, fontSize: fonts.xs || 12, color: '#fff' },
 });
 

@@ -4,12 +4,12 @@
  */
 
 import Share from 'react-native-share';
-import { Platform, Alert } from 'react-native';
+import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FILE_BASE_URL, API_BASE_URL } from '../config/apiConfig';
 import { getUserName } from './userUtils';
-import { LOGO_BASE64 } from '../screens/Pricing/previewScreen';
+import { LOGO_BASE64 } from '../constants/logo';
 
 // Import PDF generation library (react-native-html-to-pdf)
 let generatePDF = null;
@@ -738,21 +738,11 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   const specialRemarks = (src?.SpecialRemarks || '').replace(/\n/g, '<br>');
   const styleNumber = src?.StyleNumber || null;
   const metalQuality = src?.Metal?.Quality || src?.metal?.quality || null;
-  const metalColor = src?.Metal?.Color || src?.metal?.color || null;
-  const stamping = src?.Stamping || null;
 
   // ── Gather design versions ──────────────────────────────────────────────
   const coralVersions = Array.isArray(src?.Coral) ? src.Coral : [];
   const cadVersions   = Array.isArray(src?.Cad)   ? src.Cad   : [];
 
-  const latestCoral = coralVersions.length > 0 ? coralVersions[coralVersions.length - 1] : null;
-
-  // ── Accepted vs Final CAD detection ─────────────────────────────────────
-  // Check StatusHistory for an "Approved Cad" entry indicating a previous acceptance
-  const statusHistory = Array.isArray(src?.StatusHistory) ? src.StatusHistory : [];
-  const hasApprovedCad = statusHistory.some(
-    e => (e.Status || e.status) === 'Approved Cad'
-  );
 
   // Final CAD = version explicitly marked as final
   // Check both per-version IsFinalVersion AND enquiry-level IsFinalVersion
@@ -766,32 +756,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   if (!finalCadVersion && enquiryIsFinal && cadVersions.length > 0) {
     finalCadVersion = cadVersions[cadVersions.length - 1];
   }
-
-  // Accepted CAD = latest non-rejected version that is NOT the final version
-  const acceptedCadVersion = (() => {
-    // If a final CAD exists, the accepted one is the last non-rejected before it
-    if (finalCadVersion) {
-      const idx = cadVersions.indexOf(finalCadVersion);
-      const beforeFinal = cadVersions.slice(0, idx).filter(v => !v.ReasonForRejection);
-      if (beforeFinal.length > 0) return beforeFinal[beforeFinal.length - 1];
-    }
-    // Otherwise look for any approved/approved-like version
-    const approved = cadVersions.filter(v =>
-      !v.ReasonForRejection && !(v.IsFinalVersion === true || v.IsFinalVersion === 'true')
-    );
-    if (approved.length > 0) return approved[approved.length - 1];
-    // Fallback: if StatusHistory shows approval was granted, show the latest non-rejected
-    if (hasApprovedCad) {
-      const nonRejected = cadVersions.filter(v => !v.ReasonForRejection);
-      return nonRejected.length > 0 ? nonRejected[nonRejected.length - 1] : null;
-    }
-    return null;
-  })();
-
-  // Determine if accepted and final CAD are the same version (used by both images & pricing sections)
-  const sameCadVersion = acceptedCadVersion && finalCadVersion &&
-    acceptedCadVersion.Version === finalCadVersion.Version &&
-    acceptedCadVersion === finalCadVersion;
 
   // ── Image helpers ───────────────────────────────────────────────────────
   const getImageUrl = async (imgObj) => {
@@ -814,51 +778,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
     } catch { return url; }
   };
 
-  const getDesignImages = async (design, label) => {
-    if (!design?.Images || !Array.isArray(design.Images) || design.Images.length === 0) {
-      return `<tr><td colspan="2" style="text-align:center;padding:16px;color:#999;">No ${label} image available</td></tr>`;
-    }
-    const rows = await Promise.all(design.Images.map(async (img, idx) => {
-      const imgUrl = await getImageUrl(img);
-      const desc = img.Description || img.description || `${label} ${idx + 1}`;
-      if (!imgUrl) return '';
-      return `<tr>
-        <td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${idx === 0 ? label : ''}</td>
-        <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;">
-          <img src="${imgUrl}" alt="${desc}" style="max-width:200px;max-height:200px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);" />
-          ${design.Version ? `<br><span style="font-size:11px;color:#999;">Version ${design.Version}</span>` : ''}
-          ${design.CoralCode ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CoralCode}</span>` : ''}
-          ${design.CadCode   ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CadCode}</span>`   : ''}
-        </td>
-      </tr>`;
-    }));
-    return rows.filter(Boolean).join('');
-  };
-
-  // ── Pricing data ────────────────────────────────────────────────────────
-  const getPricing = (design) => {
-    if (!design?.Pricing) return null;
-    const p = Array.isArray(design.Pricing) ? design.Pricing[0] : design.Pricing;
-    return p || null;
-  };
-
-  const coralPricing    = latestCoral        ? getPricing(latestCoral)        : null;
-  const acceptedPricing = acceptedCadVersion ? getPricing(acceptedCadVersion) : null;
-  const finalPricing    = finalCadVersion    ? getPricing(finalCadVersion)    : null;
-
-  const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
-  const fmtCurrency = v => `$${num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const fmtWeight = v => num(v).toFixed(3);
-
-  // Metal detail rows from Pricing[0].Metal
-  const fmtMetal = (p) => {
-    if (!p?.Metal) return '—';
-    const w = p.Metal.Weight != null ? `${num(p.Metal.Weight)}g` : null;
-    const q = p.Metal.Quality || null;
-    const r = p.Metal.Rate != null ? `$${num(p.Metal.Rate)}/g` : null;
-    return [w, q, r].filter(Boolean).join(' · ') || '—';
-  };
-
   // ── Checklist ──────────────────────────────────────────────────────────
   const checklist = src?.Checklist || {};
   const checklistFields = [
@@ -876,11 +795,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   const generatedAt = checklist.GeneratedAt
     ? new Date(checklist.GeneratedAt).toLocaleString()
     : 'N/A';
-
-  const checklistHtml = checklistFields.map(f => {
-    const val = checklist[f.key] || 'N/A';
-    return `<tr><td style="padding:4px 8px;font-size:8px;border:1px solid #d1d5db;font-weight:500;">${f.label}</td><td style="padding:4px 8px;font-size:8px;border:1px solid #d1d5db;white-space:pre-line;line-height:1.4;font-weight:700;">${val}</td></tr>`;
-  }).join('');
 
   // ── Reference images (fetched as base64 so PDF renderer can display them) ─
   const referenceImages = Array.isArray(src?.ReferenceImages) ? src.ReferenceImages : [];
@@ -904,99 +818,7 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
       }))).filter(Boolean).join('')
     : '<p style="font-size:10px;color:#9CA3AF;padding:8px;">No reference images available</p>';
 
-  // ── Status History ────────────────────────────────────────────────────
-  const sortedHistory = [...statusHistory].sort(
-    (a, b) => new Date(a.Timestamp || a.timestamp || a.CreatedDate || a.createdDate || 0) -
-             new Date(b.Timestamp || b.timestamp || b.CreatedDate || b.createdDate || 0)
-  );
-  const statusHistoryHtml = sortedHistory.length > 0
-    ? sortedHistory.map(entry => {
-        const ts = entry.Timestamp || entry.timestamp || entry.CreatedDate || entry.createdDate || null;
-        const dateStr = ts ? new Date(ts).toLocaleString() : '—';
-        const status = entry.Status || entry.status || '—';
-        const subStatus = entry.SubStatus || entry.subStatus || '';
-        return `<tr>
-          <td style="padding:7px;border:1px solid #e0e0e0;white-space:nowrap;">${dateStr}</td>
-          <td style="padding:7px;border:1px solid #e0e0e0;">${status}</td>
-          <td style="padding:7px;border:1px solid #e0e0e0;">${subStatus || '—'}</td>
-        </tr>`;
-      }).join('')
-    : '<tr><td colspan="3" style="padding:7px;text-align:center;color:#999;">No status history available</td></tr>';
-
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-
-  // ── Collect ALL design versions with pricing ──────────────────────────
-  const allVersionColumns = [];
-  coralVersions.forEach(v => {
-    const p = getPricing(v);
-    if (p) allVersionColumns.push({ label: `Coral${v.Version ? ` (V${v.Version})` : ''}`, pricing: p, version: v });
-  });
-  cadVersions.forEach(v => {
-    const p = getPricing(v);
-    if (p) {
-      const prefix = v.IsFinalVersion === true || v.IsFinalVersion === 'true' ? 'CAD Final' : 'CAD';
-      allVersionColumns.push({ label: `${prefix}${v.Version ? ` (V${v.Version})` : ''}`, pricing: p, version: v });
-    }
-  });
-
-  const versionColHeaders = allVersionColumns.map(v => `<th>${v.label}</th>`).join('');
-
-  const comparisonRows = [
-    { label: 'Metal (Wt · Quality · Rate)', getVal: (p) => fmtMetal(p), isString: true },
-    { label: 'Metal Price',      getVal: (p) => p?.MetalPrice },
-    { label: 'Diamond Weight',   getVal: (p) => p?.DiamondWeight, unit: 'ct' },
-    { label: 'Total Pieces',     getVal: (p) => p?.TotalPieces,   unit: 'pcs' },
-    { label: 'Diamonds Price',   getVal: (p) => p?.DiamondsPrice },
-    { label: 'Duties Amount',    getVal: (p) => p?.DutiesAmount },
-    { label: 'Undercut Price',   getVal: (p) => p?.UndercutPrice },
-    { label: 'Total Price',      getVal: (p) => p?.TotalPrice, isTotal: true },
-  ];
-
-  const comparisonHtml = comparisonRows.map(row => {
-    const rowBg = row.isTotal ? '#FFF7ED' : '';
-    const labelStyle = row.isTotal
-      ? 'padding:8px;font-size:11px;font-weight:700;color:#0d3b4c;text-transform:uppercase;border:1px solid #d1d5db;background-color:#FFF7ED;'
-      : 'padding:6px;font-weight:500;border:1px solid #d1d5db;';
-    const cells = allVersionColumns.map(v => {
-      const val = row.getVal(v.pricing);
-      if (row.isString) return `<td style="padding:6px;text-align:center;color:#4B5563;border:1px solid #d1d5db;font-size:10px;">${val || 'N/A'}</td>`;
-      return val != null
-        ? `<td style="padding:6px;text-align:center;font-weight:700;border:1px solid #d1d5db;font-size:10px;">${row.unit ? `${num(val)} ${row.unit}` : fmtCurrency(val)}</td>`
-        : '<td style="padding:6px;text-align:center;color:#9CA3AF;border:1px solid #d1d5db;font-size:10px;">N/A</td>';
-    }).join('');
-    return `<tr style="${rowBg ? `background-color:${rowBg};` : ''}">
-      <td style="${labelStyle}">${row.label}</td>
-      ${cells}
-    </tr>`;
-  }).join('');
-
-  // ── Budget comparison ───────────────────────────────────────────────
-  const budgetRow = (() => {
-    const budgetDataCols = allVersionColumns.map(() =>
-      `<td style="padding:6px;text-align:center;color:#9CA3AF;border:1px solid #d1d5db;font-size:10px;">${budget}</td>`
-    ).join('');
-    return `<tr>
-      <td style="padding:6px;font-weight:500;border:1px solid #d1d5db;font-size:10px;">Customer Budget</td>
-      ${budgetDataCols}
-      <td style="padding:6px;text-align:center;color:#9CA3AF;border:1px solid #d1d5db;font-size:10px;">N/A</td>
-    </tr>`;
-  })();
-
-  // ── Pricing table HTML ─────────────────────────────────────────────
-  const pricingTableHtml = allVersionColumns.length > 0
-    ? `<table style="width:100%;border-collapse:collapse;font-size:10px;">
-      <thead>
-        <tr style="background-color:#235A63;color:#ffffff;">
-          <th style="padding:6px;text-align:left;border:1px solid #0F3236;">Item</th>
-          ${allVersionColumns.map(v => `<th style="padding:6px;border:1px solid #0F3236;">${v.label}</th>`).join('')}
-        </tr>
-      </thead>
-      <tbody style="border:1px solid #d1d5db;">
-        ${comparisonHtml}
-        ${budgetRow}
-      </tbody>
-    </table>`
-    : '<p style="font-size:10px;color:#9CA3AF;padding:12px;">No pricing data available for comparison.</p>';
 
   // ── Customer remark HTML ────────────────────────────────────────────
   const remarkLines = remarks
@@ -1175,8 +997,10 @@ ${specialRemarks ? `
           </tr>
         </thead>
         <tbody style="border:1px solid #d1d5db;">
-          ${allVersionColumns.length > 0
-            ? (await Promise.all(allVersionColumns.map(async col => {
+          ${[...coralVersions.map(v => ({ label: `Coral${v.Version ? ` (V${v.Version})` : ''}`, version: v })),
+             ...cadVersions.map(v => ({ label: `${v.IsFinalVersion === true || v.IsFinalVersion === 'true' ? 'CAD Final' : 'CAD'}${v.Version ? ` (V${v.Version})` : ''}`, version: v }))].length > 0
+            ? (await Promise.all([...coralVersions.map(v => ({ label: `Coral${v.Version ? ` (V${v.Version})` : ''}`, version: v })),
+             ...cadVersions.map(v => ({ label: `${v.IsFinalVersion === true || v.IsFinalVersion === 'true' ? 'CAD Final' : 'CAD'}${v.Version ? ` (V${v.Version})` : ''}`, version: v }))].map(async col => {
                 const design = col.version;
                 const hasImages = design?.Images && Array.isArray(design.Images) && design.Images.length > 0;
                 const imgUrl = hasImages ? await getImageUrl(design.Images[0]) : '';
@@ -1199,17 +1023,6 @@ ${specialRemarks ? `
   </tr>
 </table>
 
-<!-- Pricing Comparison -->
-<table style="width:100%;border-collapse:collapse;margin:0 24px 24px;">
-  <thead>
-    <tr>
-      <th colspan="5" style="background-color:#D4AF37;color:#1A1A1A;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">06 PRICING COMPARISON</th>
-    </tr>
-  </thead>
-</table>
-<section style="margin:0 24px 24px;">
-  ${pricingTableHtml}
-</section>
 </main>
 </body>
 </html>`;
@@ -1829,11 +1642,7 @@ export const generateEnquiriesListHTML = async (enquiries) => {
           return imageUrl;
         }));
         
-        if (__DEV__) {
-          const successCount = resolvedImageUrls.filter(img => img !== '').length;
-        }
         
-        let rowsGenerated = 0;
         const rows = enquiries.map((enquiry, index) => {
           // Safety check: skip invalid enquiries
           if (!enquiry || typeof enquiry !== 'object') {
@@ -1883,8 +1692,6 @@ export const generateEnquiriesListHTML = async (enquiries) => {
             const assignedToId = normalizedEnquiry?.AssignedTo || originalData?.AssignedTo || normalizedEnquiry?.assignedTo || '';
             // Resolve user ID to name
             const assignedToName = assignedToId ? getUserName(assignedToId) : 'N/A';
-            
-            rowsGenerated++;
             
             return `
         <tr>
@@ -1951,7 +1758,6 @@ export const downloadAllEnquiriesPDF = async (enquiries) => {
     if (__DEV__) {
       console.log('HTML preview (first 500 chars):', htmlContent.substring(0, 500));
       // Check if table has rows
-      const tableRowsMatch = htmlContent.match(/<tr>/g);
     }
 
     // Create filename

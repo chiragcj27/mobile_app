@@ -20,15 +20,6 @@ export const getCategoryCode = (category) => {
   return CATEGORY_TO_CODE[key] || category || '';
 };
 
-// Stone type -> Gati code (Sheet2 col A: DIA / LGD / CS)
-export const getStoneTypeCode = (type) => {
-  const t = String(type || '').toLowerCase();
-  if (!t) return '';
-  if (t.includes('lab') || t.includes('cvd') || t.includes('lgd')) return 'LGD';
-  if (t.includes('natural') || t.includes('diamond') || t === 'dia') return 'DIA';
-  return 'CS'; // colour stone (ruby, emerald, sapphire, moissanite, pearl, ...)
-};
-
 // Stone Type -> item-master RawMaterial group.
 const typeToRawMaterial = (type) => {
   const t = String(type || '').toLowerCase();
@@ -101,12 +92,17 @@ export const getToneCode = (metalColor) => {
   return '';
 };
 
-// Metal item code, e.g. gold 18K -> "G18K".
+// Metal item code. Gold carries karats, e.g. 18K -> "G18KT". Silver/platinum have no
+// karat value, so no KT suffix is appended: "Silver 925" -> "S925", "Platinum" -> "P".
+// There is no metal master in the app; the gold form is the only one verified against a
+// reference Gati import.
 export const getMetalItemCode = (metalQuality) => {
   const q = String(metalQuality || '');
-  const initial = /plat|pt/i.test(q) ? 'P' : /silver|925/i.test(q) ? 'S' : 'G';
-  const num = q.replace(/[^0-9]/g, '');
-  return `${initial}${num}K`;
+  if (!q) return '';
+  const initial = /plat/i.test(q) ? 'P' : /silver|925/i.test(q) ? 'S' : 'G';
+  const digits = q.replace(/[^0-9]/g, '');
+  const isKarat = initial === 'G' && digits;
+  return `${initial}${digits}${isKarat ? 'KT' : ''}`;
 };
 
 // StockType — Gati master value in the macro's "Studded/Plain <Metal> Jewellery" form.

@@ -6,7 +6,6 @@ import React, {
   useMemo,
 } from 'react';
 import {
-  ImageBackground,
   StyleSheet,
   View,
   Text,
@@ -24,24 +23,22 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Video from 'react-native-video';
 import ImageZoom from 'react-native-image-pan-zoom';
-import secureStorage from '../../utils/secureStorage';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { FILE_BASE_URL } from '../../config/apiConfig';
 import Icon from '../common/Icon';
 import BrandedAlert from '../common/BrandedAlert';
+import { TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
 import {
   useGetUsersQuery,
-  useGetStatusesQuery,
-  useGetRolesQuery,
   useGetEnquiryByIdQuery,
   useUpdateAssetDataMutation,
   useUpdateEnquiryMutation,
 } from '../../store/api';
 import { actionsFor, resolveRoleCode, ACTION, SUBSTATUS, STATUS, ROLE } from '../../constants/enquiry';
 import { useEnquiryActions } from '../../hooks/useEnquiryActions';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -79,25 +76,22 @@ export default function NewEnquiryCard({
   onUpdateEnquiry,
   onDeleteEnquiry,
   onFinalLook,
-  onSummary,
   onShare,
+  onLongPress,
+  isDragActive,
 }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   
-  const { data: users, isLoading } = useGetUsersQuery();
-  const { data: statusesData, isLoading: isStatusesLoading } = useGetStatusesQuery();
-  const { data: rolesData } = useGetRolesQuery();
+  const { data: users } = useGetUsersQuery();
 
   const [imagesData, setImagesData] = useState([]);
   const [imageLoading, setImageLoading] = useState(false);
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [isImageModalVisible, setImageModalVisible] = useState(false);
   const [modalCurrentIndex, setModalCurrentIndex] = useState(0);
   const [isModalZoomed, setIsModalZoomed] = useState(false);
   const modalFlatListRef = useRef(null);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
-  const [isRemarkExpanded, setIsRemarkExpanded] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // ── Assign modal state ────────────────────────────────────────────────────
@@ -115,13 +109,10 @@ export default function NewEnquiryCard({
   const [selectedCadDesigner, setSelectedCadDesigner] = useState(null);
   const [updateReason, setUpdateReason] = useState('');
   const [isActionLoading, setIsActionLoading] = useState(false);
-  const [alertCfg, setAlertCfg] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
+  const { alertConfig: alertCfg, showAlert, hideAlert } = useBrandedAlert();
   
   const [activeDesignType, setActiveDesignType] = useState(null);
   
-  const showAlert = useCallback((title, message, type = 'info', buttons = []) =>
-    setAlertCfg({ visible: true, title, message, type, buttons }), []);
-  const hideAlert = useCallback(() => setAlertCfg(p => ({ ...p, visible: false })), []);
 
   const coralDesigners = useMemo(
     () => (users || []).filter(u => u.role === 2 || u.roleId === 2 || u.roleNumber === 2),
@@ -134,7 +125,7 @@ export default function NewEnquiryCard({
 
   const [updateAssetData] = useUpdateAssetDataMutation();
   const [updateEnquiryDirect] = useUpdateEnquiryMutation();
-  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
+  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel } = useEnquiryActions({ onAlert: showAlert });
 
   const getVersionFromLast = useCallback((designType) => {
     const src = fullEnquiryData?._originalData || fullEnquiryData || item;
@@ -158,8 +149,6 @@ export default function NewEnquiryCard({
     return null;
   }, [user]);
 
-  const isAdminCh = roleCode === ROLE.AD || roleCode === ROLE.CH;
-  const isDesigner = roleCode === ROLE.CO || roleCode === ROLE.CD;
 
   const enquiryId = item?.Id || item?._id || item?.id;
   const { data: enquiryResult, isFetching: isFetchingEnquiry } = useGetEnquiryByIdQuery(
@@ -170,8 +159,6 @@ export default function NewEnquiryCard({
   const fullSrc = fullEnquiryData;
   const status = (fullEnquiryData?.CurrentStatus || item?.CurrentStatus || 'pending').toLowerCase();
   const subStatus = fullEnquiryData?.CurrentSubStatus || item?.CurrentSubStatus || '';
-  const latestCoralVersion = fullEnquiryData?.lastCoral || item?.lastCoral || '';
-  const LatestCadVersion = fullEnquiryData?.lastCad || item?.lastCad || '';
 
   const source = useMemo(() => {
     const base = fullEnquiryData || item;
@@ -194,12 +181,9 @@ export default function NewEnquiryCard({
   const isProduction = status === 'production';
   const isApprovalPending = status === 'design approval pending';
   const isApprovedCad = status === 'approved cad';
-  const isQuotation = status === 'quotation';
   const isPlacementStage = status === 'order placement';
   const isJustCreated = status === 'enquiry created' || status === 'created' || status === 'new' || status === 'pending';
 
-  const isCostMissing = subStatus === SUBSTATUS.CM;
-  const isQuotationReview = subStatus === SUBSTATUS.QR;
   const isAssignPending = subStatus === SUBSTATUS.AP;
 
   // Show reference images only. Any image whose Key also lives in a Coral/CAD design
@@ -300,16 +284,6 @@ export default function NewEnquiryCard({
 
   const hasAssignedUser = assignedIdStr.length > 0;
 
-  const resolveAssignedId = (val) => {
-    if (!val) return null;
-    if (typeof val === 'object') {
-      return String(val.id || val.Id || val._id || val.userId || '').trim() || null;
-    }
-    const s = String(val).trim();
-    if (!s || s === 'null' || s === 'undefined' || s === '0' || s === 'false') return null;
-    return s;
-  };
-
   const assignedUserName = useMemo(() => {
     if (!assignedIdStr) return null;
     if (typeof assignedVal === 'object') {
@@ -328,16 +302,13 @@ export default function NewEnquiryCard({
   const shouldShowAdminApprovedCad = has(ACTION.UPLOAD_FINAL_CAD);
   const isFinalVersion = !!(fullEnquiryData?.finalCad?.Version || item?._originalData?.finalCad?.Version || item?.finalCad?.Version);
   const shouldShowFinalLookAndPlacement = isFinalVersion && has(ACTION.FINAL_LOOK) && has(ACTION.MOVE_TO_ORDER_PLACEMENT);
-  const shouldShowAdminPlacement = false;
   const shouldShowAdminProduction = has(ACTION.CHAT) && isProduction;
   const shouldShowCoralDesignerButtons = has(ACTION.UPLOAD_CORAL);
   const shouldShowCadDesignerButtons = has(ACTION.UPLOAD_CAD) || has(ACTION.UPLOAD_FINAL_CAD);
-  const shouldShowQuotationButtons = has(ACTION.VIEW_QUOTATION) || has(ACTION.MOVE_TO_APPROVAL) || has(ACTION.UPDATE_QUOTATION);
   const shouldShowAssignCoral = has(ACTION.ASSIGN) && !hasAssignedUser && (cardActions?.assignType === 'coral' || isJustCreated || (isCoralPending && isAssignPending));
   const shouldShowAssignCad = has(ACTION.ASSIGN) && !hasAssignedUser && (cardActions?.assignType === 'cad' || (isCadPending && isAssignPending));
   const shouldShowApprovalButtons = has(ACTION.ACCEPT_APPROVAL) || has(ACTION.REJECT_APPROVAL);
 
-  const handleScroll = e => setCurrentIndex(Math.round(e.nativeEvent.contentOffset.x / screenWidth));
   const handleImagePress = useCallback(index => { setModalCurrentIndex(index); setImageModalVisible(true); }, []);
   const closeImageModal = useCallback(() => { setImageModalVisible(false); setIsModalZoomed(false); }, []);
 
@@ -594,7 +565,13 @@ export default function NewEnquiryCard({
     <View style={[styles.mainContainer, { borderWidth: isPendingStatus ? 2 : 0, borderColor: pendingShadeColor }]}>
 
       {/* ── Horizontal card body ── */}
-      <TouchableOpacity onPress={onPress} activeOpacity={0.8} style={styles.horzRow}>
+      <GHTouchableOpacity
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={200}
+        activeOpacity={0.8}
+        style={[styles.horzRow, isDragActive && styles.horzRowDragging]}
+      >
 
         {/* Left: image thumbnail */}
         <View style={styles.horzImageWrap}>
@@ -603,7 +580,7 @@ export default function NewEnquiryCard({
               <ActivityIndicator size="small" color={colors.primary} />
             </View>
           ) : imagesData.length > 0 ? (
-            <TouchableOpacity activeOpacity={0.9} onPress={() => handleImagePress(0)} style={{ flex: 1 }}>
+            <GHTouchableOpacity activeOpacity={0.9} onPress={() => handleImagePress(0)} style={{ flex: 1 }}>
               {imagesData[0].isVideo ? (
                 <View style={styles.horzImagePlaceholder}>
                   <Icon name="play-circle-filled" size={32} color="rgba(255,255,255,0.9)" />
@@ -621,7 +598,7 @@ export default function NewEnquiryCard({
                   <Text style={styles.horzImgDescText} numberOfLines={2}>{referenceImages[0].Description}</Text>
                 </View>
               )}
-            </TouchableOpacity>
+            </GHTouchableOpacity>
           ) : (
             <View style={styles.horzImagePlaceholder}>
               <Icon name="image" size={28} color={colors.textLight} />
@@ -651,18 +628,18 @@ export default function NewEnquiryCard({
                 </Text>
               </View>
               {isAdmin && (
-                <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setShowMoreOptions(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <GHTouchableOpacity style={styles.moreOptionsButton} onPress={() => setShowMoreOptions(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Icon name="more-vert" size={16} color={colors.textSecondary} />
-                </TouchableOpacity>
+                </GHTouchableOpacity>
               )}
-              <TouchableOpacity
+              <GHTouchableOpacity
                 style={styles.shareIconBtn}
                 onPress={() => onShare?.(item)}
                 activeOpacity={0.75}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               >
                 <Icon name="share" size={18} color={colors.primaryDark} />
-              </TouchableOpacity>
+              </GHTouchableOpacity>
             </View>
           </View>
 
@@ -674,6 +651,15 @@ export default function NewEnquiryCard({
             <Icon name="schedule" size={11} color={colors.textSecondary} />
             <Text style={styles.metaText}>{formatDate(item?.CreatedDate) || '—'}</Text>
           </View>
+
+          {(item?.ShippingDate || item?.deadline) ? (
+            <View style={styles.metaRow}>
+              <Icon name="local-shipping" size={11} color={colors.primaryDark} />
+              <Text style={styles.shipDateText} numberOfLines={1}>
+                Ship by {formatShipDate(item?.ShippingDate || item?.deadline)}
+              </Text>
+            </View>
+          ) : null}
 
           {/* Assigned chip */}
           {hasAssignedUser && (
@@ -695,15 +681,8 @@ export default function NewEnquiryCard({
             </View>
           ) : null}
 
-          {/* Summary button */}
-          {onSummary && (
-            <TouchableOpacity style={[styles.summaryBtn, { alignSelf: 'flex-start', marginTop: 4 }]} onPress={() => onSummary(item)} activeOpacity={0.7}>
-              <Icon name="description" size={11} color={colors.primary} />
-              <Text style={styles.summaryBtnText}>Summary</Text>
-            </TouchableOpacity>
-          )}
         </View>
-      </TouchableOpacity>
+      </GHTouchableOpacity>
 
       {/* ── Always-visible bottom action bar ── */}
       <View style={styles.bottomBar}>
@@ -1138,7 +1117,6 @@ export default function NewEnquiryCard({
                   <TouchableOpacity
                     style={styles.qaReasonBack}
                     onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); setIsApproving(false); }}
-                    onPress={() => { setShowReasonInput(false); setUpdateReason(''); setIsRejectingQuotation(false); setIsRejectingApproval(false); setIsApproving(false); }}
                     disabled={isActionLoading}
                     activeOpacity={0.8}
                   >
@@ -1150,7 +1128,6 @@ export default function NewEnquiryCard({
                       styles.qaReasonSubmit,
                       (!updateReason.trim() || isActionLoading) && { opacity: 0.4 },
                     ]}
-                    onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : isApproving ? handleSubmitApproval : handleRequestUpdate}
                     onPress={isRejectingQuotation ? handleRejectQuotation : isRejectingApproval ? handleRejectApproval : isApproving ? handleSubmitApproval : handleRequestUpdate}
                     disabled={!updateReason.trim() || isActionLoading}
                     activeOpacity={0.8}
@@ -1199,14 +1176,6 @@ export default function NewEnquiryCard({
         >
           <View style={styles.dropdownModalContent}>
             <Text style={styles.dropdownModalTitle}>Options</Text>
-            {onSummary && (
-              <TouchableOpacity
-                style={styles.dropdownModalItem}
-                onPress={() => { setShowMoreOptions(false); onSummary(item); }}
-              >
-                <Text style={styles.dropdownModalItemText}>View Summary</Text>
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
               style={styles.dropdownModalItem}
               onPress={handleDeleteEnquiry}
@@ -1420,24 +1389,20 @@ export default function NewEnquiryCard({
 const getStatusColor = status => {
   const statusColors = {
     'enquiry created': '#F59E0B',
-    'coral': '#8B5CF6',
-    'cad': '#3B82F6',
-    'approved cad': '#10B981',
-    'quotation': '#0EA5E9',
-    'design approval pending': '#F97316',
-    'order placement': '#6366F1',
-    'production': '#D97706',
-    'shipped': '#059669',
-    'completed': '#10B981',
-    'rejected': '#EF4444',
-    pending: '#F59E0B',
-    approval_pending: '#F97316',
-    approved_cad: '#10B981',
-    cad: '#3B82F6',
     coral: '#8B5CF6',
+    cad: '#3B82F6',
+    'approved cad': '#10B981',
+    approved_cad: '#10B981',
+    quotation: '#0EA5E9',
+    'design approval pending': '#F97316',
+    approval_pending: '#F97316',
+    'order placement': '#6366F1',
     order_placement: '#6366F1',
     production: '#D97706',
     shipped: '#059669',
+    completed: '#10B981',
+    rejected: '#EF4444',
+    pending: '#F59E0B',
     in_progress: '#6B7280',
   };
   return statusColors[status] || '#6B7280';
@@ -1474,6 +1439,17 @@ const formatDate = dateString => {
   }
 };
 
+const formatShipDate = dateString => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
 const styles = StyleSheet.create({
   mainContainer: {
     backgroundColor: colors.cardBackground,
@@ -1488,18 +1464,6 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  badgesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flexShrink: 0,
-  },
   badge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -1509,20 +1473,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textWhite,
     fontFamily: fonts.medium,
-  },
-  Heading: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: colors.textPrimary,
-    flex: 1,
-    marginRight: 6,
-  },
-  remarkText: {
-    fontSize: 12,
-    color: colors.textLight,
-    fontFamily: fonts.regular,
-    marginBottom: 6,
-    lineHeight: 16,
   },
   metaRow: {
     flexDirection: 'row',
@@ -1539,48 +1489,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textSecondary,
   },
-  summaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  summaryBtnText: {
-    fontSize: 10,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  summaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  summaryBtnText: {
-    fontSize: 10,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  assignedChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  assignedChipText: {
-    fontSize: 10,
-    color: colors.background,
+  shipDateText: {
+    fontSize: 11,
+    color: colors.primaryDark,
     fontFamily: fonts.medium,
   },
   moreOptionsButton: {
@@ -1593,64 +1504,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  toggleBtn: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
-  toggleTrack: { width: 36, height: 20, borderRadius: 10, backgroundColor: colors.border, justifyContent: 'center', paddingHorizontal: 2 },
-  toggleTrackOn: { backgroundColor: colors.primary },
-  toggleThumb: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#fff', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, alignSelf: 'flex-start' },
-  toggleThumbOn: { alignSelf: 'flex-end' },
-  ImageContainer: { width: '100%', padding: 10 },
-  StatusContainerStart: { marginTop: 5, flexDirection: 'row', justifyContent: 'space-between', marginLeft: 5 },
-  PriortyContainer: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, flexShrink: 1, maxWidth: '45%' },
-  PriorityText: { fontSize: 12, color: colors.textWhite, fontFamily: fonts.regular },
-  statusContainer: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, flexShrink: 1, maxWidth: 120 },
-  StatusText: { fontSize: 12, color: colors.textWhite, fontFamily: fonts.regular },
-  StatusContainerEnd: { marginRight: 5, flexDirection: 'row', alignItems: 'center', flexShrink: 1, maxWidth: '55%' },
-  loadingContainer: { width: '100%', height: 200, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.backgroundSecondary },
-  placeholderContainer: { width: '100%', height: 200, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.backgroundSecondary },
-  placeholderText: { fontSize: 14, color: colors.textLight, fontFamily: fonts.regular, paddingHorizontal: 10 },
-  carouselContainer: { width: '100%', height: 224, position: 'relative' },
-  carouselImageWrap: { position: 'relative' },
-  carouselImage: { width: Dimensions.get('window').width - 60, height: 200, marginRight: 3, overflow: 'hidden', backgroundColor: '#000' },
-  imageDescBadge: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    backgroundColor: 'rgba(220,38,38,0.9)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    maxWidth: '70%',
-  },
-  imageDescText: {
-    color: '#fff',
-    fontSize: 11,
-    fontFamily: fonts.medium,
-    lineHeight: 15,
-  },
-  carouselPlayOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
-  paginationContainer: { position: 'absolute', bottom: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  paginationText: { fontSize: 12, color: colors.textWhite, fontFamily: fonts.medium },
-  ButtonContainer: { borderTopColor: colors.border, borderTopWidth: 1, marginTop: 10, paddingTop: 8, flexDirection: 'column' },
-  remarkContainer: {
-    marginBottom: 8,
-  },
-  placeholderText2: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
-  },
-  expandButton: {
-    alignSelf: 'flex-end',
-    marginTop: 2,
-    padding: 2,
-  },
-  ClientTimeContainer: { flexDirection: 'row', marginBottom: 5, justifyContent: 'space-between' },
-  ClientRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  TimeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  ClientName: { fontFamily: fonts.medium, fontSize: 14, color: colors.textSecondary },
-  ClientTime: { fontFamily: fonts.regular, fontSize: 12, color: colors.textSecondary },
   AssignedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, paddingHorizontal: 6, paddingVertical: 3, backgroundColor: colors.primary, borderRadius: 6, alignSelf: 'flex-start', marginBottom: 9 },
   AssignedName: { fontFamily: fonts.medium, fontSize: 12, color: colors.textWhite, flexShrink: 1 },
   QuickButtonContainer: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
@@ -1658,10 +1511,6 @@ const styles = StyleSheet.create({
   ChatButtonText: { fontFamily: fonts.medium, fontSize: 14, color: colors.primaryDark },
   QuickActionButton: { flex: 1, backgroundColor: colors.primaryDark, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, borderRadius: 5, paddingVertical: 8, paddingHorizontal: 12 },
   QuickActionButtonText: { fontFamily: fonts.medium, fontSize: 14, color: colors.textWhite, textAlign: 'center' },
-  DropdownButton: { flex: 1, backgroundColor: colors.background, borderColor: colors.primaryDark, borderWidth: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, borderRadius: 5, paddingVertical: 8, paddingHorizontal: 8 },
-  DropdownButtonText: { fontFamily: fonts.medium, fontSize: 13, color: colors.primaryDark },
-  ActionButton: { flex: 1, backgroundColor: colors.primaryDark, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, borderRadius: 5, paddingVertical: 8, paddingHorizontal: 8 },
-  ActionButtonText: { fontFamily: fonts.medium, fontSize: 13, color: colors.textWhite },
   fullscreenImageBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   fullscreenImageCloseButton: { position: 'absolute', top: 40, right: 20, padding: 12, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 1000 },
   modalImageCounter: { position: 'absolute', top: 50, left: 20, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, zIndex: 10 },
@@ -1871,6 +1720,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   // ── Horizontal card styles ──────────────────────────────────────────────
+  horzRowDragging: {
+    backgroundColor: '#fff',
+    opacity: 0.95,
+  },
   horzRow: {
     flexDirection: 'row',
     minHeight: 130,
@@ -1945,16 +1798,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 2,
     flexShrink: 0,
-  },
-  horzSubStatus: {
-    fontSize: 10,
-    fontFamily: fonts.medium,
-    color: colors.textSecondary,
-  },
-  horzCode: {
-    fontSize: 11,
-    fontFamily: fonts.semiBold,
-    color: colors.primaryDark,
   },
   horzRejection: {
     flexDirection: 'row',

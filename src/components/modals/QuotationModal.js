@@ -1,26 +1,9 @@
-/**
- * QuotationModal
- *
- * Full quotation flow in a single bottom-sheet modal:
- *   1. Pre-fills metal + charges + stones from the enquiry's latest Coral/CAD pricing
- *   2. If stones are missing / all have Price=0 → user fills them (same DiamondRow UI as ClientPricingScreen)
- *   3. Calculate button → calls calculatePricing API
- *   4. Result summary + inline HTML PDF viewer + Share PDF
- *
- * Usage:
- *   <QuotationModal
- *     visible={show}
- *     enquiry={enquiryObject}   // full enquiry from getEnquiryById
- *     onClose={() => setShow(false)}
- *   />
- */
-
 import React, {
   useState, useEffect, useCallback, useMemo, useRef,
 } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView,
-  TextInput, ActivityIndicator, Platform, Animated, Keyboard,
+  TextInput, ActivityIndicator, Platform, Animated, Keyboard, RefreshControl,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Clipboard from '@react-native-clipboard/clipboard';
@@ -29,7 +12,6 @@ import RNFS from 'react-native-fs';
 import Icon from '../common/Icon';
 import PdfViewer from '../common/PdfViewer';
 import BrandedAlert from '../common/BrandedAlert';
-// import DiamondEditModal from '../../screens/Admin/components/DiamondEditModal';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import {
@@ -38,9 +20,12 @@ import {
   useSavePricingMutation,
   useGetEnquiryByIdQuery,
   useGetClientByIdQuery,
+  useUpdateAssetDataMutation,
 } from '../../store/api';
-import { LOGO_BASE64, buildCombinedHtml } from '../../screens/Pricing/previewScreen';
-import { normalizeExtraCharges, extraChargesValue, extraChargesType } from '../../utils/extraCharges';
+import { buildCombinedHtml } from '../../screens/Pricing/previewScreen';
+import { LOGO_BASE64 } from '../../constants/logo';
+import { normalizeExtraCharges, extraChargesType } from '../../utils/extraCharges';
+import { buildRecalculatePayload } from '../../utils/pricingRecalc';
 import CompareRefrences from './CompareRefrences';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 
@@ -48,7 +33,7 @@ const hapticOptions = { enableVibrateFallback: true, ignoreAndroidSystemSettings
 const triggerHaptic = (type = 'impactMedium') =>
   ReactNativeHapticFeedback.trigger(type, hapticOptions);
 
-const METAL_QUALITY_OPTIONS = ['10K', '14K', '18K', '22K', 'Silver 925', 'Platinum'];
+const METAL_QUALITY_OPTIONS = ['3K','9K','10K', '14K', '18K', '22K', 'Silver 925', 'Platinum'];
 
 let generatePDFModule = null;
 try {
@@ -60,23 +45,116 @@ const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; }
 let _idSeed = 0;
 const makeId = () => `d-${Date.now()}-${_idSeed++}`;
 
-const getLatestPricing = (enquiry) => {
+const createBlankEntry = (metalPricesData) => {
+  const prices = metalPricesData?.prices || {};
+  let autoRate = '';
+  if (prices.gold?.price) autoRate = String(prices.gold.price);
+  return {
+    id: makeId(),
+    metalQuality: '',
+    metalWeight: '',
+    metalRate: autoRate,
+    metalOunce: '',
+    stones: [],
+    missingIndices: new Set(),
+    inlineEditIndex: null,
+    inlineEditPrice: '',
+    editedPrices: {},
+    result: null,
+    clientMsg: '',
+    isOnlyMetalDesign: false,
+  };
+};
+
+const getAllPricing = (enquiry) => {
   const pool = [
     ...(Array.isArray(enquiry?.Cad)   ? enquiry.Cad   : []),
     ...(Array.isArray(enquiry?.Coral) ? enquiry.Coral : []),
   ];
-  if (!pool.length) return null;
+  if (!pool.length) return [];
   pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
   const pricing = pool[0]?.Pricing || pool[0]?.pricing;
-  if (!pricing) return null;
-  if (Array.isArray(pricing)) return pricing[0] || null;
-  if (typeof pricing === 'object' && Object.keys(pricing).length > 0) return pricing;
-  return null;
+  if (!pricing) return [];
+  if (Array.isArray(pricing)) return pricing;
+  if (typeof pricing === 'object' && Object.keys(pricing).length > 0) return [pricing];
+  return [];
 };
 
-const stonesAreMissing = (stones) =>
-  !Array.isArray(stones) || stones.length === 0 ||
-  stones.every(s => num(s.Price) === 0);
+const getLatestPricing = (enquiry) => getAllPricing(enquiry)[0] || null;
+
+const getAllStones = (entries) =>
+  (entries || []).flatMap((e, ei) =>
+    (Array.isArray(e?.Stones) ? e.Stones : []).map(s => ({ ...s, _entryIdx: ei })),
+  );
+
+const splitStonesByEntry = (stones) => {
+  const map = {};
+  (stones || []).forEach(s => {
+    const k = String(s?._entryIdx ?? 0);
+    if (!map[k]) map[k] = [];
+    const { _entryIdx, ...clean } = s || {};
+    map[k].push(clean);
+  });
+  return map;
+};
+
+const MSG_SEPARATOR = '\n\n---\n\n';
+const joinClientMessages = (entries) =>
+  (entries || [])
+    .map(e => e?.ClientPricingMessage || '')
+    .filter(Boolean)
+    .join(MSG_SEPARATOR);
+
+const buildCombinedEntries = ({ pricingEntries, stones, metalQuality, clientName, result, isClientPreview, perTypeResults }) => {
+  if (Array.isArray(perTypeResults) && perTypeResults.length > 1) {
+    const entries = buildEntriesFromPerType(perTypeResults);
+    if (entries.length > 1) {
+      return { html: buildCombinedHtml(entries, clientName, metalQuality, null, isClientPreview), isCombined: true };
+    }
+  }
+  if (!Array.isArray(pricingEntries) || pricingEntries.length <= 1) {
+    return { html: '', isCombined: false };
+  }
+  const byType = splitStonesByEntry(stones);
+  const entries = Object.keys(byType).map(key => {
+    const base = pricingEntries[Number(key)] || pricingEntries[0] || {};
+    const normalizedStones = byType[key].map(st => ({
+      Type: st.Type || '', Color: st.Color || '', Shape: st.Shape || '',
+      MmSize: String(st.MmSize ?? '0'), SieveSize: String(st.SieveSize || '0'),
+      CtWeight: num(st.Carat), Weight: num(st.Weight), Pcs: Math.round(num(st.Pcs)),
+      Price: num(st.Price), Markup: num(st.Markup),
+    }));
+    return {
+      ...(result || {}),
+      ...base,
+      Stones: normalizedStones,
+      ClientPricingMessage: base.ClientPricingMessage || result?.ClientPricingMessage || '',
+      Metal: { ...(base.Metal || {}), ...(result?.Metal || {}) },
+      Client: { ...(base.Client || {}), ...(result?.Client || {}) },
+    };
+  });
+  return { html: buildCombinedHtml(entries, clientName, metalQuality, null, isClientPreview), isCombined: true };
+};
+
+const buildEntriesFromPerType = (perTypeResults) =>
+  (perTypeResults || [])
+    .filter(p => p?.result)
+    .map(({ result }) => ({
+      ...result,
+      Stones: (result.Stones || []).map(st => ({
+        Type: st.Type || '',
+        Color: st.Color || '',
+        Shape: st.Shape || '',
+        MmSize: String(st.MmSize ?? '0'),
+        SieveSize: String(st.SieveSize || '0'),
+        CtWeight: num(st.CtWeight ?? st.Carat),
+        Weight: num(st.Weight),
+        Pcs: Math.round(num(st.Pcs)),
+        Price: num(st.Price),
+        Markup: num(st.Markup),
+      })),
+      ClientPricingMessage: result.ClientPricingMessage || '',
+    }));
 
 const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePricing }) => {
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -87,6 +165,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
   const stonesHtml = stones.map(s => `
     <tr style="border-bottom:1px solid #E6F0F1;">
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Type || 'NATURAL'}</td>
+      <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Color || '-'}</td>
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.Shape || 'RD'}</td>
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:center;">${s.MmSize || '-'}</td>
       <td style="padding:6px 4px;font-family:monospace;font-size:11px;text-align:right;">${num(s.Weight).toFixed(3)}</td>
@@ -215,7 +294,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
 
     ${stones.length ? `
     <table style="border:1px solid #E6F0F1;">
-      <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
+      <thead><tr><th>Type</th><th>Color</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
       <tbody>${stonesHtml}</tbody>
     </table>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;flex-wrap:wrap;">
@@ -345,7 +424,7 @@ const buildHtml = ({ pricingResult, stones, metal, charges, clientName, sourcePr
 
   ${stones.length ? `
   <table style="border:1px solid #E6F0F1;">
-    <thead><tr><th>Type</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
+    <thead><tr><th>Type</th><th>Color</th><th>Shape</th><th>MM</th><th>AVG CT</th><th>Markup</th><th>Rate</th><th>Qty</th></tr></thead>
     <tbody>${stonesHtml}</tbody>
   </table>
   <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;flex-wrap:wrap;">
@@ -407,18 +486,39 @@ const ChargeInput = ({ label, value, onChangeText, placeholder = '0', keyboardTy
   </View>
 );
 
-export { num, getLatestPricing, buildHtml };
+export { num, makeId, getLatestPricing, getAllPricing, getAllStones, joinClientMessages, buildHtml, METAL_QUALITY_OPTIONS, ChargeInput };
 
 const QuotationModal = ({ visible, enquiryId, onClose }) => {
-  const { data: fullEnquiryData, isFetching: isFetchingEnquiry } = useGetEnquiryByIdQuery(enquiryId, {
+  const { data: fullEnquiryData, isFetching: isFetchingEnquiry, refetch: refetchEnquiry } = useGetEnquiryByIdQuery(enquiryId, {
     skip: !visible || !enquiryId,
     refetchOnMountOrArgChange: true,
   });
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handlePullRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refetchEnquiry();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchEnquiry]);
+
+  const pullRefreshControl = (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={handlePullRefresh}
+      tintColor={colors.primary}
+      colors={[colors.primary]}
+    />
+  );
 
   const rawEnquiry  = fullEnquiryData?._originalData || fullEnquiryData;
   const fullEnquiry = rawEnquiry;
 
   const sourcePricing = useMemo(() => getLatestPricing(fullEnquiry), [fullEnquiry]);
+  const sourcePricingList = useMemo(() => getAllPricing(fullEnquiry), [fullEnquiry]);
 
   const clientIdResolved = fullEnquiry?.ClientId || fullEnquiry?.clientId;
   const { data: clientData } = useGetClientByIdQuery(clientIdResolved, {
@@ -428,49 +528,128 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     return clientData?.name || clientData?.Name || fullEnquiry?.ClientName || fullEnquiry?.clientName || '';
   }, [clientData, fullEnquiry?.ClientName, fullEnquiry?.clientName]);
 
-  const [metalWeight,       setMetalWeight]       = useState('0');
-  const [metalQuality,      setMetalQuality]      = useState('10K');
-  const [metalRate,         setMetalRate]         = useState('0');
-  const [metalOunce,        setMetalOunce]        = useState('0');
+  const [pricingEntries, setPricingEntries] = useState([]);
+  const [activeEntryIndex, setActiveEntryIndex] = useState(0);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
+  const [qualityPickerIdx, setQualityPickerIdx] = useState(0);
+  const [pdfHtml, setPdfHtml] = useState(null);
+  const [showPdf, setShowPdf] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const [showAddEntryModal, setShowAddEntryModal] = useState(false);
+  const [addStoneType, setAddStoneType] = useState('');
+  const [addMetalQuality, setAddMetalQuality] = useState('');
+  const [isAddingEntry, setIsAddingEntry] = useState(false);
 
-  const [diamonds,            setDiamonds]            = useState([]);
-  const [missingIndices,      setMissingIndices]      = useState(new Set());
-  // const [editModalVisible,    setEditModalVisible]    = useState(false);
-  // const [selectedIndex,       setSelectedIndex]       = useState(null);
-  // const [selectedDiamondData, setSelectedDiamondData] = useState({});
-  const [inlineEditIndex, setInlineEditIndex] = useState(null);
-  const [inlineEditPrice, setInlineEditPrice] = useState('');
-  const [editedPrices, setEditedPrices] = useState({});
-  const inlinePriceRef = useRef(null);
+  const updateEntry = useCallback((idx, updater) => {
+    setPricingEntries(prev => {
+      const next = [...prev];
+      const entry = next[idx];
+      if (!entry) return prev;
+      next[idx] = typeof updater === 'function' ? updater({ ...entry }) : { ...entry, ...updater };
+      return next;
+    });
+  }, []);
 
-  const [pricingResult, setPricingResult] = useState(null);
-  const [pdfHtml,       setPdfHtml]       = useState(null);
-  const [showPdf,       setShowPdf]       = useState(false);
-  const [isSharing,     setIsSharing]     = useState(false);
+  // Metal and stones are shared across every quotation of an enquiry, so any entry
+  // left blank takes the value another entry already has. Fills gaps only, and
+  // returns the same array when there is nothing to fill so it is safe to re-run.
+  const fillCommonFields = useCallback(() => {
+    const METAL_KEYS = ['metalWeight', 'metalRate', 'metalOunce'];
+    setPricingEntries(prev => {
+      if (prev.length < 2) return prev;
+      const blank = v => String(v ?? '').trim() === '' || num(v) === 0;
+      const common = {};
+      METAL_KEYS.forEach(k => {
+        const donor = prev.find(e => !blank(e[k]));
+        if (donor) common[k] = donor[k];
+      });
+      const stoneDonor = prev.find(e => (e.stones || []).length > 0);
+      let changed = false;
+      const next = prev.map(entry => {
+        const patch = {};
+        METAL_KEYS.forEach(k => {
+          if (common[k] !== undefined && blank(entry[k])) patch[k] = common[k];
+        });
+        if (stoneDonor && !entry.isOnlyMetalDesign && (entry.stones || []).length === 0) {
+          patch.stones = stoneDonor.stones.map(st => ({ ...st, localId: makeId() }));
+          patch.missingIndices = new Set(
+            patch.stones.map((st, i) => (num(st.Price) > 0 ? -1 : i)).filter(i => i >= 0),
+          );
+        }
+        if (Object.keys(patch).length === 0) return entry;
+        changed = true;
+        return { ...entry, ...patch };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  useEffect(() => { fillCommonFields(); }, [pricingEntries, fillCommonFields]);
+
+  const active = pricingEntries[activeEntryIndex] || null;
+
+  const metalWeight = active?.metalWeight || '';
+  const metalQuality = active?.metalQuality || '10K';
+  const metalRate = active?.metalRate || '';
+  const diamonds = active?.stones || [];
+  const editedPrices = active?.editedPrices || {};
+  const pricingResult = active?.result || null;
+
+  const metalEditedRef = useRef(false);
+  const entryDirtyRef = useRef(false);
+  const pricingEntriesRef = useRef(pricingEntries);
+  pricingEntriesRef.current = pricingEntries;
+  const activeIdxRef = useRef(activeEntryIndex);
+  activeIdxRef.current = activeEntryIndex;
+
+  const onEntryMetalChange = useCallback((idx, key, v) => {
+    metalEditedRef.current = true;
+    entryDirtyRef.current = true;
+    activeIdxRef.current = idx;
+    setActiveEntryIndex(idx);
+    updateEntry(idx, { [key]: v });
+  }, [updateEntry]);
+
+  const onEntryMetalQualityPick = useCallback((idx, v) => {
+    metalEditedRef.current = true;
+    entryDirtyRef.current = true;
+    activeIdxRef.current = idx;
+    setActiveEntryIndex(idx);
+    updateEntry(idx, { metalQuality: v });
+  }, [updateEntry]);
+
+  const setEntryDiamonds = useCallback((idx, updater) => {
+    entryDirtyRef.current = true;
+    activeIdxRef.current = idx;
+    updateEntry(idx, prev => ({
+      ...prev,
+      stones: typeof updater === 'function' ? updater(prev.stones || []) : updater,
+    }));
+  }, [updateEntry]);
+
+  const setEntryInlineEditIndex = useCallback((idx, v) => updateEntry(idx, { inlineEditIndex: v }), [updateEntry]);
+  const setEntryInlineEditPrice = useCallback((idx, v) => updateEntry(idx, { inlineEditPrice: v }), [updateEntry]);
+
+  const setEntryEditedPrices = useCallback((idx, updater) => {
+    updateEntry(idx, prev => ({
+      ...prev,
+      editedPrices: typeof updater === 'function' ? updater(prev.editedPrices || {}) : updater,
+    }));
+  }, [updateEntry]);
+
+  const setEntryResult = useCallback((idx, v) => updateEntry(idx, { result: v }), [updateEntry]);
+  const setEntryClientMsg = useCallback((idx, v) => updateEntry(idx, { clientMsg: v }), [updateEntry]);
+
+  const perTypeResultsRef = useRef([]);
+  const [perTypeResults, setPerTypeResults] = useState([]);
   const [pdfPreviewMode, setPdfPreviewMode] = useState('admin');
-  // Keep the latest toggle value readable inside async recalc callbacks so a background
-  // recalc rebuilds the HTML for the mode the user is actually viewing (no flip to admin).
   const pdfPreviewModeRef = useRef('admin');
   useEffect(() => { pdfPreviewModeRef.current = pdfPreviewMode; }, [pdfPreviewMode]);
 
-  const [showCompareModal, setShowCompareModal] = useState(false);
-
-  const [clientMsg,     setClientMsg]     = useState('');
-  const [copied,        setCopied]        = useState(false);
-
-  const initialPricing = useMemo(() => {
-    if (!sourcePricing) return null;
-    const mp = num(sourcePricing.MetalPrice);
-    const dp = num(sourcePricing.DiamondsPrice);
-    const da = num(sourcePricing.DutiesAmount);
-    const tp = num(sourcePricing.TotalPrice);
-    if (mp === 0 && dp === 0 && da === 0 && tp === 0) return null;
-    return { MetalPrice: mp, DiamondsPrice: dp, DutiesAmount: da, TotalPrice: tp };
-  }, [sourcePricing]);
-
   const [calculatePricing, { isLoading: isCalculating }] = useCalculatePricingMutation();
   const [savePricing,      { isLoading: isSaving }]      = useSavePricingMutation();
+  const [updateAssetData] = useUpdateAssetDataMutation();
   const navigation = useNavigation();
 
   const lastHistory = useMemo(() => {
@@ -490,148 +669,167 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
   const hideAlert  = useCallback(() => setAlertCfg(p => ({ ...p, visible: false })), []);
 
   const seededForRef = useRef(null);
+  const lastRecalcSigRef = useRef(null);
+  const navigatingToPreviewRef = useRef(false);
+  const [navigatingToPreview, setNavigatingToPreview] = useState(false);
+  const [reseedToken, setReseedToken] = useState(0);
+  const prevEnquiryRef = useRef(fullEnquiry);
 
   useEffect(() => {
     if (!visible || isFetchingEnquiry || !fullEnquiry) return;
-    if (seededForRef.current === enquiryId) return;
+    const needsReseed = reseedToken > 0 || seededForRef.current !== enquiryId;
+    if (!needsReseed) {
+      prevEnquiryRef.current = fullEnquiry;
+      return;
+    }
+    const dataChanged = prevEnquiryRef.current !== fullEnquiry;
+    prevEnquiryRef.current = fullEnquiry;
+    if (reseedToken > 0 && !dataChanged) return;
     seededForRef.current = enquiryId;
 
-    const p   = sourcePricing || {};
-    const enq = fullEnquiry   || {};
+    const enq = fullEnquiry || {};
     const mpd = metalPricesData;
 
-    setMetalWeight(String(p.Metal?.Weight ?? 0));
-    setMetalQuality(p.Metal?.Quality || enq?.Metal?.Quality || '10K');
-    const autoRate = (() => {
-      if (p.Metal?.Rate) return String(p.Metal.Rate);
-      const prices = mpd?.prices || {};
-      const q = p.Metal?.Quality || enq?.Metal?.Quality || '10K';
-      if (/silver\s*925/i.test(q)) return String(prices.silver?.price ?? 0);
-      if (/platinum/i.test(q))     return String(prices.platinum?.price ?? 0);
-      // Send the 24K full gold rate — the backend derives the KT rate itself
-      // (metalRate = goldRate * KT / 24). Sending the KT rate reduces it a second time.
-      const base = prices.gold?.price || 0;
-      if (base) return String(base);
-      return '0';
-    })();
-    setMetalRate(autoRate);
-    setMetalOunce(p.Metal?.Ounce != null ? String(p.Metal.Ounce) : (p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '0'));
+    const seeded = (sourcePricingList && sourcePricingList.length > 0)
+      ? sourcePricingList.map(entry => {
+          const p = entry || {};
+          const rawStones = (Array.isArray(p.Stones) ? p.Stones : []).map(st => ({
+            localId: makeId(),
+            Type: st.Type || '', Shape: st.Shape || '', Carat: num(st.CtWeight ?? st.Carat),
+            MmSize: num(st.MmSize), SieveSize: st.SieveSize || '', Price: num(st.Price),
+            Color: st.Color || '', Weight: num(st.Weight), Pcs: Math.round(num(st.Pcs)),
+            Markup: num(st.Markup),
+          }));
+          const autoRate = (() => {
+            if (p.Metal?.Rate) return String(p.Metal.Rate);
+            const prices = mpd?.prices || {};
+            const q = p.Metal?.Quality || enq?.Metal?.Quality || '10K';
+            if (/silver\s*925/i.test(q)) return String(prices.silver?.price ?? 0);
+            if (/platinum/i.test(q)) return String(prices.platinum?.price ?? 0);
+            const base = prices.gold?.price || 0;
+            return base ? String(base) : '0';
+          })();
+          const missing = new Set(
+            rawStones.reduce((acc, st, i) => { if (num(st.Price) <= 0) acc.push(i); return acc; }, [])
+          );
+          return {
+            id: makeId(),
+            metalQuality: p.Metal?.Quality || enq?.Metal?.Quality || '',
+            metalWeight: String(p.Metal?.Weight ?? p.GoldWeight ?? 0),
+            metalRate: autoRate,
+            metalOunce: p.Metal?.Ounce != null ? String(p.Metal.Ounce) : (p.GoldRatePerOunce ? String(p.GoldRatePerOunce) : '0'),
+            stones: rawStones,
+            missingIndices: missing,
+            inlineEditIndex: null,
+            inlineEditPrice: '',
+            editedPrices: {},
+            result: p,
+            clientMsg: p.ClientPricingMessage || '',
+            isSentForApproaval: !!p.IsSentForApproaval,
+            isOnlyMetalDesign: rawStones.length === 0,
+          };
+        })
+      : [createBlankEntry(metalPricesData)];
 
-    const rawStones = Array.isArray(p.Stones) ? p.Stones : [];
-    setDiamonds(rawStones.length > 0
-      ? rawStones.map(st => ({
-          localId:   makeId(),
-          Type:      st.Type      || '',
-          Shape:     st.Shape     || '',
-          Carat:     num(st.CtWeight ?? st.Carat),
-          MmSize:    num(st.MmSize),
-          SieveSize: st.SieveSize || '',
-          Price:     num(st.Price),
-          Color:     st.Color     || '',
-          Weight:    num(st.Weight),
-          Pcs:       Math.round(num(st.Pcs)),
-          Markup:    num(st.Markup),
-        }))
-      : []);
-
-    const initialMissing = new Set(
-      rawStones.reduce((acc, st, i) => { if (num(st.Price) <= 0) acc.push(i); return acc; }, [])
-    );
-    setMissingIndices(initialMissing);
-
-    setClientMsg(p.ClientPricingMessage || '');
+    setPricingEntries(seeded);
+    setActiveEntryIndex(0);
     setShowPdf(false);
     setShowCompareModal(false);
-    setCopied(false);
-    setPdfPreviewMode('admin');
+    setPdfHtml(null);
+    lastRecalcSigRef.current = null;
 
-  }, [visible, isFetchingEnquiry, fullEnquiry, enquiryId, sourcePricing, metalPricesData]);
+    if (reseedToken !== 0) setReseedToken(0);
+
+    console.log('[QuotationModal] pricing data on open:', JSON.stringify({
+      enquiryId,
+      enquiryName: enq?.Name,
+      clientId: enq?.ClientId,
+      currentSubStatus,
+      storedEntryCount: (sourcePricingList || []).length,
+      storedPricingEntries: sourcePricingList,
+      seededEntries: seeded.map(e => ({
+        id: e.id,
+        metalQuality: e.metalQuality,
+        metalWeight: e.metalWeight,
+        metalRate: e.metalRate,
+        metalOunce: e.metalOunce,
+        stoneCount: e.stones.length,
+        stones: e.stones,
+        missingIndices: [...e.missingIndices],
+        isOnlyMetalDesign: e.isOnlyMetalDesign,
+        clientMsg: e.clientMsg,
+        result: e.result,
+      })),
+    }, null, 2));
+
+  }, [visible, isFetchingEnquiry, fullEnquiry, enquiryId, sourcePricing, sourcePricingList, metalPricesData, reseedToken]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      if (!navigatingToPreviewRef.current) return;
+      navigatingToPreviewRef.current = false;
+      setNavigatingToPreview(false);
+      setReseedToken(t => t + 1);
+      refetchEnquiry();
+    });
+    return unsub;
+  }, [navigation, refetchEnquiry]);
 
   useEffect(() => {
     if (!visible || isFetchingEnquiry || !fullEnquiry) return;
     if (!isQRPhase) {
-      setPricingResult(null);
       setPdfHtml(null);
     }
   }, [visible, isFetchingEnquiry, fullEnquiry, isQRPhase]);
 
 
 
-  const handleAddDiamond = useCallback(() => {
-    setDiamonds(prev => {
-      const newIdx = prev.length;
-      setMissingIndices(s => new Set([...s, newIdx]));
-      return [...prev, {
-        localId: makeId(), Type: '', Shape: '', Carat: 0,
-        MmSize: 0, SieveSize: '', Price: 0, Color: '', Weight: 0, Pcs: 0, Markup: 0,
-      }];
-    });
-  }, []);
-
-  const handleDeleteDiamond = useCallback((index) => {
+  const handleEntryDeleteDiamond = useCallback((idx, stoneIndex) => {
     showAlert('Delete Stone', 'Remove this stone entry?', 'info', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive',
-        onPress: () => setDiamonds(prev => prev.filter((_, i) => i !== index)),
+        onPress: () => setEntryDiamonds(idx, prev => prev.filter((_, i) => i !== stoneIndex)),
       },
     ]);
-  }, [showAlert]);
+  }, [showAlert, setEntryDiamonds]);
 
-  const startInlineEdit = useCallback((index, diamond) => {
-    setInlineEditIndex(index);
-    const local = editedPrices[index];
-    setInlineEditPrice(local !== undefined ? local : (num(diamond.Price) > 0 ? String(diamond.Price) : ''));
-  }, [editedPrices]);
+  const startEntryInlineEdit = useCallback((idx, stoneIndex, diamond) => {
+    setEntryInlineEditIndex(idx, stoneIndex);
+    const entry = pricingEntriesRef.current[idx];
+    const local = entry?.editedPrices?.[stoneIndex];
+    setEntryInlineEditPrice(idx, local !== undefined ? local : (num(diamond.Price) > 0 ? String(diamond.Price) : ''));
+  }, [setEntryInlineEditIndex, setEntryInlineEditPrice]);
 
-  useEffect(() => {
-    if (inlineEditIndex !== null && inlinePriceRef.current) {
-      Keyboard.dismiss();
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          inlinePriceRef.current?.focus();
-        }, 150);
-      });
-    }
-  }, [inlineEditIndex]);
-
-  const saveInlineEdit = useCallback(() => {
-    if (inlineEditIndex === null) return;
-    setEditedPrices(prev => {
+  const saveEntryInlineEdit = useCallback((idx) => {
+    const entry = pricingEntriesRef.current[idx];
+    if (!entry || entry.inlineEditIndex === null) return;
+    const { inlineEditIndex, inlineEditPrice, missingIndices, stones } = entry;
+    setEntryEditedPrices(idx, prev => {
       const next = { ...prev, [inlineEditIndex]: inlineEditPrice };
-      const stillMissing = [...missingIndices].filter(idx => {
-        const ep = next[idx] !== undefined ? num(next[idx]) : num(diamonds[idx]?.Price);
+      const stillMissing = [...(missingIndices || [])].filter(i => {
+        const ep = next[i] !== undefined ? num(next[i]) : num(stones?.[i]?.Price);
         return ep <= 0;
       });
       if (stillMissing.length > 0) {
         const nextIdx = stillMissing[0];
         setTimeout(() => {
-          setInlineEditIndex(nextIdx);
-          const nd = diamonds[nextIdx];
-          setInlineEditPrice(next[nextIdx] !== undefined ? next[nextIdx] : (num(nd?.Price) > 0 ? String(nd.Price) : ''));
+          setEntryInlineEditIndex(idx, nextIdx);
+          const nd = stones?.[nextIdx];
+          setEntryInlineEditPrice(idx, next[nextIdx] !== undefined ? next[nextIdx] : (num(nd?.Price) > 0 ? String(nd.Price) : ''));
         }, 100);
       } else {
-        setInlineEditIndex(null);
-        setInlineEditPrice('');
+        setEntryInlineEditIndex(idx, null);
+        setEntryInlineEditPrice(idx, '');
       }
       return next;
     });
-  }, [inlineEditIndex, inlineEditPrice, missingIndices, diamonds]);
-
-  const cancelInlineEdit = useCallback(() => {
-    setInlineEditIndex(null);
-    setInlineEditPrice('');
-  }, []);
-
-  useEffect(() => {
-    if (missingIndices.size > 0 && inlineEditIndex === null) {
-      const first = [...missingIndices][0];
-      startInlineEdit(first, diamonds[first]);
-    }
-  }, [missingIndices]);
+  }, [setEntryEditedPrices, setEntryInlineEditIndex, setEntryInlineEditPrice]);
 
   const handleSaveQuotation = useCallback(async () => {
-    if (!pricingResult) return;
+    const entries = pricingEntriesRef.current;
+    if (!entries || entries.length === 0) return;
+    if (!entries.some(e => e?.result)) return;
 
     if (isFetchingEnquiry) {
       showAlert('Please Wait', 'Loading enquiry data, please try again in a moment.', 'info', [{ text: 'OK' }]);
@@ -644,42 +842,53 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       return;
     }
 
-    const mergedForSave = diamonds.map((d, i) =>
-      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
-    );
-
-    const isOnlyMetalDesign = diamonds.length === 0;
-
-    const pricingToSave = {
-      isOnlyMetalDesign,
-      Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-      Stones: mergedForSave.map(d => ({
-        Type:      d.Type      || '',
-        Color:     d.Color     || '',
-        Shape:     d.Shape     || '',
-        MmSize:    String(d.MmSize   ?? '0'),
-        SieveSize: String(d.SieveSize || '0'),
-        CtWeight:  num(d.Carat),
-        Weight:    num(d.Weight),
-        Pcs:       Math.round(num(d.Pcs)),
-        Price:     num(d.Price),
-        Markup:    num(d.Markup),
-      })).filter(st => st.Type),
-      Loss:                num(sourcePricing?.Loss ?? 0),
-      Labour:              num(sourcePricing?.Labour ?? 0),
-      ExtraCharges:        normalizeExtraCharges(sourcePricing?.ExtraCharges),
-      UndercutPrice:       num(sourcePricing?.UndercutPrice ?? 0),
-      NaturalDuties:       num(sourcePricing?.NaturalDuties ?? 0),
-      LabDuties:           num(sourcePricing?.LabDuties ?? 0),
-      GoldDuties:          num(sourcePricing?.GoldDuties ?? 0),
-      SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
-      LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
-      MetalPrice:          pricingResult.MetalPrice,
-      DiamondsPrice:       pricingResult.DiamondsPrice,
-      DutiesAmount:        pricingResult.DutiesAmount,
-      TotalPrice:          pricingResult.TotalPrice,
-      ClientPricingMessage: clientMsg,
+    const buildPricingForSave = (e) => {
+      const r = e?.result || {};
+      const stones = (e?.stones || []).map((st, i) => {
+        const merged = e?.editedPrices?.[i] !== undefined ? { ...st, Price: num(e.editedPrices[i]) } : st;
+        return {
+          Type:      merged.Type      || '',
+          Color:     merged.Color     || '',
+          Shape:     merged.Shape     || '',
+          MmSize:    String(merged.MmSize   ?? '0'),
+          SieveSize: String(merged.SieveSize || '0'),
+          CtWeight:  num(merged.Carat),
+          Weight:    num(merged.Weight),
+          Pcs:       Math.round(num(merged.Pcs)),
+          Price:     num(merged.Price),
+          Markup:    num(merged.Markup),
+        };
+      }).filter(st => st.Type);
+      return {
+        isOnlyMetalDesign: e?.isOnlyMetalDesign === true && stones.length === 0,
+        IsSentForApproaval: !!e?.isSentForApproaval,
+        Metal: {
+          Weight: num(e?.metalWeight),
+          Quality: e?.metalQuality || '10K',
+          Rate: num(r.Metal?.Rate ?? e?.metalRate),
+        },
+        Stones: stones,
+        Loss:                num(r.Client?.Loss ?? r.LossPercent ?? r.Loss ?? 0),
+        Labour:              num(r.Client?.Labour ?? r.LabourPercent ?? r.Labour ?? 0),
+        ExtraCharges:        normalizeExtraCharges(r.Client?.ExtraCharges ?? r.ExtraCharges),
+        UndercutPrice:       num(r.Client?.UndercutPrice ?? r.UndercutPrice ?? 0),
+        NaturalDuties:       num(r.Client?.NaturalDuties ?? r.NaturalDuties ?? 0),
+        LabDuties:           num(r.Client?.LabDuties ?? r.LabDuties ?? 0),
+        GoldDuties:          num(r.Client?.GoldDuties ?? r.GoldDuties ?? 0),
+        SilverAndLabsDuties: num(r.Client?.SilverAndLabsDuties ?? r.SilverAndLabsDuties ?? 0),
+        LossAndLabourDuties: num(r.Client?.LossAndLabourDuties ?? r.LossAndLabourDuties ?? 0),
+        MetalPrice:          num(r.MetalPrice),
+        DiamondsPrice:       num(r.DiamondsPrice),
+        DutiesAmount:        num(r.DutiesAmount),
+        TotalPrice:          num(r.TotalPrice),
+        DiamondWeight:       num(r.DiamondWeight),
+        TotalPieces:         num(r.TotalPieces),
+        ClientPricingMessage: r.ClientPricingMessage || e?.clientMsg || '',
+      };
     };
+
+    const pricingData = entries.map(buildPricingForSave);
+    const isOnlyMetalDesign = pricingData.every(p => p.isOnlyMetalDesign === true);
 
     const pool = [
       ...(Array.isArray(fullEnquiry?.Cad)   ? fullEnquiry.Cad.map(e => ({ ...e, _type: 'cad' }))   : []),
@@ -704,305 +913,463 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
         enquiryId: resolvedEnquiryId,
         designType,
         version,
-        pricingData: pricingToSave,
+        pricingData,
         isOnlyMetalDesign,
       };
-      await savePricing(saveArgs).unwrap();
-      // Metal-only designs: the backend applies IsOnlyMetalDesign only AFTER deriving the
-      // cost sub-status, so the first save persists the flag but leaves the status at
-      // "Cost Missing". Saving once more now sees the persisted flag and advances it to
-      // "Quotation Review".
+      console.log('[QuotationModal][save] payload:', JSON.stringify(saveArgs, null, 2));
+      const saveResponse = await savePricing(saveArgs).unwrap();
+      console.log('[QuotationModal][save] response:', JSON.stringify(saveResponse, null, 2));
       if (isOnlyMetalDesign) {
-        await savePricing(saveArgs).unwrap();
+        console.log('[QuotationModal][save] metal-only second save payload:', JSON.stringify(saveArgs, null, 2));
+        const saveResponse2 = await savePricing(saveArgs).unwrap();
+        console.log('[QuotationModal][save] metal-only second save response:', JSON.stringify(saveResponse2, null, 2));
       }
       showAlert('Saved', 'Quotation saved successfully.', 'success', [{ text: 'OK' }]);
     } catch (e) {
       showAlert('Save Failed', e?.data?.message || 'Could not save the quotation. Please try again.', 'error', [{ text: 'OK' }]);
     }
-  }, [pricingResult, isFetchingEnquiry, enquiryId, fullEnquiry,
-      metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing,
-      clientMsg, savePricing, showAlert]);
+  }, [isFetchingEnquiry, fullEnquiry, savePricing, showAlert]);
 
-  // Open the full Modify Pricing screen for this enquiry. It runs in "enquiry mode"
-  // (isEnquiry) so each recalculate there saves the quotation — same as saving here.
-  const handleOpenModify = useCallback(() => {
-    const resolvedEnquiryId = fullEnquiry?._id || fullEnquiry?.id || fullEnquiry?.Id;
-    const modClientId = fullEnquiry?.ClientId || fullEnquiry?.clientId;
-
-    const pool = [
-      ...(Array.isArray(fullEnquiry?.Cad)   ? fullEnquiry.Cad.map(e => ({ ...e, _type: 'cad' }))   : []),
-      ...(Array.isArray(fullEnquiry?.Coral) ? fullEnquiry.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
-    ];
-    pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
-    const latestDesign = pool[0];
-    if (!resolvedEnquiryId || !latestDesign?.Version) {
-      showAlert('Error', 'No design version found to modify.', 'error', [{ text: 'OK' }]);
-      return;
-    }
-
-    const merged = diamonds.map((d, i) =>
-      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
-    );
-    const editableStones = merged.map(d => ({
-      Type: d.Type || '',
-      Color: d.Color || '',
-      Shape: d.Shape || '',
-      MmSize: String(d.MmSize ?? ''),
-      SieveSize: String(d.SieveSize ?? ''),
-      Weight: num(d.Weight),
-      Pcs: Math.round(num(d.Pcs)),
-      CtWeight: num(d.Carat),
-      Price: num(d.Price),
-      Markup: num(d.Markup),
-    }));
-    const primaryType = editableStones[0]?.Type || 'Diamond';
-    const typeData = {
-      editableStones,
-      editableMetal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-      editableCharges: {
-        Loss: num(sourcePricing?.Loss ?? 0),
-        Labour: num(sourcePricing?.Labour ?? 0),
-        ExtraCharges: extraChargesValue(sourcePricing?.ExtraCharges),
-        ExtraChargesType: extraChargesType(sourcePricing?.ExtraCharges),
-        GoldDuties: num(sourcePricing?.GoldDuties ?? 0),
-        SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
-        LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
-      },
-      dutyRates: {
-        UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
-        NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0),
-        LabDuties: num(sourcePricing?.LabDuties ?? 0),
-      },
-      pricingResult: pricingResult || null,
-      imageData: null,
+  const recalcAllTypes = useCallback(async (basePayload) => {
+    const byTypeStones = splitStonesByEntry(basePayload?.details?.Stones);
+    const typeKeys = Object.keys(byTypeStones);
+    const labelFor = (k) => {
+      const types = [...new Set((byTypeStones[k] || []).map(s => s?.Type).filter(Boolean))];
+      return types.join(', ') || `Group ${Number(k) + 1}`;
     };
-    const stonesData = { All: { types: [primaryType], byType: { [primaryType]: typeData } } };
 
-    onClose?.();
-    navigation.navigate('ModifyPricingScreen', {
-      stonesData,
-      clientId: modClientId,
-      selectedClient: { name: resolvedClientName, ApplicableStoneTypes: [primaryType] },
-      metalKt: metalQuality,
-      isEnquiry: true,
-      enquiryId: resolvedEnquiryId,
-      designType: latestDesign._type,
-      version: latestDesign.Version,
-    });
-  }, [fullEnquiry, diamonds, editedPrices, metalWeight, metalQuality, metalRate,
-      sourcePricing, pricingResult, resolvedClientName, navigation, onClose, showAlert]);
-
-  const handleCalculate = useCallback(async () => {
-    
-    const mergedDiamonds = diamonds.map((d, i) =>
-      editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
-    );
-
-    const missingItems = [];
-    if (num(metalWeight) <= 0) missingItems.push('Metal Weight');
-    if (num(metalRate) <= 0) missingItems.push('Metal Rate');
-    mergedDiamonds.forEach((d, i) => {
-      if (num(d.Price) <= 0) missingItems.push(`${d.Type || 'Stone'} ${d.Shape || ''} #${i + 1} Price`);
-    });
-
-    if (missingItems.length > 0) {
-      showAlert('Data Missing', missingItems.join(', ') + ' — please fill all missing fields before calculating.', 'warning', [{ text: 'OK' }]);
-      return;
+    if (typeKeys.length <= 1) {
+      const onlyStones = typeKeys.length === 1 ? byTypeStones[typeKeys[0]] : basePayload?.details?.Stones;
+      const result = await calculatePricing({
+        ...basePayload,
+        details: { ...basePayload.details, Stones: onlyStones },
+      }).unwrap();
+      const single = typeKeys.length === 1 && result
+        ? [{ type: labelFor(typeKeys[0]), result, _entryIdx: Number(typeKeys[0]) }]
+        : [];
+      setPerTypeResults(single);
+      perTypeResultsRef.current = single;
+      return { perType: single, byTypeStones, flat: result };
     }
+    const storedByType = {};
+    (sourcePricingList || []).forEach((e, ei) => {
+      if (e) storedByType[String(ei)] = e;
+    });
+    (perTypeResultsRef.current || []).forEach((p, pi) => {
+      if (p?.result) storedByType[String(pi)] = p.result;
+    });
 
+    const detailsForType = (type) => {
+      const e = storedByType[type];
+      if (!e) return { ...basePayload.details, Stones: byTypeStones[type] };
+      const base = basePayload.details;
+      const ex = normalizeExtraCharges(e.Client?.ExtraCharges ?? e.ExtraCharges ?? base.ExtraCharges);
+      const pick = (own, fallback) => (own === undefined || own === null ? fallback : num(own));
+      return {
+        ...base,
+        Stones: byTypeStones[type],
+        Metal: metalEditedRef.current
+          ? base.Metal
+          : {
+              Weight: pick(e.Metal?.Weight, base.Metal?.Weight),
+              Quality: e.Metal?.Quality || e.MetalKT || base.Metal?.Quality,
+              ...(num(e.Metal?.Rate) > 0
+                ? { Rate: num(e.Metal.Rate) }
+                : (base.Metal?.Rate !== undefined ? { Rate: base.Metal.Rate } : {})),
+            },
+        Loss: pick(e.Client?.Loss ?? e.LossPercent, base.Loss),
+        Labour: pick(e.Client?.Labour ?? e.LabourPercent, base.Labour),
+        ExtraCharges: ex,
+        UndercutPrice: pick(e.Client?.UndercutPrice, base.UndercutPrice),
+        NaturalDuties: pick(e.Client?.NaturalDuties, base.NaturalDuties),
+        LabDuties: pick(e.Client?.LabDuties, base.LabDuties),
+        GoldDuties: pick(e.Client?.GoldDuties, base.GoldDuties),
+        SilverAndLabsDuties: pick(e.Client?.SilverAndLabsDuties, base.SilverAndLabsDuties),
+        LossAndLabourDuties: pick(e.Client?.LossAndLabourDuties, base.LossAndLabourDuties),
+      };
+    };
+
+    const settled = await Promise.all(
+      typeKeys.map(async (key) => {
+        try {
+          const r = await calculatePricing({
+            ...basePayload,
+            details: detailsForType(key),
+          }).unwrap();
+          return r ? { type: labelFor(key), result: r, _entryIdx: Number(key) } : null;
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+    const perType = settled.filter(Boolean);
+    setPerTypeResults(perType);
+    perTypeResultsRef.current = perType;
+    const joined = joinClientMessages(perType.map(p => p.result));
+
+    const first = perType[0]?.result || {};
+    const sum = (key) => perType.reduce((t, p) => t + num(p.result?.[key]), 0);
+    const flat = {
+      ...first,
+      DiamondsPrice: sum('DiamondsPrice'),
+      DutiesAmount: sum('DutiesAmount'),
+      TotalPrice: sum('TotalPrice'),
+      DiamondWeight: sum('DiamondWeight'),
+      TotalPieces: sum('TotalPieces'),
+      ClientPricingMessage: joined || first.ClientPricingMessage || '',
+    };
+    return { perType, byTypeStones, flat };
+  }, [calculatePricing, sourcePricingList]);
+
+  const handleRecalculateFor = useCallback(async (idx) => {
+    const entry = pricingEntries[idx];
+    if (!entry) return;
     const clientId = fullEnquiry?.ClientId || fullEnquiry?.clientId;
+    if (!clientId) {
+      showAlert('Error', 'Client ID not found.', 'error', [{ text: 'OK' }]);
+      return;
+    }
+    activeIdxRef.current = idx;
+    setActiveEntryIndex(idx);
 
-    const isOnlyMetalDesign = diamonds.length === 0;
+    const entryStones = entry.stones || [];
+    const entryEdited = entry.editedPrices || {};
 
-    const payload = {
-      details: {
-        isOnlyMetalDesign,
-        Metal: {
-          Weight:  num(metalWeight),
-          Quality: metalQuality,
-          // Only send Rate when > 0 — the backend uses `metalRateOverride ?? todaysRate`,
-          // and 0 is not nullish, so sending 0 would force the metal price (and total) to 0.
-          ...(num(metalRate) > 0 ? { Rate: num(metalRate) } : {}),
-        },
-        Stones: mergedDiamonds.map(d => ({
-          Type:      d.Type      || '',
-          Color:     d.Color     || '',
-          Shape:     d.Shape     || '',
-          MmSize:    String(d.MmSize   ?? '0'),
-          SieveSize: String(d.SieveSize || '0'),
-          CtWeight:  num(d.Carat),
-          Weight:    num(d.Weight),
-          Pcs:       Math.round(num(d.Pcs)),
-          Price:     num(d.Price),
-          Markup:    num(d.Markup),
-        })).filter(st => st.Type),
-        Loss:                num(sourcePricing?.Loss ?? 0),
-        Labour:              num(sourcePricing?.Labour ?? 0),
-        ExtraCharges:        normalizeExtraCharges(sourcePricing?.ExtraCharges),
-        UndercutPrice:       num(sourcePricing?.UndercutPrice ?? 0),
-        NaturalDuties:       num(sourcePricing?.NaturalDuties ?? 0),
-        LabDuties:           num(sourcePricing?.LabDuties ?? 0),
-        GoldDuties:          num(sourcePricing?.GoldDuties ?? 0),
-        SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
-        LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
-        Quantity: fullEnquiry?.Quantity || 1,
-      },
-      clientId,
-      isRecalculate: true,
-      isOnlyMetalDesign,
-    };
+    console.log('[handleRecalculate] idx:', idx, 'pricingEntries.length:', pricingEntries.length);
+    console.log('[handleRecalculate] active entry stones:', entryStones.length, 'raw:', JSON.stringify(entryStones.map(s => ({ Type: s.Type, localId: s.localId }))));
+
+    const mergedDiamonds = entryStones.map((d, i) =>
+      entryEdited[i] !== undefined ? { ...d, Price: num(entryEdited[i]) } : d
+    );
+
+    console.log('[handleRecalculate] stones.length:', entryStones.length, 'editedPrices keys:', Object.keys(entryEdited));
+
+    const editableStones = mergedDiamonds.map(d => ({
+      Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
+      MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
+      CtWeight: num(d.Carat), Weight: num(d.Weight),
+      Pcs: Math.round(num(d.Pcs)), Price: num(d.Price), Markup: num(d.Markup),
+    }));
+
+    console.log('[handleRecalculate] editableStones:', JSON.stringify(editableStones, null, 2));
+    const afterFilter = editableStones.filter(s => s.Type);
+    console.log('[handleRecalculate] after .filter(s => s.Type):', afterFilter.length, 'of', editableStones.length, 'survived');
+
+    const ounceVal = num(entry.metalOunce);
 
     try {
-      const result = await calculatePricing(payload).unwrap();
-      console.log('=== calculatePricing raw response ===', JSON.stringify(result, null, 2));
-      setPricingResult(result);
-      // Reflect the rate the backend actually used when we didn't send one (was 0/empty).
-      if (num(metalRate) <= 0 && result.Metal?.Rate) setMetalRate(String(result.Metal.Rate));
-      if (result.GoldRatePerOunce) setMetalOunce(String(result.GoldRatePerOunce));
-
-      setClientMsg(prev => {
-        if (result.ClientPricingMessage) return result.ClientPricingMessage;
-        return prev;
-      });
-
-      const html = buildHtml({
-        pricingResult: result,
-        stones: mergedDiamonds,
-        metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate), Ounce: num(metalOunce) },
-        charges: {
-          Loss: num(sourcePricing?.Loss ?? 0),
-          Labour: num(sourcePricing?.Labour ?? 0),
-          ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0),
-          UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+      const payload = buildRecalculatePayload({
+        clientId,
+        data: {
+          editableStones,
+          editableMetal: {
+            Weight: num(entry.metalWeight),
+            Quality: entry.metalQuality,
+            Rate: ounceVal <= 0 ? num(entry.metalRate) : undefined,
+            Ounce: ounceVal > 0 ? ounceVal : undefined,
+          },
+          editableCharges: {
+            Loss: num(sourcePricing?.Loss ?? 0),
+            Labour: num(sourcePricing?.Labour ?? 0),
+            ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0),
+            ExtraChargesType: extraChargesType(sourcePricing?.ExtraCharges) || 'percentage',
+          },
+          dutyRates: {
+            UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+            NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0),
+            LabDuties: num(sourcePricing?.LabDuties ?? 0),
+            GoldDuties: num(sourcePricing?.GoldDuties ?? 0),
+            SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
+            LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
+          },
+          pricingResult: entry.result || {},
         },
-        clientName: resolvedClientName,
-        sourcePricing: sourcePricing || {},
+        metalKt: entry.metalQuality,
+        selectedClient: clientData || null,
+        isRecalculate: true,
       });
+
+      const { perType, flat: result } = await recalcAllTypes(payload);
+      if (perType.length <= 1) setEntryResult(idx, result);
+
+      const metalPatch = {};
+      if (num(entry.metalRate) <= 0 && result.Metal?.Rate) metalPatch.metalRate = String(result.Metal.Rate);
+      if (result.GoldRatePerOunce) metalPatch.metalOunce = String(result.GoldRatePerOunce);
+      if (Object.keys(metalPatch).length) updateEntry(idx, metalPatch);
+      setEntryClientMsg(idx, perType.length > 1 ? (entry.clientMsg || '') : (result.ClientPricingMessage || ''));
+
+      const perTypeEntries = perType.length > 1
+        ? buildEntriesFromPerType(perType)
+        : [];
+      const html = perTypeEntries.length > 1
+        ? buildCombinedHtml(perTypeEntries, resolvedClientName, entry.metalQuality, null, false)
+        : buildHtml({
+          pricingResult: result,
+          stones: mergedDiamonds,
+          metal: { Weight: num(entry.metalWeight), Quality: entry.metalQuality, Rate: num(entry.metalRate), Ounce: num(entry.metalOunce) },
+          charges: {
+            Loss: num(sourcePricing?.Loss ?? 0),
+            Labour: num(sourcePricing?.Labour ?? 0),
+            ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0),
+            UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
+          },
+          clientName: resolvedClientName,
+          sourcePricing: sourcePricing || {},
+        });
       setPdfHtml(html);
       setPdfPreviewMode('admin');
       setShowPdf(true);
     } catch (e) {
       showAlert('Calculation Failed', e?.data?.message || 'Failed to calculate pricing. Please try again.', 'error', [{ text: 'OK' }]);
     }
-  }, [diamonds, editedPrices, metalWeight, metalQuality, metalRate, sourcePricing, fullEnquiry, calculatePricing, showAlert, resolvedClientName]);
+  }, [pricingEntries, sourcePricing, fullEnquiry, clientData, updateEntry, setEntryResult, setEntryClientMsg,
+      showAlert, resolvedClientName, recalcAllTypes]);
+
+  const entryToPricing = useCallback((e) => {
+    const r = e?.result || {};
+    const stones = (e?.stones || []).map(st => ({
+      Type: st.Type || '', Color: st.Color || '', Shape: st.Shape || '',
+      MmSize: String(st.MmSize ?? '0'), SieveSize: String(st.SieveSize || '0'),
+      CtWeight: num(st.Carat), Weight: num(st.Weight), Pcs: Math.round(num(st.Pcs)),
+      Price: num(st.Price), Markup: num(st.Markup),
+    }));
+    return {
+      isOnlyMetalDesign: e?.isOnlyMetalDesign === true && stones.length === 0,
+      IsSentForApproaval: !!e?.isSentForApproaval,
+      Metal: {
+        Weight: num(e?.metalWeight),
+        Quality: e?.metalQuality || '10K',
+        Rate: num(r.Metal?.Rate ?? e?.metalRate),
+      },
+      Stones: stones,
+      Loss: num(r.Client?.Loss ?? r.LossPercent ?? r.Loss ?? 0),
+      Labour: num(r.Client?.Labour ?? r.LabourPercent ?? r.Labour ?? 0),
+      ExtraCharges: normalizeExtraCharges(r.Client?.ExtraCharges ?? r.ExtraCharges),
+      UndercutPrice: num(r.Client?.UndercutPrice ?? r.UndercutPrice ?? 0),
+      NaturalDuties: num(r.Client?.NaturalDuties ?? r.NaturalDuties ?? 0),
+      LabDuties: num(r.Client?.LabDuties ?? r.LabDuties ?? 0),
+      GoldDuties: num(r.Client?.GoldDuties ?? r.GoldDuties ?? 0),
+      SilverAndLabsDuties: num(r.Client?.SilverAndLabsDuties ?? r.SilverAndLabsDuties ?? 0),
+      LossAndLabourDuties: num(r.Client?.LossAndLabourDuties ?? r.LossAndLabourDuties ?? 0),
+      MetalPrice: num(r.MetalPrice),
+      DiamondsPrice: num(r.DiamondsPrice),
+      DutiesAmount: num(r.DutiesAmount),
+      TotalPrice: num(r.TotalPrice),
+      DiamondWeight: num(r.DiamondWeight),
+      TotalPieces: num(r.TotalPieces),
+      ClientPricingMessage: r.ClientPricingMessage || e?.clientMsg || '',
+    };
+  }, []);
+
+  const isEntryComplete = useCallback((e) => {
+    const stones = e?.stones || [];
+    const stonesOk = stones.length === 0 || stones.every(s => num(s.Price) > 0);
+    return stonesOk && num(e?.metalWeight) > 0 && num(e?.metalRate) > 0 && num(e?.result?.TotalPrice) > 0;
+  }, []);
+
+  const [isAutoRecalculating, setIsAutoRecalculating] = useState(false);
+  const fullEnquiryRef = useRef(fullEnquiry);
+  fullEnquiryRef.current = fullEnquiry;
+
+  useEffect(() => {
+    if (!visible || !isCMPhase) return;
+    const sub = Keyboard.addListener('keyboardDidHide', async () => {
+      if (!entryDirtyRef.current) return;
+      entryDirtyRef.current = false;
+
+      const idx = activeIdxRef.current;
+      const entry = pricingEntriesRef.current[idx];
+      const enq = fullEnquiryRef.current;
+      if (!entry || !enq) return;
+      if (num(entry.metalWeight) <= 0 || num(entry.metalRate) <= 0) return;
+
+      const stones = (entry.stones || []).map((s, i) => ({
+        Type: s.Type || '', Color: s.Color || '', Shape: s.Shape || '',
+        MmSize: String(s.MmSize ?? '0'), SieveSize: String(s.SieveSize || '0'),
+        CtWeight: num(s.Carat), Weight: num(s.Weight), Pcs: Math.round(num(s.Pcs)),
+        Price: num(entry.editedPrices?.[i] ?? s.Price), Markup: num(s.Markup),
+      })).filter(s => s.Type);
+
+      const r0 = entry.result || {};
+      const ounce = num(entry.metalOunce);
+
+      setIsAutoRecalculating(true);
+      try {
+        const result = await calculatePricing({
+          details: {
+            isOnlyMetalDesign: entry?.isOnlyMetalDesign === true && stones.length === 0,
+            Metal: {
+              Weight: num(entry.metalWeight),
+              Quality: entry.metalQuality,
+              ...(ounce > 0 ? { GoldRatePerOunce: ounce } : { Rate: num(entry.metalRate) }),
+            },
+            Stones: stones,
+            Loss: num(r0.Client?.Loss ?? r0.LossPercent ?? 0),
+            Labour: num(r0.Client?.Labour ?? r0.LabourPercent ?? 0),
+            ExtraCharges: normalizeExtraCharges(r0.Client?.ExtraCharges),
+            UndercutPrice: num(r0.Client?.UndercutPrice ?? 0),
+            NaturalDuties: num(r0.Client?.NaturalDuties ?? 0),
+            LabDuties: num(r0.Client?.LabDuties ?? 0),
+            GoldDuties: num(r0.Client?.GoldDuties ?? 0),
+            SilverAndLabsDuties: num(r0.Client?.SilverAndLabsDuties ?? 0),
+            LossAndLabourDuties: num(r0.Client?.LossAndLabourDuties ?? 0),
+            Quantity: enq?.Quantity || 1,
+          },
+          clientId: enq?.ClientId || enq?.clientId,
+          isRecalculate: true,
+        }).unwrap();
+
+        const priced = result.Stones || [];
+        updateEntry(idx, prev => ({
+          ...prev,
+          result,
+          clientMsg: result.ClientPricingMessage || prev.clientMsg,
+          metalRate: num(prev.metalRate) > 0 ? prev.metalRate : String(result.Metal?.Rate ?? prev.metalRate),
+          metalOunce: result.GoldRatePerOunce ? String(result.GoldRatePerOunce) : prev.metalOunce,
+          stones: (prev.stones || []).map((s, i) => (
+            priced[i] ? { ...s, Price: num(priced[i].Price), Markup: num(priced[i].Markup) } : s
+          )),
+          editedPrices: {},
+          missingIndices: new Set(
+            priced.reduce((acc, s, i) => { if (num(s.Price) <= 0) acc.push(i); return acc; }, [])
+          ),
+        }));
+
+        const pool = [
+          ...(Array.isArray(enq?.Cad) ? enq.Cad.map(e => ({ ...e, _type: 'cad' })) : []),
+          ...(Array.isArray(enq?.Coral) ? enq.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+        ];
+        pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+        const latestDesign = pool[0];
+        const resolvedId = enq?._id || enq?.id || enq?.Id;
+
+        const updatedEntries = pricingEntriesRef.current.map((en, i) => (
+          i === idx ? { ...en, result } : en
+        ));
+        const pricingData = updatedEntries.map(entryToPricing);
+
+        if (resolvedId && latestDesign?.Version) {
+          await savePricing({
+            enquiryId: resolvedId,
+            designType: latestDesign._type,
+            version: latestDesign.Version,
+            pricingData,
+            isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
+          }).unwrap();
+        }
+
+        const done = isEntryComplete({ ...updatedEntries[idx], result });
+        if (done) {
+          const nextIdx = updatedEntries.findIndex((en, i) => i !== idx && !isEntryComplete(en));
+          if (nextIdx >= 0) setActiveEntryIndex(nextIdx);
+        }
+      } catch (err) {
+        console.warn('[QuotationModal][autoEntry] failed', err?.status, err?.data?.message || err?.message);
+      } finally {
+        setIsAutoRecalculating(false);
+      }
+    });
+    return () => sub.remove();
+  }, [visible, isCMPhase, calculatePricing, savePricing, updateEntry, entryToPricing, isEntryComplete]);
 
   const autoCalcTimerRef = useRef(null);
   const autoSaveInProgress = useRef(false);
-  const fullEnquiryRef = useRef(fullEnquiry);
-  fullEnquiryRef.current = fullEnquiry;
   useEffect(() => {
-    // Runs in Quotation Review AND Cost Missing so that adding/deleting/pricing stones
-    // (e.g. deleting an unpriced stone in Cost Missing) auto-recalculates and saves.
     if (!visible || !(isQRPhase || isCMPhase)) return;
-    if (num(metalWeight) <= 0 || num(metalRate) <= 0) return;
     if (autoCalcTimerRef.current) clearTimeout(autoCalcTimerRef.current);
-    autoCalcTimerRef.current = setTimeout(() => {
+    autoCalcTimerRef.current = setTimeout(async () => {
       if (autoSaveInProgress.current) return;
-      const merged = diamonds.map((d, i) => editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d);
-      const anyMissingPrice = merged.some(d => num(d.Price) <= 0);
-      if (anyMissingPrice) return;
-      const enq = fullEnquiryRef.current;
-      const isOnlyMetalDesign = diamonds.length === 0;
+      const enq = fullEnquiryRef.current || {};
+      const clientId = enq?.ClientId || enq?.clientId;
+      const entries = pricingEntriesRef.current || [];
+      if (entries.length === 0 || !clientId) return;
 
-      const payload = {
-        details: {
-          isOnlyMetalDesign,
-          // Omit Rate when 0 so the backend falls back to today's rate (0 is not nullish).
-          Metal: { Weight: num(metalWeight), Quality: metalQuality, ...(num(metalRate) > 0 ? { Rate: num(metalRate) } : {}) },
-          Stones: merged.map(d => ({
-            Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
-            MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
-            CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)), Price: num(d.Price), Markup: num(d.Markup),
-          })).filter(st => st.Type),
-          Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0),
-          ExtraCharges: normalizeExtraCharges(sourcePricing?.ExtraCharges), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
-          NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0), LabDuties: num(sourcePricing?.LabDuties ?? 0),
-          GoldDuties: num(sourcePricing?.GoldDuties ?? 0), SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
-          LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0), Quantity: enq?.Quantity || 1,
-        },
-        clientId: enq?.ClientId || enq?.clientId,
-        isRecalculate: true,
+      const sig = JSON.stringify(entries.map(en => ({
+        q: en.metalQuality, w: en.metalWeight, r: en.metalRate, o: en.metalOunce,
+        d: en.result?.Client || en.result || null,
+        s: (en.stones || []).map((st, i) => [st.Type, num(en.editedPrices?.[i] ?? st.Price), st.Carat, st.Pcs, st.Weight, st.Markup, st.Shape, st.Color, st.MmSize]),
+      })));
+      if (sig === lastRecalcSigRef.current) return;
+      lastRecalcSigRef.current = sig;
+
+      const recalcOne = async (en) => {
+        if (num(en.metalWeight) <= 0 || num(en.metalRate) <= 0) return null;
+        const r0 = en.result || {};
+        const stones = (en.stones || []).map((st, i) => ({
+          Type: st.Type || '', Color: st.Color || '', Shape: st.Shape || '',
+          MmSize: String(st.MmSize ?? '0'), SieveSize: String(st.SieveSize || '0'),
+          CtWeight: num(st.Carat), Weight: num(st.Weight), Pcs: Math.round(num(st.Pcs)),
+          Price: num(en.editedPrices?.[i] ?? st.Price), Markup: num(st.Markup),
+        })).filter(st => st.Type);
+        const ounce = num(en.metalOunce);
+        try {
+          return await calculatePricing({
+            details: {
+              isOnlyMetalDesign: en?.isOnlyMetalDesign === true && stones.length === 0,
+              Metal: { Weight: num(en.metalWeight), Quality: en.metalQuality, ...(ounce > 0 ? { GoldRatePerOunce: ounce } : { Rate: num(en.metalRate) }) },
+              Stones: stones,
+              Loss: num(r0.Client?.Loss ?? r0.Loss ?? 0),
+              Labour: num(r0.Client?.Labour ?? r0.Labour ?? 0),
+              ExtraCharges: normalizeExtraCharges(r0.Client?.ExtraCharges ?? r0.ExtraCharges),
+              UndercutPrice: num(r0.Client?.UndercutPrice ?? r0.UndercutPrice ?? 0),
+              NaturalDuties: num(r0.Client?.NaturalDuties ?? r0.NaturalDuties ?? 0),
+              LabDuties: num(r0.Client?.LabDuties ?? r0.LabDuties ?? 0),
+              GoldDuties: num(r0.Client?.GoldDuties ?? r0.GoldDuties ?? 0),
+              SilverAndLabsDuties: num(r0.Client?.SilverAndLabsDuties ?? r0.SilverAndLabsDuties ?? 0),
+              LossAndLabourDuties: num(r0.Client?.LossAndLabourDuties ?? r0.LossAndLabourDuties ?? 0),
+              Quantity: enq?.Quantity || 1,
+            },
+            clientId,
+            isRecalculate: true,
+          }).unwrap();
+        } catch (_) {
+          return null;
+        }
       };
-      calculatePricing(payload).unwrap().then(result => {
-        setPricingResult(result);
-        if (num(metalRate) <= 0 && result.Metal?.Rate) setMetalRate(String(result.Metal.Rate));
-        if (result.GoldRatePerOunce) setMetalOunce(String(result.GoldRatePerOunce));
-        setClientMsg(prev => result.ClientPricingMessage || prev);
-        // Rebuild the HTML for whichever preview the user is currently viewing so a
-        // background recalc doesn't flip a Client preview back to Admin.
-        let html;
-        if (pdfPreviewModeRef.current === 'client') {
-          const clientEntry = {
-            ...result,
-            Stones: merged.map(d => ({
-              Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
-              MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
-              CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)),
-              Price: num(d.Price), Markup: num(d.Markup),
-            })).filter(st => st.Type),
-          };
-          html = buildCombinedHtml([clientEntry], resolvedClientName, metalQuality, null, true);
-        } else {
-          html = buildHtml({
-            pricingResult: result, stones: merged,
-            metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-            charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
-            clientName: resolvedClientName, sourcePricing: sourcePricing || {},
-          });
-        }
-        setPdfHtml(html);
 
-        if ((isQRPhase || isCMPhase) && !autoSaveInProgress.current) {
-          const resolvedId = enq?._id || enq?.id || enq?.Id;
-          if (resolvedId) {
-            const pool = [
-              ...(Array.isArray(enq?.Cad)  ? enq.Cad.map(e  => ({ ...e, _type: 'cad' }))  : []),
-              ...(Array.isArray(enq?.Coral) ? enq.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
-            ];
-            pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
-            const latestDesign = pool[0];
-            if (latestDesign?.Version) {
-              autoSaveInProgress.current = true;
-              const onlyMetal = diamonds.length === 0;
-              const autoSaveArgs = {
-                enquiryId: resolvedId,
-                designType: latestDesign._type,
-                version: latestDesign.Version,
-                pricingData: {
-                  isOnlyMetalDesign: onlyMetal,
-                  Metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-                  Stones: merged.map(d => ({
-                    Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
-                    MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
-                    CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)),
-                    Price: num(d.Price), Markup: num(d.Markup),
-                  })).filter(st => st.Type),
-                  Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0),
-                  ExtraCharges: normalizeExtraCharges(sourcePricing?.ExtraCharges), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0),
-                  NaturalDuties: num(sourcePricing?.NaturalDuties ?? 0), LabDuties: num(sourcePricing?.LabDuties ?? 0),
-                  GoldDuties: num(sourcePricing?.GoldDuties ?? 0), SilverAndLabsDuties: num(sourcePricing?.SilverAndLabsDuties ?? 0),
-                  LossAndLabourDuties: num(sourcePricing?.LossAndLabourDuties ?? 0),
-                  MetalPrice: result.MetalPrice, DiamondsPrice: result.DiamondsPrice,
-                  DutiesAmount: result.DutiesAmount, TotalPrice: result.TotalPrice,
-                  ClientPricingMessage: result.ClientPricingMessage || '',
-                },
-                isOnlyMetalDesign: onlyMetal,
-              };
-              // Metal-only (all stones deleted): save twice so the persisted flag advances
-              // the status past "Cost Missing" (backend applies it after deriving the status).
-              savePricing(autoSaveArgs).unwrap()
-                .then(() => (onlyMetal ? savePricing(autoSaveArgs).unwrap() : null))
-                .then(() => {
-                  setTimeout(() => { autoSaveInProgress.current = false; }, 2000);
-                })
-                .catch(() => { autoSaveInProgress.current = false; });
-            }
-          }
+      setIsAutoRecalculating(true);
+      try {
+        const results = await Promise.all(entries.map(recalcOne));
+        const updated = pricingEntriesRef.current.map((en, i) => {
+          const r = results[i];
+          if (!r) return en;
+          const priced = r.Stones || [];
+          return {
+            ...en,
+            result: r,
+            clientMsg: r.ClientPricingMessage || en.clientMsg,
+            metalRate: num(en.metalRate) > 0 ? en.metalRate : String(r.Metal?.Rate ?? en.metalRate),
+            metalOunce: r.GoldRatePerOunce ? String(r.GoldRatePerOunce) : en.metalOunce,
+            stones: (en.stones || []).map((s, j) => (priced[j] ? { ...s, Price: num(priced[j].Price), Markup: num(priced[j].Markup) } : s)),
+            missingIndices: new Set(priced.reduce((acc, s, j) => { if (num(s.Price) <= 0) acc.push(j); return acc; }, [])),
+          };
+        });
+        pricingEntriesRef.current = updated;
+        setPricingEntries(updated);
+
+        const resolvedId = enq?._id || enq?.id || enq?.Id;
+        const pool = [
+          ...(Array.isArray(enq?.Cad) ? enq.Cad.map(e => ({ ...e, _type: 'cad' })) : []),
+          ...(Array.isArray(enq?.Coral) ? enq.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+        ];
+        pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+        const latestDesign = pool[0];
+        if (resolvedId && latestDesign?.Version && !autoSaveInProgress.current) {
+          autoSaveInProgress.current = true;
+          const pricingData = updated.map(entryToPricing);
+          savePricing({
+            enquiryId: resolvedId, designType: latestDesign._type, version: latestDesign.Version,
+            pricingData, isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
+          }).unwrap()
+            .then(() => { setTimeout(() => { autoSaveInProgress.current = false; }, 1500); })
+            .catch(() => { autoSaveInProgress.current = false; });
         }
-      }).catch(() => {});
-    }, 800);
+      } finally {
+        setIsAutoRecalculating(false);
+      }
+    }, 600);
     return () => { if (autoCalcTimerRef.current) clearTimeout(autoCalcTimerRef.current); };
-  }, [visible, isQRPhase, isCMPhase, metalWeight, metalQuality, metalRate, diamonds, editedPrices, sourcePricing, calculatePricing, savePricing, resolvedClientName]);
+  }, [visible, isQRPhase, isCMPhase, metalWeight, metalQuality, metalRate, diamonds, editedPrices, calculatePricing, savePricing, entryToPricing]);
 
   const handleSharePdf = useCallback(async () => {
     if (!pdfHtml) return;
@@ -1038,12 +1405,17 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     setShowCompareModal(true);
   }, []);
 
-  const hasMissingStones = missingIndices.size > 0 && diamonds.some((d, i) => {
-    if (!missingIndices.has(i)) return false;
-    const effectivePrice = editedPrices[i] !== undefined ? num(editedPrices[i]) : num(d.Price);
-    return effectivePrice <= 0;
-  }) || diamonds.length === 0;
-  const hasMissingMetal = num(metalWeight) <= 0 || num(metalRate) <= 0;
+  const hasMissingStones = useMemo(() => pricingEntries.some(e => {
+    const stones = e?.stones || [];
+    const miss = e?.missingIndices || new Set();
+    if (stones.length === 0) return true;
+    return stones.some((d, i) => {
+      if (!miss.has(i)) return false;
+      const effectivePrice = e?.editedPrices?.[i] !== undefined ? num(e.editedPrices[i]) : num(d.Price);
+      return effectivePrice <= 0;
+    });
+  }), [pricingEntries]);
+  const hasMissingMetal = useMemo(() => pricingEntries.some(e => num(e?.metalWeight) <= 0 || num(e?.metalRate) <= 0), [pricingEntries]);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -1089,6 +1461,16 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     const merged = diamonds.map((d, i) =>
       editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
     );
+    const multi = buildCombinedEntries({
+      pricingEntries: sourcePricingList,
+      perTypeResults,
+      stones: merged,
+      metalQuality,
+      clientName: resolvedClientName,
+      result: pricingResult,
+      isClientPreview: true,
+    });
+    if (multi.isCombined) return multi.html;
     const entry = {
       ...pricingResult,
       Stones: merged.map(d => ({
@@ -1099,31 +1481,28 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       })).filter(st => st.Type),
     };
     return buildCombinedHtml([entry], resolvedClientName, metalQuality, null, true);
-  }, [pricingResult, diamonds, editedPrices, resolvedClientName, metalQuality]);
+  }, [pricingResult, diamonds, editedPrices, sourcePricingList, resolvedClientName, metalQuality]);
 
-  const handleCopyMsg = useCallback(() => {
-    if (!clientMsg) return;
-    Clipboard.setString(clientMsg);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [clientMsg]);
+  const [copiedCardIdx, setCopiedCardIdx] = useState(null);
+  const handleCopyCardMsg = useCallback((idx, msg) => {
+    if (!msg) return;
+    Clipboard.setString(msg);
+    setCopiedCardIdx(idx);
+    setTimeout(() => setCopiedCardIdx(null), 2000);
+  }, []);
 
-  // ── Stones IIFE (shared by both renders) ──────────────────────────
-  const renderStonesSection = () => {
-    if (diamonds.length === 0) {
+  const renderStonesSectionFor = (entry, idx) => {
+    const stones = entry?.stones || [];
+    const missing = entry?.missingIndices || new Set();
+    const edited = entry?.editedPrices || {};
+    const inlineEditIndex = entry?.inlineEditIndex ?? null;
+    const inlineEditPrice = entry?.inlineEditPrice ?? '';
+
+    if (stones.length === 0) {
       return (
-        <>
-        <View style={s.emptyStones}>
-          <Icon name="diamond" size={28} color={colors.textSecondary} />
-          <Text style={s.emptyStonesText}>No stones added yet</Text>
-          <TouchableOpacity style={[s.addBtn, { marginTop: 4 }]} onPress={handleAddDiamond} activeOpacity={0.8}>
-            <Icon name="add" size={16} color="#fff" />
-            <Text style={s.addBtnText}>Add First Stone</Text>
-          </TouchableOpacity>
-        </View>
-         <TouchableOpacity
-          style={[s.calcBtn, { paddingVertical: 18, marginTop: 20 }]}
-          onPress={handleCalculate}
+        <TouchableOpacity
+          style={[s.calcBtn, { paddingVertical: 18, marginTop: 10 }]}
+          onPress={() => handleRecalculateFor(idx)}
           disabled={isCalculating}
           activeOpacity={0.85}
         >
@@ -1133,13 +1512,13 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                 <Icon name="calculate" size={20} color="#fff" />
                 <Text style={[s.calcBtnText, { fontSize: (fonts.base || 16) }]}>Recalculate</Text>
               </>}
-        </TouchableOpacity></>
+        </TouchableOpacity>
       );
     }
 
-    const missingStones = diamonds
+    const missingStones = stones
       .map((d, i) => ({ d, i }))
-      .filter(({ i }) => missingIndices.has(i));
+      .filter(({ i }) => missing.has(i));
 
     return (
       <>
@@ -1162,8 +1541,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               <View style={s.stoneColActions} />
             </View>
             {missingStones.map(({ d, i }, rowIdx) => {
-              const effectivePrice = editedPrices[i] !== undefined ? num(editedPrices[i]) : num(d.Price);
-              const isEdited = editedPrices[i] !== undefined && effectivePrice > 0;
+              const effectivePrice = edited[i] !== undefined ? num(edited[i]) : num(d.Price);
+              const isEdited = edited[i] !== undefined && effectivePrice > 0;
               const isEditing = inlineEditIndex === i;
               return (
                 <Animated.View
@@ -1182,14 +1561,13 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
 
                   {isEditing ? (
                     <TextInput
-                      ref={inlinePriceRef}
                       style={[s.stoneCol, s.stoneColPrice, s.inlinePriceInput]}
                       value={inlineEditPrice}
-                      onChangeText={setInlineEditPrice}
+                      onChangeText={(v) => setEntryInlineEditPrice(idx, v)}
                       keyboardType="decimal-pad"
                       placeholder="$/Ct"
                       placeholderTextColor="#A0A0A0"
-                      onSubmitEditing={saveInlineEdit}
+                      onSubmitEditing={() => { saveEntryInlineEdit(idx); handleRecalculateFor(idx); }}
                       returnKeyType="done"
                     />
                   ) : (
@@ -1205,34 +1583,43 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                       </Animated.View>
                     )}
                     {!isEditing && (
-                      <TouchableOpacity onPress={() => startInlineEdit(i, d)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }} style={[s.inlineActionBtn, { borderColor: colors.primary }]}>
+                      <TouchableOpacity onPress={() => startEntryInlineEdit(idx, i, d)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }} style={[s.inlineActionBtn, { borderColor: colors.primary }]}>
                         <Icon name="edit" size={14} color={colors.primary} />
                       </TouchableOpacity>
                     )}
-                    <TouchableOpacity onPress={() => handleDeleteDiamond(i)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }} style={[s.inlineActionBtn, { borderColor: colors.error || '#EF4444' }]}>
+                    <TouchableOpacity onPress={() => handleEntryDeleteDiamond(idx, i)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }} style={[s.inlineActionBtn, { borderColor: colors.error || '#EF4444' }]}>
                       <Icon name="delete-outline" size={14} color={colors.error || '#EF4444'} />
                     </TouchableOpacity>
                   </View>
                 </Animated.View>
               );
             })}
-            <TouchableOpacity style={s.stoneAddRow} onPress={handleAddDiamond} activeOpacity={0.8}>
-              <Icon name="add" size={14} color={colors.primary} />
-              <Text style={s.stoneAddRowText}>Add another stone</Text>
-            </TouchableOpacity>
           </View>
         )}
+
+        <TouchableOpacity
+          style={[s.calcBtn, { paddingVertical: 18, marginTop: 16 }]}
+          onPress={() => handleRecalculateFor(idx)}
+          disabled={isCalculating}
+          activeOpacity={0.85}
+        >
+          {isCalculating
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <>
+                <Icon name="calculate" size={20} color="#fff" />
+                <Text style={[s.calcBtnText, { fontSize: (fonts.base || 16) }]}>Recalculate</Text>
+              </>}
+        </TouchableOpacity>
 
        
       </>
     );
   };
 
-  // Metal quality picker rendered as an in-modal absolute overlay (NOT a nested <Modal>,
-  // which is unreliable on iOS/Android when the parent is already a Modal). Used by both
-  // the QR-phase and Update-Quotation renders.
   const renderQualityPicker = () => {
     if (!showQualityPicker) return null;
+    const pickerEntry = pricingEntries[qualityPickerIdx];
+    const pickerQuality = pickerEntry?.metalQuality || '10K';
     return (
       <View style={s.pickerAbsOverlay}>
         <TouchableOpacity style={s.pickerOverlay} activeOpacity={1} onPress={() => setShowQualityPicker(false)}>
@@ -1241,12 +1628,12 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
             {METAL_QUALITY_OPTIONS.map(opt => (
               <TouchableOpacity
                 key={opt}
-                style={[s.pickerOption, metalQuality === opt && s.pickerOptionSelected]}
-                onPress={() => { setMetalQuality(opt); setShowQualityPicker(false); }}
+                style={[s.pickerOption, pickerQuality === opt && s.pickerOptionSelected]}
+                onPress={() => { onEntryMetalQualityPick(qualityPickerIdx, opt); setShowQualityPicker(false); }}
                 activeOpacity={0.8}
               >
-                <Text style={[s.pickerOptionText, metalQuality === opt && s.pickerOptionTextSelected]}>{opt}</Text>
-                {metalQuality === opt && <Icon name="check" size={16} color={colors.primary} />}
+                <Text style={[s.pickerOptionText, pickerQuality === opt && s.pickerOptionTextSelected]}>{opt}</Text>
+                {pickerQuality === opt && <Icon name="check" size={16} color={colors.primary} />}
               </TouchableOpacity>
             ))}
           </TouchableOpacity>
@@ -1255,9 +1642,384 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
     );
   };
 
-  // ── QR Phase render ────────────────────────────────────────────────
+  const handleAddEntry = useCallback(() => {
+    setAddStoneType('');
+    setAddMetalQuality('10K');
+    setShowAddEntryModal(true);
+  }, []);
+
+  const handleConfirmAddEntry = useCallback(async () => {
+    if (isAddingEntry) return;
+
+    const resolvedEnquiryId = fullEnquiry?._id || fullEnquiry?.id || fullEnquiry?.Id;
+    if (!resolvedEnquiryId) {
+      showAlert('Error', 'Could not identify the enquiry.', 'error', [{ text: 'OK' }]);
+      return;
+    }
+
+    const pool = [
+      ...(Array.isArray(fullEnquiry?.Cad)   ? fullEnquiry.Cad.map(e => ({ ...e, _type: 'cad' }))   : []),
+      ...(Array.isArray(fullEnquiry?.Coral) ? fullEnquiry.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+    ];
+    pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+    const latestDesign = pool[0];
+    if (!latestDesign?.Version) {
+      showAlert('Error', 'No design version found.', 'error', [{ text: 'OK' }]);
+      return;
+    }
+
+    const isOnlyMetalDesign = addStoneType
+      ? false
+      : !(latestDesign?.Pricing?.length > 0 &&
+          latestDesign.Pricing.some(p => Array.isArray(p.Stones) && p.Stones.length > 0));
+
+    setIsAddingEntry(true);
+    try {
+      const sp = sourcePricing || {};
+      const existingStones = Array.isArray(sp.Stones) ? sp.Stones : [];
+      const mergedStones = [];
+      if (addStoneType) {
+        if (existingStones.length > 0) {
+          existingStones.forEach(st => {
+            mergedStones.push({
+              Type: addStoneType,
+              Color: st.Color || '', Shape: st.Shape || '',
+              MmSize: String(st.MmSize ?? '0'), SieveSize: st.SieveSize || '',
+              CtWeight: num(st.CtWeight ?? st.Carat), Weight: num(st.Weight),
+              Pcs: Math.round(num(st.Pcs)), Price: num(st.Price), Markup: num(st.Markup),
+            });
+          });
+        } else {
+          mergedStones.push({
+            Type: addStoneType, Color: '', Shape: '', MmSize: '0', SieveSize: '',
+            CtWeight: 0, Weight: 0, Pcs: 0, Price: 0, Markup: 0,
+          });
+        }
+      } else if (existingStones.length > 0) {
+        existingStones.forEach(st => {
+          mergedStones.push({
+            Type: st.Type || '', Color: st.Color || '', Shape: st.Shape || '',
+            MmSize: String(st.MmSize ?? '0'), SieveSize: st.SieveSize || '',
+            CtWeight: num(st.CtWeight ?? st.Carat), Weight: num(st.Weight),
+            Pcs: Math.round(num(st.Pcs)), Price: num(st.Price), Markup: num(st.Markup),
+          });
+        });
+      }
+
+      const metalRateForQuality = (() => {
+        const prices = metalPricesData?.prices || {};
+        const q = addMetalQuality || '10K';
+        if (/silver\s*925/i.test(q)) return num(prices.silver?.price ?? 0);
+        if (/platinum/i.test(q)) return num(prices.platinum?.price ?? 0);
+        return num(prices.gold?.price ?? 0);
+      })();
+
+      const newEntry = {
+        Metal: {
+          Weight: num(sp.Metal?.Weight ?? sp.GoldWeight ?? 0),
+          Quality: addMetalQuality,
+          Rate: metalRateForQuality,
+        },
+        Stones: mergedStones,
+        Loss: num(sp.Loss ?? 0),
+        Labour: num(sp.Labour ?? 0),
+        ExtraCharges: normalizeExtraCharges(sp.ExtraCharges),
+        UndercutPrice: num(sp.UndercutPrice ?? 0),
+        NaturalDuties: num(sp.NaturalDuties ?? 0),
+        LabDuties: num(sp.LabDuties ?? 0),
+        GoldDuties: num(sp.GoldDuties ?? 0),
+        SilverAndLabsDuties: num(sp.SilverAndLabsDuties ?? 0),
+        LossAndLabourDuties: num(sp.LossAndLabourDuties ?? 0),
+        ClientPricingMessage: sp.ClientPricingMessage || '',
+      };
+
+      let calcResult = null;
+      try {
+        const calcPayload = {
+          details: {
+            isOnlyMetalDesign,
+            Metal: newEntry.Metal,
+            Stones: mergedStones,
+            Loss: newEntry.Loss,
+            Labour: newEntry.Labour,
+            ExtraCharges: newEntry.ExtraCharges,
+            UndercutPrice: newEntry.UndercutPrice,
+            NaturalDuties: newEntry.NaturalDuties,
+            LabDuties: newEntry.LabDuties,
+            GoldDuties: newEntry.GoldDuties,
+            SilverAndLabsDuties: newEntry.SilverAndLabsDuties,
+            LossAndLabourDuties: newEntry.LossAndLabourDuties,
+            Quantity: fullEnquiry?.Quantity || 1,
+          },
+          clientId: clientIdResolved,
+          isRecalculate: false,
+          isOnlyMetalDesign,
+        };
+        calcResult = await calculatePricing(calcPayload).unwrap();
+      } catch (_) {
+        calcResult = null;
+      }
+
+      if (calcResult) {
+        newEntry.MetalPrice = num(calcResult.MetalPrice);
+        newEntry.DiamondsPrice = num(calcResult.DiamondsPrice);
+        newEntry.DutiesAmount = num(calcResult.DutiesAmount);
+        newEntry.TotalPrice = num(calcResult.TotalPrice);
+        newEntry.DiamondWeight = num(calcResult.DiamondWeight);
+        newEntry.TotalPieces = num(calcResult.TotalPieces);
+        newEntry.TotalMetalWeight = num(calcResult.TotalMetalWeight);
+        newEntry.ClientPricingMessage = calcResult.ClientPricingMessage || newEntry.ClientPricingMessage;
+      } else {
+        newEntry.MetalPrice = num(sp.MetalPrice ?? 0);
+        newEntry.DiamondsPrice = num(sp.DiamondsPrice ?? 0);
+        newEntry.DutiesAmount = num(sp.DutiesAmount ?? 0);
+        newEntry.TotalPrice = num(sp.TotalPrice ?? 0);
+        newEntry.DiamondWeight = num(sp.DiamondWeight ?? 0);
+        newEntry.TotalPieces = num(sp.TotalPieces ?? 0);
+      }
+
+      const existingPricing = Array.isArray(latestDesign?.Pricing)
+        ? latestDesign.Pricing
+        : (latestDesign?.Pricing ? [latestDesign.Pricing] : []);
+      const cleanExisting = existingPricing.map(p => {
+        const { _id, ...rest } = p || {};
+        return rest;
+      });
+
+      await updateAssetData({
+        enquiryId: resolvedEnquiryId,
+        type: latestDesign._type,
+        version: String(latestDesign.Version),
+        data: {
+          Pricing: [...cleanExisting, newEntry],
+          IsOnlyMetalDesign: isOnlyMetalDesign,
+        },
+      }).unwrap();
+
+      setShowAddEntryModal(false);
+      setReseedToken(t => t + 1);
+      await refetchEnquiry();
+      showAlert('Added', 'New quotation added successfully.', 'success', [{ text: 'OK' }]);
+    } catch (e) {
+      showAlert('Failed', e?.data?.message || 'Could not add quotation. Please try again.', 'error', [{ text: 'OK' }]);
+    } finally {
+      setIsAddingEntry(false);
+    }
+  }, [isAddingEntry, fullEnquiry, sourcePricing, metalPricesData, addStoneType, addMetalQuality,
+      clientIdResolved, calculatePricing, updateAssetData, refetchEnquiry, showAlert]);
+
+  const handleDeleteEntry = useCallback((idx) => {
+    if (pricingEntriesRef.current.length <= 1) {
+      showAlert('Cannot Delete', 'At least one quotation is required.', 'info', [{ text: 'OK' }]);
+      return;
+    }
+    showAlert('Delete Quotation', 'Remove this quotation?', 'info', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          const remaining = pricingEntriesRef.current.filter((_, i) => i !== idx);
+          const stillHasDefault = remaining.some(e => e.isSentForApproaval);
+          const cleaned = remaining.map((e, i) => ({ ...e, isSentForApproaval: stillHasDefault ? e.isSentForApproaval : i === 0 }));
+          pricingEntriesRef.current = cleaned;
+          setPricingEntries(cleaned);
+          setActiveEntryIndex(prev => Math.min(prev, cleaned.length - 1));
+
+          const enq = fullEnquiryRef.current || {};
+          const pool = [
+            ...(Array.isArray(enq?.Cad) ? enq.Cad.map(e => ({ ...e, _type: 'cad' })) : []),
+            ...(Array.isArray(enq?.Coral) ? enq.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+          ];
+          pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+          const latestDesign = pool[0];
+          const resolvedId = enq?._id || enq?.id || enq?.Id;
+          if (!resolvedId || !latestDesign?.Version) return;
+
+          const pricingData = cleaned.map(entryToPricing);
+          try {
+            await savePricing({
+              enquiryId: resolvedId,
+              designType: latestDesign._type,
+              version: latestDesign.Version,
+              pricingData,
+              isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
+            }).unwrap();
+            lastRecalcSigRef.current = null;
+            setReseedToken(t => t + 1);
+            await refetchEnquiry();
+          } catch (err) {
+            console.warn('[QuotationModal][deleteEntry] failed', err?.status, err?.data?.message || err?.message);
+            showAlert('Delete Failed', 'Could not delete quotation. Please try again.', 'error', [{ text: 'OK' }]);
+          }
+        },
+      },
+    ]);
+  }, [showAlert, entryToPricing, savePricing, refetchEnquiry]);
+
+  const handleViewPricing = useCallback((idx) => {
+    const entry = pricingEntries[idx];
+    if (!entry) return;
+
+    const resolvedEnquiryId = fullEnquiry?._id || fullEnquiry?.id || fullEnquiry?.Id;
+    const modClientId = fullEnquiry?.ClientId || fullEnquiry?.clientId;
+
+    const pool = [
+      ...(Array.isArray(fullEnquiry?.Cad) ? fullEnquiry.Cad.map(e => ({ ...e, _type: 'cad' })) : []),
+      ...(Array.isArray(fullEnquiry?.Coral) ? fullEnquiry.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+    ];
+    pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+    const latestDesign = pool[0];
+    if (!resolvedEnquiryId || !latestDesign?.Version) {
+      showAlert('Error', 'No design version found to preview.', 'error', [{ text: 'OK' }]);
+      return;
+    }
+
+    const merged = (entry.stones || []).map(d => ({
+      Type: d.Type || '', Color: d.Color || '', Shape: d.Shape || '',
+      MmSize: String(d.MmSize ?? '0'), SieveSize: String(d.SieveSize || '0'),
+      CtWeight: num(d.Carat), Weight: num(d.Weight), Pcs: Math.round(num(d.Pcs)),
+      Price: num(d.Price), Markup: num(d.Markup),
+    }));
+
+    const ounceVal = num(entry.metalOunce);
+    const result = entry.result || {};
+    const previewEntry = {
+      ...result,
+      MetalKT: entry.metalQuality,
+      Metal: {
+        Weight: num(entry.metalWeight),
+        Quality: entry.metalQuality,
+        Rate: num(entry.metalRate),
+        ...(ounceVal > 0 ? { GoldRatePerOunce: ounceVal } : {}),
+      },
+      Stones: merged.filter(st => st.Type),
+    };
+
+    navigatingToPreviewRef.current = true;
+    setNavigatingToPreview(true);
+    navigation.navigate('PricingPreview', {
+      pricingEntries: [previewEntry],
+      clientName: resolvedClientName,
+      metalKt: entry.metalQuality,
+      modify: true,
+      clientId: modClientId,
+      selectedClient: { name: resolvedClientName },
+      isEnquiry: true,
+      enquiryId: resolvedEnquiryId,
+      designType: latestDesign._type,
+      version: latestDesign.Version,
+      clientMessage: entry.clientMsg,
+      preservedPricing: sourcePricingList,
+      activePricingIndex: idx,
+    });
+  }, [pricingEntries, fullEnquiry, resolvedClientName, navigation, showAlert, sourcePricingList]);
+
+  const handleSetDefault = useCallback((idx) => {
+    const target = pricingEntriesRef.current[idx];
+    if (!target || target.isSentForApproaval) return;
+    const updated = pricingEntriesRef.current.map((en, i) => ({ ...en, isSentForApproaval: i === idx }));
+    pricingEntriesRef.current = updated;
+    setPricingEntries(updated);
+
+    const enq = fullEnquiryRef.current || {};
+    const pool = [
+      ...(Array.isArray(enq?.Cad) ? enq.Cad.map(e => ({ ...e, _type: 'cad' })) : []),
+      ...(Array.isArray(enq?.Coral) ? enq.Coral.map(e => ({ ...e, _type: 'coral' })) : []),
+    ];
+    pool.sort((a, b) => new Date(b.CreatedDate || 0) - new Date(a.CreatedDate || 0));
+    const latestDesign = pool[0];
+    const resolvedId = enq?._id || enq?.id || enq?.Id;
+    if (!resolvedId || !latestDesign?.Version) return;
+
+    const pricingData = updated.map(entryToPricing);
+    savePricing({
+      enquiryId: resolvedId,
+      designType: latestDesign._type,
+      version: latestDesign.Version,
+      pricingData,
+      isOnlyMetalDesign: pricingData.every(p => p.isOnlyMetalDesign === true),
+    }).unwrap().catch(err => console.warn('[QuotationModal][setDefault] failed', err?.status, err?.data?.message || err?.message));
+  }, [entryToPricing, savePricing]);
+
+  const clientStoneTypes = useMemo(() => {
+    const raw = clientData?.ApplicableStoneTypes || clientData?.applicableStoneTypes || [];
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    return raw.filter(Boolean);
+  }, [clientData]);
+
+  const renderAddEntryModal = () => {
+    if (!showAddEntryModal) return null;
+    return (
+      <View style={s.pickerAbsOverlay}>
+        <TouchableOpacity style={s.pickerOverlay} activeOpacity={1} onPress={() => { if (!isAddingEntry) setShowAddEntryModal(false); }}>
+          <TouchableOpacity activeOpacity={1} style={s.pickerSheet}>
+            <Text style={s.pickerTitle}>Add New Quotation</Text>
+
+            {clientStoneTypes.length > 0 && (
+              <>
+                <Text style={s.pickerSectionLabel}>Stone Type</Text>
+                <View style={s.addEntryChipWrap}>
+                  {clientStoneTypes.map(type => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[s.addEntryChip, addStoneType === type && s.addEntryChipSelected]}
+                      onPress={() => setAddStoneType(addStoneType === type ? '' : type)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[s.addEntryChipText, addStoneType === type && s.addEntryChipTextSelected]}>
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <Text style={s.pickerSectionLabel}>Metal Quality</Text>
+            <View style={s.addEntryChipWrap}>
+              {METAL_QUALITY_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt}
+                  style={[s.addEntryChip, addMetalQuality === opt && s.addEntryChipSelected]}
+                  onPress={() => setAddMetalQuality(opt)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[s.addEntryChipText, addMetalQuality === opt && s.addEntryChipTextSelected]}>
+                    {opt}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={s.addEntryBtnRow}>
+              <TouchableOpacity
+                style={[s.addEntryBtn, s.addEntryBtnCancel]}
+                onPress={() => setShowAddEntryModal(false)}
+                activeOpacity={0.8}
+                disabled={isAddingEntry}
+              >
+                <Text style={s.addEntryBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.addEntryBtn, s.addEntryBtnConfirm]}
+                onPress={handleConfirmAddEntry}
+                activeOpacity={0.85}
+                disabled={isAddingEntry}
+              >
+                {isAddingEntry
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={s.addEntryBtnConfirmText}>Add Quotation</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
   const renderQRPhase = () => (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (showPdf) { setShowPdf(false); } else { onClose(); } }}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <>
       <View style={s.overlay}>
         <View style={s.sheet}>
@@ -1267,181 +2029,136 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               {fullEnquiry?.Name ? <Text style={s.headerSub} numberOfLines={1}>{fullEnquiry.Name}</Text> : null}
             </View>
             {isFetchingEnquiry && <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />}
-            <TouchableOpacity style={s.closeBtn} onPress={showPdf ? () => setShowPdf(false) : onClose} activeOpacity={0.7}>
-              <Icon name={showPdf ? 'arrow-back' : 'close'} size={22} color="#fff" />
+            <TouchableOpacity style={s.headerAddBtn} onPress={handleAddEntry} activeOpacity={0.8}>
+              <Icon name="add" size={16} color={colors.primary} />
+              <Text style={s.headerAddBtnText}>Add New Quotation</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.closeBtn} onPress={onClose} activeOpacity={0.7}>
+              <Icon name="close" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
 
-          {showPdf ? (
-            <View style={{ flex: 1 }}>
-              <PdfViewer html={pdfHtml} style={{ flex: 1 }} />
-              <View style={s.pdfBar}>
-                <TouchableOpacity style={s.pdfBarBtn} onPress={() => setShowPdf(false)} activeOpacity={0.8}>
-                  <Icon name="arrow-back" size={18} color="#fff" />
-                  <Text style={s.pdfBarBtnText}>Back</Text>
-                </TouchableOpacity>
-                <View style={s.pdfPreviewToggle}>
-                  <TouchableOpacity
-                    style={[s.pdfPreviewBtn, pdfPreviewMode === 'admin' && s.pdfPreviewBtnActive]}
-                    onPress={() => {
-                      if (pdfPreviewMode !== 'admin') {
-                        setPdfPreviewMode('admin');
-                        const merged = diamonds.map((d, i) =>
-                          editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
-                        );
-                        const html = buildHtml({
-                          pricingResult, stones: merged,
-                          metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-                          charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
-                          clientName: resolvedClientName, sourcePricing: sourcePricing || {},
-                        });
-                        if (html) setPdfHtml(html);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[s.pdfPreviewBtnText, pdfPreviewMode === 'admin' && s.pdfPreviewBtnTextActive]}>Admin</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[s.pdfPreviewBtn, pdfPreviewMode === 'client' && s.pdfPreviewBtnActive]}
-                    onPress={() => {
-                      if (pdfPreviewMode !== 'client') {
-                        setPdfPreviewMode('client');
-                        const html = buildClientPreviewHtml();
-                        if (html) setPdfHtml(html);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[s.pdfPreviewBtnText, pdfPreviewMode === 'client' && s.pdfPreviewBtnTextActive]}>Client</Text>
-                  </TouchableOpacity>
-                </View>
+          <ScrollView
+            style={s.scrollBody}
+            contentContainerStyle={s.scrollContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={pullRefreshControl}
+          >
+            {isAutoRecalculating && (
+              <View style={s.recalcBanner}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={s.recalcBannerText}>Recalculating pricing…</Text>
+              </View>
+            )}
+
+            {pricingEntries.map((entry, idx) => {
+              const stoneTypes = [...new Set((entry.stones || []).map(s => s.Type).filter(Boolean))];
+              const typeLabel = stoneTypes.length > 0 ? stoneTypes.join(', ') : 'METAL ONLY';
+              const result = entry.result || {};
+              const totalPrice = num(result.TotalPrice);
+              const stoneCount = (entry.stones || []).length;
+              const hasMissing = (entry.missingIndices?.size || 0) > 0;
+              const defaultIdx = (() => {
+                const di = pricingEntries.findIndex(e => e.isSentForApproaval);
+                return di >= 0 ? di : 0;
+              })();
+              const isApprovalCard = idx === defaultIdx;
+
+              return (
                 <TouchableOpacity
-                  style={[s.pdfBarBtn, s.shareBtn]}
-                  onPress={async () => { await handleSaveQuotation(); handleSharePdf(); }}
-                  disabled={isSaving || isSharing}
-                  activeOpacity={0.85}
+                  key={entry.id}
+                  activeOpacity={0.9}
+                  onPress={() => handleSetDefault(idx)}
+                  style={[s.entryCard, isApprovalCard && s.entryCardActive]}
                 >
-                  {(isSaving || isSharing)
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <><Icon name="share" size={18} color="#fff" /><Text style={s.pdfBarBtnText}>Save & Share</Text></>}
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            <ScrollView
-              style={s.scrollBody}
-              contentContainerStyle={s.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={s.infoBanner}>
-                <Icon name="info" size={15} color={colors.primary} />
-                <Text style={s.infoText}>Review details below, then tap View PDF to recalculate and generate quotation.</Text>
-              </View>
-
-              <View style={s.metalSection}>
-                <Text style={s.sectionTitle}>Metal</Text>
-                <View style={s.metalRow}>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Weight (g)</Text>
-                    <TextInput style={s.chargeInput} value={metalWeight} onChangeText={setMetalWeight} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Quality</Text>
-                    <TouchableOpacity style={s.qualityBtn} onPress={() => setShowQualityPicker(true)} activeOpacity={0.8}>
-                      <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
-                      <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
-                    <TextInput style={s.chargeInput} value={metalRate} onChangeText={setMetalRate} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Per Ounce ($)</Text>
-                    <TextInput style={s.chargeInput} value={metalOunce} onChangeText={setMetalOunce} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
-                  </View>
-                </View>
-              </View>
-
-
-
-              <TouchableOpacity
-                style={[s.calcBtn, { backgroundColor: '#DC2626' }]}
-                onPress={handleCalculate}
-                disabled={isCalculating}
-                activeOpacity={0.85}
-              >
-                {isCalculating
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Icon name="picture-as-pdf" size={18} color="#fff" />
-                      <Text style={s.calcBtnText}>View PDF</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 4, paddingLeft: 8, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.4)' }}>
-                        <Icon name="refresh" size={14} color="#FFD700" />
-                        <Text style={{ color: '#FFD700', fontSize: 10, fontWeight: '600' }}> Auto</Text>
+                  {isApprovalCard ? (
+                    <View style={s.defaultBadge}>
+                      <Icon name="check-circle" size={14} color="#059669" />
+                      <Text style={s.defaultBadgeText}>Default quote — this is the one sent to the client</Text>
+                    </View>
+                  ) : (
+                    <Text style={s.setDefaultHint}>Tap this card to make it the default quote sent to the client</Text>
+                  )}
+                  <View style={s.entryCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <View style={s.entryCardTypeRow}>
+                        <Icon name={stoneCount > 0 ? 'diamond' : 'hardware'} size={16} color={colors.primary} />
+                        <Text style={s.entryCardType} numberOfLines={1}>{typeLabel}</Text>
                       </View>
-                    </View>}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[s.calcBtn, { backgroundColor: '#7C3AED' }]}
-                onPress={handleCompareImages}
-                activeOpacity={0.85}
-              >
-                <Icon name="compare" size={18} color="#fff" />
-                <Text style={s.calcBtnText}>Compare Images</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[s.calcBtn, { backgroundColor: colors.primary }]}
-                onPress={handleOpenModify}
-                activeOpacity={0.85}
-              >
-                <Icon name="tune" size={18} color="#fff" />
-                <Text style={s.calcBtnText}>Modify Pricing</Text>
-              </TouchableOpacity>
-
-              {(() => {
-                const PR = pricingResult || initialPricing;
-                if (!PR) return null;
-                return <>
-                  <Text style={s.sectionTitle}>Pricing</Text>
-                  <View style={s.resultCard}>
-                    <View style={s.resultRow}>
-                      <Text style={s.resultLbl}>Metal Price</Text>
-                      <Text style={s.resultVal}>${num(PR.MetalPrice).toFixed(2)}</Text>
+                      <Text style={s.entryCardMetal}>{entry.metalQuality || '10K'} • {stoneCount} stone{stoneCount !== 1 ? 's' : ''}</Text>
                     </View>
-                    <View style={s.resultRow}>
-                      <Text style={s.resultLbl}>Diamonds Price</Text>
-                      <Text style={s.resultVal}>${num(PR.DiamondsPrice).toFixed(2)}</Text>
+                    {hasMissing && (
+                      <View style={s.entryCardMissing}>
+                        <Icon name="warning" size={12} color="#DC2626" />
+                        <Text style={s.entryCardMissingText}>Missing</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={s.entryCardPriceRow}>
+                    <View style={s.entryCardPriceItem}>
+                      <Text style={s.entryCardPriceLabel}>Metal Price</Text>
+                      <Text style={s.entryCardPriceVal}>${num(result.MetalPrice).toFixed(0)}</Text>
                     </View>
-                    <View style={s.resultRow}>
-                      <Text style={s.resultLbl}>Duties Amount</Text>
-                      <Text style={s.resultVal}>${num(PR.DutiesAmount).toFixed(2)}</Text>
+                    <View style={[s.entryCardPriceItem, { borderLeftWidth: 1, borderLeftColor: '#E0E0E0' }]}>
+                      <Text style={s.entryCardPriceLabel}>Diamond Price</Text>
+                      <Text style={s.entryCardPriceVal}>${num(result.DiamondsPrice).toFixed(0)}</Text>
                     </View>
-                    <View style={[s.resultRow, s.resultTotalRow]}>
-                      <Text style={s.resultTotalLbl}>TOTAL PRICE</Text>
-                      <Text style={s.resultTotalVal}>${num(PR.TotalPrice).toFixed(2)}</Text>
+                    <View style={[s.entryCardPriceItem, { borderLeftWidth: 1, borderLeftColor: '#E0E0E0' }]}>
+                      <Text style={s.entryCardPriceLabel}>Total Price</Text>
+                      <Text style={[s.entryCardPriceVal, { color: colors.primary, fontWeight: '700' }]}>${totalPrice.toFixed(0)}</Text>
                     </View>
                   </View>
-                </>;
-              })()}
-              {(clientMsg !== null && clientMsg !== undefined && clientMsg !== '' && diamonds.length > 0) ? (
-                <View style={s.clientMsgCard}>
-                  <View style={s.clientMsgHeader}>
-                    <Text style={s.clientMsgLabel}>Client Pricing Message</Text>
-                    <TouchableOpacity style={s.copyBtn} onPress={handleCopyMsg} activeOpacity={0.8}>
-                      <Icon name={copied ? 'check' : 'content-copy'} size={15} color={copied ? '#059669' : colors.primary} />
-                      <Text style={[s.copyBtnText, copied && { color: '#059669' }]}>{copied ? 'Copied!' : 'Copy'}</Text>
+
+                  {(entry.clientMsg || result.ClientPricingMessage) ? (
+                    <View style={s.entryCardMsgBox}>
+                      <View style={s.entryCardMsgHeader}>
+                        <Text style={s.entryCardMsgLabel}>Client Pricing Message</Text>
+                        <TouchableOpacity
+                          style={s.entryCardCopyBtn}
+                          onPress={() => handleCopyCardMsg(idx, entry.clientMsg || result.ClientPricingMessage)}
+                          activeOpacity={0.8}
+                        >
+                          <Icon name={copiedCardIdx === idx ? 'check' : 'content-copy'} size={13} color={copiedCardIdx === idx ? '#059669' : colors.primary} />
+                          <Text style={[s.entryCardCopyText, copiedCardIdx === idx && { color: '#059669' }]}>{copiedCardIdx === idx ? 'Copied!' : 'Copy'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={s.entryCardMsgText}>{entry.clientMsg || result.ClientPricingMessage}</Text>
+                    </View>
+                  ) : null}
+
+                  <TouchableOpacity
+                    style={s.entryCardViewBtn}
+                    onPress={() => handleViewPricing(idx)}
+                    activeOpacity={0.8}
+                  >
+                    <Icon name="visibility" size={16} color="#fff" />
+                    <Text style={s.entryCardViewBtnText}>View Pricing</Text>
+                    <Icon name="chevron-right" size={18} color="#fff" />
+                  </TouchableOpacity>
+
+                  {pricingEntries.length > 1 && (
+                    <TouchableOpacity
+                      style={s.entryCardDeleteBtn}
+                      onPress={() => handleDeleteEntry(idx)}
+                      activeOpacity={0.8}
+                    >
+                      <Icon name="delete-outline" size={16} color={colors.error || '#EF4444'} />
                     </TouchableOpacity>
-                  </View>
-                  <Text style={s.clientMsgText}>{clientMsg}</Text>
-                </View>
-              ) : null}
-            </ScrollView>
-          )}
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+
+            <TouchableOpacity
+              style={[s.calcBtn, { backgroundColor: '#7C3AED' }]}
+              onPress={handleCompareImages}
+              activeOpacity={0.85}
+            >
+              <Icon name="compare" size={18} color="#fff" />
+              <Text style={s.calcBtnText}>Compare Images</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </View>
 
@@ -1457,11 +2174,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
           type={alertCfg.type} buttons={alertCfg.buttons} onClose={hideAlert}
         />
         {renderQualityPicker()}
+        {renderAddEntryModal()}
       </>
     </Modal>
   );
 
-  // ── Update Quotation render ────────────────────────────────────────
   const renderUpdateQuotation = () => (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (showPdf) { setShowPdf(false); } else { onClose(); } }}>
       <>
@@ -1480,16 +2197,10 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                 'warning',
                 [
                   { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'No Update Price',
-                    onPress: () => setShowPdf(false),
-                  },
+                  { text: 'No Update Price', onPress: () => setShowPdf(false) },
                   {
                     text: 'Save & Go Back',
-                    onPress: async () => {
-                      await handleSaveQuotation();
-                      setShowPdf(false);
-                    },
+                    onPress: async () => { await handleSaveQuotation(); setShowPdf(false); },
                   },
                 ]
               );
@@ -1503,25 +2214,11 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               <PdfViewer html={pdfHtml} style={{ flex: 1 }} />
               <View style={s.pdfBar}>
                 <TouchableOpacity style={s.pdfBarBtn} onPress={() => {
-                  showAlert(
-                    'Save & Go Back',
-                    'Do you want to save the updated quotation before going back?',
-                    'warning',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'No Update Price',
-                        onPress: () => setShowPdf(false),
-                      },
-                      {
-                        text: 'Save & Go Back',
-                        onPress: async () => {
-                          await handleSaveQuotation();
-                          setShowPdf(false);
-                        },
-                      },
-                    ]
-                  );
+                  showAlert('Save & Go Back', 'Do you want to save the updated quotation before going back?', 'warning', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'No Update Price', onPress: () => setShowPdf(false) },
+                    { text: 'Save & Go Back', onPress: async () => { await handleSaveQuotation(); setShowPdf(false); } },
+                  ]);
                 }} activeOpacity={0.8}>
                   <Icon name="arrow-back" size={18} color="#fff" />
                   <Text style={s.pdfBarBtnText}>Go Back</Text>
@@ -1535,12 +2232,19 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
                         const merged = diamonds.map((d, i) =>
                           editedPrices[i] !== undefined ? { ...d, Price: num(editedPrices[i]) } : d
                         );
-                        const html = buildHtml({
-                          pricingResult, stones: merged,
-                          metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
-                          charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
-                          clientName: resolvedClientName, sourcePricing: sourcePricing || {},
+                        const multi = buildCombinedEntries({
+                          pricingEntries: sourcePricingList, perTypeResults,
+                          stones: merged, metalQuality, clientName: resolvedClientName,
+                          result: pricingResult, isClientPreview: false,
                         });
+                        const html = multi.isCombined
+                          ? multi.html
+                          : buildHtml({
+                            pricingResult, stones: merged,
+                            metal: { Weight: num(metalWeight), Quality: metalQuality, Rate: num(metalRate) },
+                            charges: { Loss: num(sourcePricing?.Loss ?? 0), Labour: num(sourcePricing?.Labour ?? 0), ExtraCharges: num(sourcePricing?.ExtraCharges ?? 0), UndercutPrice: num(sourcePricing?.UndercutPrice ?? 0) },
+                            clientName: resolvedClientName, sourcePricing: sourcePricing || {},
+                          });
                         if (html) setPdfHtml(html);
                       }
                     }}
@@ -1580,78 +2284,98 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
               contentContainerStyle={s.scrollContent}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              refreshControl={pullRefreshControl}
             >
-              {hasMissingStones && hasMissingMetal && (
-                <View style={s.missingBadge}>
-                  <Icon name="warning" size={14} color="#DC2626" />
-                  <Text style={s.missingBadgeText}>Missing Metal Details</Text>
+              {isAutoRecalculating && (
+                <View style={s.recalcBanner}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={s.recalcBannerText}>Recalculating pricing…</Text>
                 </View>
               )}
 
-              <View style={[s.metalSection, hasMissingStones && hasMissingMetal && s.metalSectionMissing]}>
-                <Text style={s.sectionTitle}>Metal</Text>
-                <View style={s.metalRow}>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Weight (g)</Text>
-                    <TextInput
-                      style={[s.chargeInput, num(metalWeight) <= 0 && s.inputErrorHighlight]}
-                      value={metalWeight}
-                      onChangeText={setMetalWeight}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textSecondary}
-                    />
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Quality</Text>
-                    <TouchableOpacity
-                      style={s.qualityBtn}
-                      onPress={() => setShowQualityPicker(true)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={s.qualityBtnText}>{metalQuality || '10K'}</Text>
-                      <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
-                    <TextInput
-                      style={[s.chargeInput, num(metalRate) <= 0 && s.inputErrorHighlight]}
-                      value={metalRate}
-                      onChangeText={setMetalRate}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textSecondary}
-                    />
-                  </View>
-                  <View style={s.metalField}>
-                    <Text style={s.chargeLabel}>Per Ounce ($)</Text>
-                    <TextInput
-                      style={s.chargeInput}
-                      value={metalOunce}
-                      onChangeText={setMetalOunce}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textSecondary}
-                    />
-                  </View>
-                </View>
-              </View>
+              {pricingEntries.map((entry, idx) => {
+                const stoneTypes = [...new Set((entry.stones || []).map(s => s.Type).filter(Boolean))];
+                const typeLabel = stoneTypes.length > 0 ? stoneTypes.join(', ') : 'METAL ONLY';
+                const stoneCount = (entry.stones || []).length;
+                const entryMissingStones = stoneCount === 0 || (entry.stones || []).some((d, i) => {
+                  if (!(entry.missingIndices?.has(i))) return false;
+                  const ep = entry.editedPrices?.[i] !== undefined ? num(entry.editedPrices[i]) : num(d.Price);
+                  return ep <= 0;
+                });
+                const entryMissingMetal = num(entry.metalWeight) <= 0 || num(entry.metalRate) <= 0;
 
-              {hasMissingStones ? (
-                <View style={s.warningBanner}>
-                  <Icon name="warning" size={15} color="#92400E" />
-                  <Text style={s.warningText}>Stone prices are missing — fill them in below to calculate pricing.</Text>
-                </View>
-              ) : (
-                <View style={s.infoBanner}>
-                  <Icon name="info" size={15} color={colors.primary} />
-                  <Text style={s.infoText}>All stones filled. Ready to calculate pricing.</Text>
-                </View>
-              )}
+                return (
+                  <View key={entry.id} style={s.entryEditCard}>
+                    <View style={s.entryEditHeader}>
+                      <View style={{ flex: 1 }}>
+                        <View style={s.entryCardTypeRow}>
+                          <Icon name={stoneCount > 0 ? 'diamond' : 'hardware'} size={16} color={colors.primary} />
+                          <Text style={s.entryCardType} numberOfLines={1}>{typeLabel}</Text>
+                        </View>
+                        <Text style={s.entryCardMetal}>{entry.metalQuality || '10K'} • {stoneCount} stone{stoneCount !== 1 ? 's' : ''}</Text>
+                      </View>
+                      {entryMissingStones && (
+                        <View style={s.entryCardMissing}>
+                          <Icon name="warning" size={12} color="#DC2626" />
+                          <Text style={s.entryCardMissingText}>Missing</Text>
+                        </View>
+                      )}
+                      {pricingEntries.length > 1 && (
+                        <TouchableOpacity style={s.entryCardDeleteBtn} onPress={() => handleDeleteEntry(idx)} activeOpacity={0.8}>
+                          <Icon name="delete-outline" size={16} color={colors.error || '#EF4444'} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
 
+                    {entryMissingStones && entryMissingMetal && (
+                      <View style={s.missingBadge}>
+                        <Icon name="warning" size={14} color="#DC2626" />
+                        <Text style={s.missingBadgeText}>Missing Metal Details</Text>
+                      </View>
+                    )}
 
-              {renderStonesSection()}
+                    <View style={[s.metalSection, entryMissingStones && entryMissingMetal && s.metalSectionMissing]}>
+                      <Text style={s.sectionTitle}>Metal</Text>
+                      <View style={s.metalRow}>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>Weight (g)</Text>
+                          <TextInput style={[s.chargeInput, num(entry.metalWeight) <= 0 && s.inputErrorHighlight]} value={entry.metalWeight} onChangeText={(v) => onEntryMetalChange(idx, 'metalWeight', v)} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                        </View>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>Quality</Text>
+                          <TouchableOpacity style={s.qualityBtn} onPress={() => { setQualityPickerIdx(idx); setShowQualityPicker(true); }} activeOpacity={0.8}>
+                            <Text style={s.qualityBtnText}>{entry.metalQuality || '10K'}</Text>
+                            <Icon name="arrow-drop-down" size={18} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        </View>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
+                          <TextInput style={[s.chargeInput, num(entry.metalRate) <= 0 && s.inputErrorHighlight]} value={entry.metalRate} onChangeText={(v) => onEntryMetalChange(idx, 'metalRate', v)} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                        </View>
+                        <View style={s.metalField}>
+                          <Text style={s.chargeLabel}>Per Ounce ($)</Text>
+                          <TextInput style={s.chargeInput} value={entry.metalOunce} onChangeText={(v) => onEntryMetalChange(idx, 'metalOunce', v)} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.textSecondary} />
+                        </View>
+                      </View>
+                    </View>
+
+                    {entryMissingStones ? (
+                      <View style={s.warningBanner}>
+                        <Icon name="warning" size={15} color="#92400E" />
+                        <Text style={s.warningText}>Stone prices are missing — fill them in below to calculate pricing.</Text>
+                      </View>
+                    ) : (
+                      <View style={s.infoBanner}>
+                        <Icon name="info" size={15} color={colors.primary} />
+                        <Text style={s.infoText}>All stones filled. Ready to calculate pricing.</Text>
+                      </View>
+                    )}
+
+                    {renderStonesSectionFor(entry, idx)}
+
+                  </View>
+                );
+              })}
 
             </ScrollView>
           )}
@@ -1674,6 +2398,8 @@ const QuotationModal = ({ visible, enquiryId, onClose }) => {
       </>
     </Modal>
   );
+
+  if (navigatingToPreview) return null;
 
   return (
     <>
@@ -1704,6 +2430,12 @@ const s = StyleSheet.create({
   },
   stepChipText: { fontFamily: fonts.medium, fontSize: fonts.xs || 11, color: colors.primary },
   closeBtn: { padding: 4 },
+  headerAddBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, marginRight: 8,
+    borderRadius: 8, backgroundColor: '#fff',
+  },
+  headerAddBtnText: { color: colors.primary, fontSize: 12, fontWeight: '700' },
 
   stepRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -1744,6 +2476,15 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: colors.primary + '40',
   },
   infoText: { flex: 1, fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.primary, lineHeight: 20 },
+
+  recalcBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: colors.primary + '15', borderRadius: 10, padding: 14, marginBottom: 14,
+    borderWidth: 1, borderColor: colors.primary + '40',
+  },
+  recalcBannerText: {
+    flex: 1, fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.primary, lineHeight: 20,
+  },
 
   sectionTitle: {
     fontFamily: fonts.bold, fontSize: fonts.sm || 13,
@@ -1872,7 +2613,28 @@ const s = StyleSheet.create({
   resultVal:   { fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.textPrimary },
   resultTotalRow: { borderBottomWidth: 0, marginTop: 6 },
   resultTotalLbl: { fontFamily: fonts.bold, fontSize: fonts.base || 15, color: colors.textPrimary },
+  sumNote: {
+    fontFamily: fonts.regular,
+    fontSize: fonts.xs || 11,
+    color: colors.textSecondary,
+    lineHeight: 15,
+    marginTop: 6,
+  },
   resultTotalVal: { fontFamily: fonts.bold, fontSize: fonts.lg || 18, color: colors.primary },
+  typeResultCard: {
+    backgroundColor: colors.background,
+    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
+    borderWidth: 1, borderColor: colors.borderLight || '#E8E8E8',
+  },
+  typeResultHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingBottom: 8, marginBottom: 2,
+    borderBottomWidth: 1, borderBottomColor: colors.borderLight || '#F0F0F0',
+  },
+  typeResultTitle: { flex: 1, fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.textPrimary },
+  typeResultStats: { fontFamily: fonts.regular, fontSize: fonts.xs || 11, color: colors.textSecondary },
+  typeResultTotalLbl: { fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.textPrimary },
+  typeResultTotalVal: { fontFamily: fonts.bold, fontSize: fonts.base || 15, color: colors.primary },
   recapCard: {
     backgroundColor: colors.background, borderRadius: 10, padding: 12,
     borderWidth: 1, borderColor: colors.borderLight || '#E8E8E8', marginBottom: 8,
@@ -1990,6 +2752,207 @@ const s = StyleSheet.create({
     color: colors.textPrimary,
     lineHeight: 20,
     marginTop: 4,
+  },
+  msgTypeBlock: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight || '#E8E8E8',
+  },
+  msgTypeLabel: {
+    fontFamily: fonts.bold,
+    fontSize: fonts.xs || 11,
+    color: colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  entryCard: {
+    backgroundColor: colors.background,
+    borderRadius: 12, borderWidth: 1.5, borderColor: colors.borderLight || '#E0E0E0',
+    marginBottom: 12, overflow: 'hidden',
+  },
+  entryCardActive: {
+    borderColor: '#059669',
+    borderWidth: 2,
+    backgroundColor: '#F0FDF4',
+  },
+  defaultBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 7,
+    backgroundColor: '#DCFCE7',
+    borderBottomWidth: 1, borderBottomColor: '#BBF7D0',
+  },
+  defaultBadgeText: {
+    flex: 1, fontSize: 11, fontWeight: '700', color: '#047857',
+  },
+  setDefaultHint: {
+    paddingHorizontal: 12, paddingVertical: 7,
+    backgroundColor: '#FEF2F2',
+    borderBottomWidth: 1, borderBottomColor: '#FECACA',
+    fontSize: 11, fontWeight: '600', color: '#DC2626',
+  },
+  entryCardHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: 14, paddingBottom: 10,
+  },
+  entryCardMsgBox: {
+    marginHorizontal: 12, marginBottom: 10,
+    padding: 10, borderRadius: 8,
+    backgroundColor: colors.backgroundSecondary || '#F8F9FA',
+    borderWidth: 1, borderColor: colors.borderLight || '#E0E0E0',
+  },
+  entryCardMsgHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  entryCardMsgLabel: {
+    fontSize: 11, fontWeight: '700', color: colors.textSecondary || '#6B7280',
+  },
+  entryCardCopyBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6,
+    backgroundColor: colors.background,
+    borderWidth: 1, borderColor: colors.borderLight || '#E0E0E0',
+  },
+  entryCardCopyText: {
+    fontSize: 11, fontWeight: '600', color: colors.primary,
+  },
+  entryCardMsgText: {
+    fontSize: 12, lineHeight: 17, color: colors.textPrimary,
+  },
+  entryCardTypeRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4,
+  },
+  entryCardType: {
+    fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.textPrimary, flex: 1,
+  },
+  entryCardMetal: {
+    fontFamily: fonts.regular, fontSize: fonts.xs || 11, color: colors.textSecondary,
+  },
+  entryCardMissing: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#FEF2F2', paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 10, borderWidth: 1, borderColor: '#DC2626',
+  },
+  entryCardMissingText: {
+    fontFamily: fonts.bold, fontSize: 10, color: '#DC2626',
+  },
+  entryCardPriceRow: {
+    flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 10,
+    borderTopWidth: 1, borderTopColor: colors.borderLight || '#F0F0F0',
+    borderBottomWidth: 1, borderBottomColor: colors.borderLight || '#F0F0F0',
+  },
+  entryCardPriceItem: {
+    flex: 1, alignItems: 'center',
+  },
+  entryCardPriceLabel: {
+    fontFamily: fonts.regular, fontSize: 10, color: colors.textSecondary, marginBottom: 2,
+  },
+  entryCardPriceVal: {
+    fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: colors.textPrimary,
+  },
+  entryCardViewBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: colors.primary, paddingVertical: 12,
+  },
+  entryCardViewBtnText: {
+    fontFamily: fonts.bold, fontSize: fonts.sm || 13, color: '#fff', textAlign: 'center',
+  },
+  entryCardDeleteBtn: {
+    position: 'absolute', top: 10, right: 10,
+    width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FEF2F2',
+  },
+
+  entryEditCard: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderLight || '#E0E0E0',
+    marginBottom: 14,
+    padding: 14,
+    paddingTop: 12,
+  },
+  entryEditHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    marginBottom: 8,
+  },
+
+  entryNavRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginBottom: 14, backgroundColor: colors.backgroundSecondary || '#F8F8F8',
+    borderRadius: 10, padding: 6,
+  },
+  entryNavBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  entryNavBtnDisabled: { opacity: 0.4 },
+  entryNavTabs: {
+    flex: 1,
+  },
+  entryNavTabsContent: {
+    flexDirection: 'row', gap: 4, alignItems: 'center',
+  },
+  entryNavTab: {
+    paddingVertical: 7, paddingHorizontal: 12,
+    borderRadius: 8, alignItems: 'center',
+  },
+  entryNavTabActive: {
+    backgroundColor: colors.primary,
+  },
+  entryNavTabText: {
+    fontFamily: fonts.medium, fontSize: 11, color: colors.textSecondary,
+  },
+  entryNavTabTextActive: {
+    color: '#fff', fontWeight: '700',
+  },
+
+  pickerSectionLabel: {
+    fontFamily: fonts.semibold, fontSize: fonts.sm || 12,
+    color: colors.textSecondary, marginTop: 14, marginBottom: 8,
+  },
+  addEntryChipWrap: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8,
+  },
+  addEntryChip: {
+    paddingVertical: 8, paddingHorizontal: 14,
+    borderRadius: 8, backgroundColor: colors.backgroundSecondary || '#F3F4F6',
+    borderWidth: 1, borderColor: colors.border || '#E5E7EB',
+  },
+  addEntryChipSelected: {
+    backgroundColor: colors.primary + '18',
+    borderColor: colors.primary,
+  },
+  addEntryChipText: {
+    fontFamily: fonts.medium, fontSize: fonts.sm || 12,
+    color: colors.textPrimary,
+  },
+  addEntryChipTextSelected: {
+    color: colors.primary, fontWeight: '700',
+  },
+  addEntryBtnRow: {
+    flexDirection: 'row', gap: 10, marginTop: 20,
+  },
+  addEntryBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  addEntryBtnCancel: {
+    backgroundColor: colors.backgroundSecondary || '#F3F4F6',
+  },
+  addEntryBtnCancelText: {
+    fontFamily: fonts.medium, fontSize: fonts.base || 15,
+    color: colors.textSecondary,
+  },
+  addEntryBtnConfirm: {
+    backgroundColor: colors.primary,
+  },
+  addEntryBtnConfirmText: {
+    fontFamily: fonts.semibold, fontSize: fonts.base || 15,
+    color: '#fff',
   },
 });
 

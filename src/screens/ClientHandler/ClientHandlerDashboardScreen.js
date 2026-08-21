@@ -27,10 +27,10 @@ const TABS = [
 ];
 
 const ROLE_CONFIG = {
-  coral: { label: 'Coral Designer', color: `${colors.primary}` },
-  co: { label: 'Coral Designer', color: `${colors.primary}` },
-  cad: { label: 'CAD Designer', color: `${colors.primary}` },
-  cd: { label: 'CAD Designer', color: `${colors.primary}` },
+  coral: { label: 'Coral Departments', color: `${colors.primary}` },
+  co: { label: 'Coral Department', color: `${colors.primary}` },
+  cad: { label: 'CAD Departments', color: `${colors.primary}` },
+  cd: { label: 'CAD Department', color: `${colors.primary}` },
 };
 
 // Roles excluded from the Departments tab
@@ -50,7 +50,9 @@ const getRoleConfig = (roleRaw = '') => {
 
 const ClientHandlerDashboardScreen = ({ navigation, route }) => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('clients');
+  const [activeTab, setActiveTab] = useState(
+    route?.params?.isDepartment ? 'departments' : 'clients',
+  );
   const [refreshing, setRefreshing] = useState(false);
 
   // ── All hooks unconditionally at the top ─────────────────────────────────
@@ -60,7 +62,6 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
     refetch: refetchClients,
   } = useGetClientsQuery();
   const {
-    data: allDepts = [],
     isLoading: deptsLoading,
     refetch: refetchDepts,
   } = useGetDepartmentsQuery();
@@ -121,10 +122,17 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
     });
   }, [allUsers, roleNameMap]);
 
-  const departmentListData = useMemo(() => {
-    const rows = [];
+  const departmentSections = useMemo(() => {
+    const sections = [];
     usersByRole.forEach(([roleKey, { roleRaw, users }]) => {
       const cfg = getRoleConfig(roleRaw);
+      sections.push({
+        type: 'header',
+        roleKey,
+        label: cfg.label,
+        userCount: users.length,
+        cfg,
+      });
       users.forEach(u => {
         const userName = u.name || u.Name || u.username || 'Unknown';
         const roleShort =
@@ -133,7 +141,7 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
             : roleKey === 'cad' || roleKey === 'cd'
             ? 'CAD'
             : cfg.label;
-        rows.push({
+        sections.push({
           type: 'user',
           roleKey,
           cfg,
@@ -143,7 +151,7 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
         });
       });
     });
-    return rows;
+    return sections;
   }, [usersByRole]);
 
   const activeCount = useMemo(
@@ -207,7 +215,20 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
     </TouchableOpacity>
   );
 
-  const renderDepartmentRow = ({ item }) => {
+  const renderDepartmentItem = ({ item }) => {
+    if (item.type === 'header') {
+      return (
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionHeaderLeft}>
+            <View
+              style={[styles.sectionDot, { backgroundColor: item.cfg.color }]}
+            />
+            <Text style={styles.sectionHeaderText}>{item.label}</Text>
+            <Text style={styles.sectionCount}>{item.userCount}</Text>
+          </View>
+        </View>
+      );
+    }
     const u = item.user;
     const name = item.displayName;
     const email = u.email || u.Email || '';
@@ -251,6 +272,27 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
             </Text>
           )}
         </View>
+
+        <TouchableOpacity
+          style={styles.reportDeptBtn}
+          onPress={() => {
+            const assignedToPayload = {
+              id: String(u.id || u._id || ''),
+              name: item.displayName,
+              role: item.roleKey || '',
+            };
+            console.log(
+              '[CHDashboard] navigating with assignedTo:',
+              JSON.stringify(assignedToPayload),
+            );
+            navigation.navigate('ReportsDashboard', {
+              assignedTo: assignedToPayload,
+            });
+          }}
+        >
+          <Icon name="assessment" size={14} color={colors.primary} />
+          <Text style={styles.reportDeptBtnText}> View Report</Text>
+        </TouchableOpacity>
         <Icon name="chevron-right" size={22} color={colors.textLight} />
       </TouchableOpacity>
     );
@@ -359,18 +401,20 @@ const ClientHandlerDashboardScreen = ({ navigation, route }) => {
             }
           />
         )
-      ) : departmentListData.length === 0 ? (
+      ) : departmentSections.length === 0 ? (
         <View style={styles.empty}>
           <Icon name="business" size={48} color={colors.textLight} />
           <Text style={styles.emptyText}>No team members found</Text>
         </View>
       ) : (
         <FlatList
-          data={departmentListData}
+          data={departmentSections}
           keyExtractor={(item, i) =>
-            `u-${item.user?.id || item.user?._id || i}`
+            item.type === 'header'
+              ? `h-${item.roleKey}`
+              : `u-${item.user?.id || item.user?._id || i}`
           }
-          renderItem={renderDepartmentRow}
+          renderItem={renderDepartmentItem}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl
@@ -476,17 +520,46 @@ const styles = StyleSheet.create({
   },
   rolePillText: { fontSize: 11, fontFamily: fonts.medium, marginTop: 2 },
 
-  roleHeader: {
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingTop: 16,
     paddingBottom: 6,
   },
-  roleHeaderDot: { width: 8, height: 8, borderRadius: 4 },
-  roleHeaderText: { fontFamily: fonts.bold, fontSize: fonts.sm || 13 },
-  roleHeaderLine: { flex: 1, height: 1 },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionDot: { width: 8, height: 8, borderRadius: 4 },
+  sectionHeaderText: { fontFamily: fonts.bold, fontSize: fonts.sm || 13 },
+  sectionCount: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.textSecondary,
+    backgroundColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    overflow: 'hidden',
+  },
+  reportDeptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  reportDeptBtnText: {
+    fontSize: 10,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+  },
 
   empty: {
     flex: 1,

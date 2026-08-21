@@ -53,6 +53,7 @@ export const api = createApi({
     'Notification',
     'DeviceToken',
     'Users',
+    'Design',
   ],
   // Prevent memory buildup by removing unused data after 60 seconds
   keepUnusedDataFor: 60,
@@ -975,6 +976,7 @@ export const api = createApi({
             Category: enquiry.Category,
             StoneType: enquiry.StoneType,
             ShippingDate: enquiry.ShippingDate,
+            OrderKey: enquiry.OrderKey ?? null,
             ClientId: enquiry.ClientId,
             AssignedTo:
               enquiry.AssignedTo !== undefined
@@ -1397,7 +1399,7 @@ export const api = createApi({
           ClientId: data.ClientId,
           Priority: data.Priority,
           Category: data.Category,
-          StoneType: data.StoneType,
+          StoneTypes: data.StoneTypes,
           Quantity: data.Quantity,
           'Has Reference Images': !!data.ReferenceImages,
           'Reference Images Count': data.ReferenceImages?.length || 0,
@@ -1458,6 +1460,14 @@ export const api = createApi({
         'Dashboard',
         'StatusStatistics',
       ],
+    }),
+
+    reorderEnquiry: builder.mutation({
+      query: ({ draggedId, draggedOrderKey, targetId, targetOrderKey }) => ({
+        url: '/api/enquiries/reSort',
+        method: 'POST',
+        body: { draggedId, draggedOrderKey, targetId, targetOrderKey },
+      }),
     }),
 
     deleteEnquiry: builder.mutation({
@@ -1558,6 +1568,10 @@ export const api = createApi({
             client.Logo ||
             client.logo ||
             null,
+          applicableStoneTypes:
+            client.ApplicableStoneTypes ||
+            client.applicableStoneTypes ||
+            [],
         }));
       },
     }),
@@ -1957,10 +1971,6 @@ export const api = createApi({
               [];
 
           // For admin, also check pagination total if available (more accurate than array length)
-          const paginationTotal =
-            enquiriesResult.data?.pagination?.total ||
-            enquiriesResult.data?.total ||
-            null;
 
           const clients =
             role === 'admin' && clientsResult.data
@@ -1978,28 +1988,6 @@ export const api = createApi({
                 ? dashHistory[dashHistory.length - 1]
                 : null;
             const currentStatus = dashLatest?.Status || 'pending';
-            const createdAt =
-              enquiry.CreatedDate ||
-              enquiry.CreatedAt ||
-              new Date().toISOString();
-            const updatedAt =
-              enquiry.AssignedDate || enquiry.UpdatedAt || createdAt;
-
-            let normalizedPriority = 'medium';
-            const priority = (
-              enquiry.Priority ||
-              enquiry.priority ||
-              ''
-            ).toLowerCase();
-            if (
-              priority.includes('urgent') ||
-              priority === 'high' ||
-              priority === 'super high'
-            ) {
-              normalizedPriority = 'high';
-            } else if (priority === 'low') {
-              normalizedPriority = 'low';
-            }
 
             let normalizedStatus = 'pending';
             const status = currentStatus.toLowerCase();
@@ -2087,8 +2075,6 @@ export const api = createApi({
                 0,
               );
 
-            const sumOfStatuses =
-              pendingEnquiries + approvalPendingEnquiries + completedEnquiries;
 
             return {
               data: {
@@ -2161,8 +2147,6 @@ export const api = createApi({
                 0,
               );
 
-            const clientSum =
-              pendingApprovals + approvalPending + completedOrders;
 
             return {
               data: {
@@ -2246,7 +2230,7 @@ export const api = createApi({
 
     validateImageUpload: builder.mutation({
       queryFn: async (
-        { image, enquiryId },
+        { image, enquiryId, category },
         { dispatch },
         extraOptions,
         baseQuery,
@@ -2296,6 +2280,10 @@ export const api = createApi({
 
           // Add enquiryId
           formData.append('enquiryId', enquiryId);
+
+          if (category) {
+            formData.append('category', category);
+          }
 
           const endpoint = '/api/validate-image';
           const fullUrl = `${API_BASE_URL}${endpoint}`;
@@ -3160,7 +3148,6 @@ export const api = createApi({
     // Save pricing for coral/CAD design
     savePricing: builder.mutation({
       query: ({ enquiryId, designType, version, pricingData, isOnlyMetalDesign }) => {
-        const startTime = Date.now();
 
         if (__DEV__) {
           console.log('ðŸ’¾ [savePricing API] ===== START API CALL =====');
@@ -4040,7 +4027,6 @@ export const api = createApi({
                 return { data };
               } else {
                 if (__DEV__) {
-                  const errorText = await response.text().catch(() => '');
                 }
               }
             } catch (error) {}
@@ -4498,7 +4484,7 @@ export const api = createApi({
     }),
     //============= image pricing extraction ===========
     ImagepriceData: builder.mutation({
-      query: ({ image, clientId, stoneType, quantity, metalQuality, cropX, cropY, cropW, cropH }) => {
+      query: ({ image, clientId, stoneType, stoneTypes, quantity, metalQuality, cropX, cropY, cropW, cropH }) => {
         // Create FormData
         const formData = new FormData();
 
@@ -4506,8 +4492,11 @@ export const api = createApi({
         formData.append('image', image);
         formData.append('clientId', clientId);
 
-        // Optional fields
-        if (stoneType) {
+        // Optional fields — stoneTypes is a repeated field (backend reads it as an array).
+        // Fall back to the single stoneType when no array is provided.
+        if (Array.isArray(stoneTypes) && stoneTypes.length > 0) {
+          stoneTypes.forEach(t => { if (t) formData.append('stoneTypes', t); });
+        } else if (stoneType) {
           formData.append('stoneType', stoneType);
         }
 
@@ -4515,6 +4504,8 @@ export const api = createApi({
           formData.append('quantity', quantity);
         }
 
+        console.log('[SEND image-pricing] metalQuality=', JSON.stringify(metalQuality),
+          'typeof=', typeof metalQuality, 'appended=', !!metalQuality);
         if (metalQuality) {
           formData.append('metalQuality', metalQuality);
         }
@@ -4546,6 +4537,7 @@ export const api = createApi({
             image: image?.name || image?.fileName || image,
             clientId,
             stoneType,
+            stoneTypes,
             quantity,
             metalQuality,
           });
@@ -4560,7 +4552,7 @@ export const api = createApi({
       transformResponse: response => {
         if (__DEV__) {
           console.log(
-            'âœ… [calculatePricing] Response:',
+            'âœ… [ImagepriceData] Response:',
             JSON.stringify(response, null, 2),
           );
         }
@@ -4569,7 +4561,7 @@ export const api = createApi({
       transformErrorResponse: response => {
         if (__DEV__) {
           console.error(
-            'âŒ [calculatePricing] Error:',
+            'âŒ [ImagepriceData] Error:',
             JSON.stringify(response, null, 2),
           );
 
@@ -4608,17 +4600,18 @@ export const api = createApi({
       },
     }),
     calculatePricing: builder.mutation({
-      query: ({ details, clientId, isRecalculate = false }) => {
+      query: ({ details, clientId, isRecalculate = false, UpdatedmetalQuality }) => {
+        const body = { details, clientId, isRecalculate, UpdatedmetalQuality };
         if (__DEV__) {
           console.log(
             'ðŸ’° [calculatePricing] Payload:',
-            JSON.stringify({ details, clientId, isRecalculate }, null, 2),
+            JSON.stringify(body, null, 2),
           );
         }
         return {
           url: '/api/enquiries/pricingCalculate',
           method: 'POST',
-          body: { details, clientId, isRecalculate },
+          body,
         };
       },
       transformResponse: response => {
@@ -5224,48 +5217,39 @@ export const api = createApi({
           // Backend may send: UnreadCount, unreadCount, Unread, unread, UnreadMessages, unreadMessages, etc.
           // Also check nested objects like Unread.Count, Metadata.unreadCount, etc.
           let unreadCount = 0;
-          let unreadCountSource = 'none';
 
           // Direct fields (most common)
           if (chat.UnreadCount !== undefined && chat.UnreadCount !== null) {
             unreadCount = Number(chat.UnreadCount) || 0;
-            unreadCountSource = 'UnreadCount';
           } else if (
             chat.unreadCount !== undefined &&
             chat.unreadCount !== null
           ) {
             unreadCount = Number(chat.unreadCount) || 0;
-            unreadCountSource = 'unreadCount';
           } else if (chat.Unread !== undefined && chat.Unread !== null) {
             unreadCount = Number(chat.Unread) || 0;
-            unreadCountSource = 'Unread';
           } else if (chat.unread !== undefined && chat.unread !== null) {
             unreadCount = Number(chat.unread) || 0;
-            unreadCountSource = 'unread';
           } else if (
             chat.UnreadMessages !== undefined &&
             chat.UnreadMessages !== null
           ) {
             unreadCount = Number(chat.UnreadMessages) || 0;
-            unreadCountSource = 'UnreadMessages';
           } else if (
             chat.unreadMessages !== undefined &&
             chat.unreadMessages !== null
           ) {
             unreadCount = Number(chat.unreadMessages) || 0;
-            unreadCountSource = 'unreadMessages';
           } else if (
             chat.UnreadMessageCount !== undefined &&
             chat.UnreadMessageCount !== null
           ) {
             unreadCount = Number(chat.UnreadMessageCount) || 0;
-            unreadCountSource = 'UnreadMessageCount';
           } else if (
             chat.unreadMessageCount !== undefined &&
             chat.unreadMessageCount !== null
           ) {
             unreadCount = Number(chat.unreadMessageCount) || 0;
-            unreadCountSource = 'unreadMessageCount';
           }
           // Check nested objects
           else if (
@@ -5274,42 +5258,36 @@ export const api = createApi({
             chat.Unread.Count !== undefined
           ) {
             unreadCount = Number(chat.Unread.Count) || 0;
-            unreadCountSource = 'Unread.Count';
           } else if (
             chat.unread &&
             typeof chat.unread === 'object' &&
             chat.unread.count !== undefined
           ) {
             unreadCount = Number(chat.unread.count) || 0;
-            unreadCountSource = 'unread.count';
           } else if (
             chat.Metadata &&
             typeof chat.Metadata === 'object' &&
             chat.Metadata.unreadCount !== undefined
           ) {
             unreadCount = Number(chat.Metadata.unreadCount) || 0;
-            unreadCountSource = 'Metadata.unreadCount';
           } else if (
             chat.metadata &&
             typeof chat.metadata === 'object' &&
             chat.metadata.unreadCount !== undefined
           ) {
             unreadCount = Number(chat.metadata.unreadCount) || 0;
-            unreadCountSource = 'metadata.unreadCount';
           } else if (
             chat.Stats &&
             typeof chat.Stats === 'object' &&
             chat.Stats.UnreadCount !== undefined
           ) {
             unreadCount = Number(chat.Stats.UnreadCount) || 0;
-            unreadCountSource = 'Stats.UnreadCount';
           } else if (
             chat.stats &&
             typeof chat.stats === 'object' &&
             chat.stats.unreadCount !== undefined
           ) {
             unreadCount = Number(chat.stats.unreadCount) || 0;
-            unreadCountSource = 'stats.unreadCount';
           }
 
           // Debug logging for unread count - log always to help diagnose missing counts
@@ -5526,9 +5504,7 @@ export const api = createApi({
                 timestamp = timestamp.$date;
               } else if (timestamp?.Timestamp) {
                 timestamp = timestamp.Timestamp;
-              } else if (typeof timestamp === 'string') {
-                timestamp = timestamp;
-              } else {
+              } else if (typeof timestamp !== 'string') {
                 timestamp = new Date().toISOString();
               }
 
@@ -5540,7 +5516,6 @@ export const api = createApi({
                 'text';
               let text =
                 message.message || message.Message || message.text || '';
-              let mediaKey = message.mediaKey || message.mediaUrl || '';
               let mediaName = message.mediaName || message.filename || '';
 
               // For image/file messages, set appropriate text
@@ -5976,6 +5951,132 @@ export const api = createApi({
         }
       },
     }),
+    //============= Design Inventory =============
+    insertDesign: builder.mutation({
+      queryFn: async ({ designType, images, name, uploadedBy }) => {
+        try {
+          const token = await secureStorage.getItem('token');
+          if (!token) {
+            return { error: { status: 'CUSTOM_ERROR', data: 'Authentication token not found' } };
+          }
+
+          const formData = new FormData();
+          formData.append('image', {
+            uri: images.uri,
+            type: images.type || 'image/jpeg',
+            name: images.name || `design_${Date.now()}.jpg`,
+          });
+          formData.append('designType', designType);
+          if (name) formData.append('name', name);
+          if (uploadedBy) formData.append('uploadedBy', uploadedBy);
+          const response = await fetch(`${API_BASE_URL}/api/designs/insert`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+          if (response.ok) {
+            const data = await response.json();
+            return { data: data?.images || [] };
+          }
+
+          const errorText = await response.text();
+          let errorData;
+          try { errorData = JSON.parse(errorText); } catch { errorData = { message: errorText || 'Insert failed' }; }
+          return { error: { status: response.status, data: errorData } };
+        } catch (error) {
+          return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to insert design' } };
+        }
+      },
+      invalidatesTags: ['Design'],
+    }),
+
+    getDesignById: builder.query({
+      query: id => `/api/designs/${id}`,
+    }),
+
+    getDesignTypes: builder.query({
+      queryFn: async () => {
+        return { data: [ 'coral', 'cad'] };
+      },
+    }),
+
+    getDesignsByType: builder.query({
+      queryFn: async ({ designType, search, category, skip = 0, limit = 10 }) => {
+        try {
+          const token = await secureStorage.getItem('token');
+          if (!token) {
+            return { error: { status: 'CUSTOM_ERROR', data: 'Authentication token not found' } };
+          }
+
+          const formData = new FormData();
+          if (designType) formData.append('designType', designType);
+          if (search) formData.append('search', search);
+          if (category) formData.append('category', category);
+          formData.append('skip', String(skip));
+          formData.append('limit', String(limit));
+
+          const response = await fetch(`${API_BASE_URL}/api/designs/lookup`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            return { data: data?.images || [] };
+          }
+
+          const errorText = await response.text();
+          let errorData;
+          try { errorData = JSON.parse(errorText); } catch { errorData = { message: errorText || 'Lookup failed' }; }
+          return { error: { status: response.status, data: errorData } };
+        } catch (error) {
+          return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to get designs' } };
+        }
+      },
+      providesTags: ['Design'],
+    }),
+
+    lookupDesigns: builder.mutation({
+      queryFn: async ({ image, designType, search, category }) => {
+        try {
+          const token = await secureStorage.getItem('token');
+          if (!token) {
+            return { error: { status: 'CUSTOM_ERROR', data: 'Authentication token not found' } };
+          }
+
+          const formData = new FormData();
+          if (image) {
+            formData.append('image', {
+              uri: image.uri,
+              type: image.type || 'image/jpeg',
+              name: image.name || `search_${Date.now()}.jpg`,
+            });
+          }
+          if (designType) formData.append('designType', designType);
+          if (search) formData.append('search', search);
+          if (category) formData.append('category', category);
+
+          const response = await fetch(`${API_BASE_URL}/api/designs/lookup`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            return { data: data?.images || [] };
+          }
+
+          const errorText = await response.text();
+          let errorData;
+          try { errorData = JSON.parse(errorText); } catch { errorData = { message: errorText || 'Lookup failed' }; }
+          return { error: { status: response.status, data: errorData } };
+        } catch (error) {
+          return { error: { status: 'CUSTOM_ERROR', data: error.message || 'Failed to lookup designs' } };
+        }
+      },
+    }),
   }),
 });
 
@@ -5999,6 +6100,7 @@ export const {
   useLazyGetEnquiryByIdQuery,
   useCreateEnquiryMutation,
   useUpdateEnquiryMutation,
+  useReorderEnquiryMutation,
   useDeleteEnquiryMutation,
 
   // Clients
@@ -6054,6 +6156,13 @@ export const {
   useGetChatsByEnquiryV2Query,
   useGetChatMessagesQuery,
   useUploadChatMediaMutation,
+
+  // Design Inventory
+  useInsertDesignMutation,
+  useGetDesignByIdQuery,
+  useGetDesignTypesQuery,
+  useGetDesignsByTypeQuery,
+  useLookupDesignsMutation,
 
   // Code Lists
   useGetRolesQuery,

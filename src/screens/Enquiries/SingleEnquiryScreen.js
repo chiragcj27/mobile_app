@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useState,
   useEffect,
   useMemo,
@@ -12,7 +12,6 @@ import {
   TouchableOpacity,
   Image,
   Text,
-  Platform,
   Modal,
   FlatList,
   Dimensions,
@@ -29,8 +28,6 @@ import { useAuth } from '../../context/AuthContext';
 import {
   useGetEnquiryByIdQuery,
   useDeleteEnquiryMutation,
-  useApproveDesignVersionMutation,
-  useRejectDesignVersionMutation,
   useUploadReferenceImagesMutation,
   useUpdateAssetDataMutation,
   useUpdateAssetDescriptionMutation,
@@ -50,8 +47,9 @@ import { fonts } from '../../constants/fonts';
 import Icon from '../../components/common/Icon';
 import BrandedAlert from '../../components/common/BrandedAlert';
 import {
-  formatCurrency,
   formatDate,
+  formatDateTime,
+  objectIdToDate,
   getStatusColor,
   getPriorityColor,
   imageSizes,
@@ -62,54 +60,12 @@ import QuotationModal from '../../components/modals/QuotationModal';
 import FinalLookModal from '../../components/modals/FinalLookModal';
 import ShareEnquiryModal from '../../components/modals/ShareEnquiryModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Clipboard from '@react-native-clipboard/clipboard';
 import { API_BASE_URL } from '../../config/apiConfig';
 import { useUsers } from '../../features/users/usersHooks';
-import { getUserName, useUserName } from '../../utils/userUtils';
+import { useUserName } from '../../utils/userUtils';
 import { actionsFor, resolveRoleCode, ROLE, ACTION, STATUS, SUBSTATUS } from '../../constants/enquiry';
 import { useEnquiryActions } from '../../hooks/useEnquiryActions';
-
-const renderMdSummary = (input, s) => {
-  if (!input) return null;
-  const text = (typeof input === 'string' ? input : String(input)).replace(/\\n/g, '\n');
-  const sections = [];
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (/^#{1,3}\s/.test(trimmed)) {
-      const level = trimmed.match(/^#+/)[0].length;
-      sections.push({ type: 'heading', text: trimmed.replace(/^#+\s*/, '').replace(/\*\*/g, ''), level });
-    } else if (/^\*\*.*\*\*:/.test(trimmed)) {
-      const parts = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
-      sections.push(parts ? { type: 'row', label: parts[1].replace(/\*\*/g, ''), val: (parts[2] || '').replace(/\*\*/g, '') } : { type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    } else if (/^[-*•]\s/.test(trimmed)) {
-      sections.push({ type: 'bullet', text: trimmed.replace(/^[-*•]\s*/, '').replace(/\*\*/g, '') });
-    } else if (/^[A-Z][^:]+:/.test(trimmed) && !/^https?:\/\//i.test(trimmed) && trimmed.indexOf(':') < 60) {
-      const colonIdx = trimmed.indexOf(':');
-      sections.push({ type: 'row', label: trimmed.slice(0, colonIdx).replace(/\*\*/g, ''), val: trimmed.slice(colonIdx + 1).trim().replace(/\*\*/g, '') });
-    } else {
-      sections.push({ type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    }
-  }
-  if (!sections.length) return null;
-  return (
-    <View style={s.mdContainer}>
-      {sections.map((sec, i) => {
-        switch (sec.type) {
-          case 'heading':
-            return <Text key={i} style={[s.mdHeading, sec.level <= 2 && s.mdHeadingLg]}>{sec.text}</Text>;
-          case 'row':
-            return <View key={i} style={s.mdRow}><Text style={s.mdKey} numberOfLines={2}>{sec.label}</Text><Text style={s.mdVal}>{sec.val}</Text></View>;
-          case 'bullet':
-            return <View key={i} style={s.mdBullet}><Text style={s.mdDot}>•</Text><Text style={s.mdBulletTxt}>{sec.text}</Text></View>;
-          default:
-            return <Text key={i} style={s.mdPara}>{sec.text}</Text>;
-        }
-      })}
-    </View>
-  );
-};
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 const SingleEnquiryScreen = ({ route, navigation }) => {
   const { user } = useAuth();
@@ -131,37 +87,12 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         initialEnquiry?.assignedTo;
       if (initialId) {
         initialAssignedToRef.current = initialId;
-        console.log(
-          '[SingleEnquiry] ðŸ’¾ Stored initial AssignedTo as fallback:',
-          initialId,
-        );
       }
     }
   }, [initialEnquiry]);
 
-  // Log route params when screen loads or params change
-  useEffect(() => {}, [
-    route.params,
-    initialEnquiry,
-    routeEnquiryId,
-    shouldRefresh,
-  ]);
-
   // Fetch and cache users for name resolution
-  const { users: usersList, isLoading: usersLoading } = useUsers();
-
-  // Debug: Log users loading status
-  useEffect(() => {
-    console.log('[SingleEnquiry] ðŸ‘¥ Users Debug:', {
-      usersLoading: usersLoading,
-      'usersList length': usersList?.length || 0,
-      'sample users': usersList?.slice(0, 3).map(u => ({
-        id: u.id || u._id,
-        name: u.name || u.Name,
-        email: u.email || u.Email,
-      })),
-    });
-  }, [usersLoading, usersList]);
+  const { users: usersList } = useUsers();
 
   // Automatic cache cleanup on screen mount (runs once per app session)
   useEffect(() => {
@@ -269,11 +200,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       if (isServerError || isNotFound) {
         retryCountRef.current += 1;
         const delay = retryCountRef.current * 1000; // 1s, 2s, 3s delays
-        console.log(
-          `[SingleEnquiry] ðŸ”„ Auto-retry ${retryCountRef.current}/${maxRetries} in ${delay}ms for enquiry:`,
-          enquiryId,
-        );
-
         const retryTimer = setTimeout(() => {
           refetch();
         }, delay);
@@ -289,25 +215,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   }, [enquiryId]);
 
   // Watch for status changes and log them
-  useEffect(() => {
-    if (enquiryData && enquiryId) {
-      const currentStatus =
-        enquiryData?.status ||
-        enquiryData?.Status ||
-        enquiryData?._originalData?.Status;
-    }
-  }, [enquiryData, enquiryId]);
-
-  // Log enquiryData changes - reduced logging to prevent performance issues
-  useEffect(() => {}, [
-    enquiryData?.id,
-    enquiryData?.StoneType,
-    enquiryData?.StyleNumber,
-    enquiryData?.GatiOrderNumber,
-    shouldRefresh,
-  ]);
-
-  const [deleteEnquiry, { isLoading: isDeleting }] = useDeleteEnquiryMutation();
+  const [deleteEnquiry] = useDeleteEnquiryMutation();
 
   // Fetch clients for name lookup (using cached hook)
   const { clients: clientsData = [], isLoading: clientsLoading } = useClients({
@@ -351,7 +259,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           map.set(noSpaces.toLowerCase(), clientName);
         }
       });
-    } else {
     }
     return map;
   }, [clients]);
@@ -424,12 +331,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   };
 
   // Local UI state
-  const [approvalMessage, setApprovalMessage] = useState('');
-  const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [showVersionSelector, setShowVersionSelector] = useState(false);
-  const [selectedDesignType, setSelectedDesignType] = useState(null); // 'coral' or 'cad'
-  const [selectedVersionIndex, setSelectedVersionIndex] = useState(null);
   const [selectedImageUri, setSelectedImageUri] = useState(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [isImageModalVisible, setImageModalVisible] = useState(false);
@@ -438,13 +340,9 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const [modalCurrentIndex, setModalCurrentIndex] = useState(0);
   const [isModalZoomed, setIsModalZoomed] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
   const [descExpanded, setDescExpanded] = useState(false);
   const [specialRemarksExpanded, setSpecialRemarksExpanded] = useState(false);
-  const [coralExpanded, setCoralExpanded] = useState(true);
 
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [assignType, setAssignType] = useState(null);
@@ -462,8 +360,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const [showQuotationModal, setShowQuotationModal] = useState(false);
   const [showFinalLookModal, setShowFinalLookModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-  const [showSummaryModal, setShowSummaryModal] = useState(false);
-  const summaryTextRef = useRef('');
   const [imagesCommentModal, setImagesCommentModal] = useState(false);
   const [pendingRefImages, setPendingRefImages] = useState([]);
   const [refImageComments, setRefImageComments] = useState([]);
@@ -650,8 +546,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     if (!uri) {
       return;
     }
-    if (__DEV__) {
-    }
     const imagesForModal = allImages || [];
     setSelectedImageIndex(index);
     setModalImages(imagesForModal);
@@ -803,17 +697,13 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   );
 
   // API mutations
-  const [approveDesignVersion, { isLoading: isApproving }] =
-    useApproveDesignVersionMutation();
-  const [rejectDesignVersion, { isLoading: isRejecting }] =
-    useRejectDesignVersionMutation();
   const [uploadReferenceImages, { isLoading: isUploadingReference }] =
     useUploadReferenceImagesMutation();
 
   const [updateAssetData] = useUpdateAssetDataMutation();
   const [updateAssetDescription] = useUpdateAssetDescriptionMutation();
   const [updateEnquiryDirect] = useUpdateEnquiryMutation();
-  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel, isLoading: isHookLoading } = useEnquiryActions({ onAlert: showAlert });
+  const { handleAcceptApproval, handleMoveToOrderPlacement, generateAndShareExcel } = useEnquiryActions({ onAlert: showAlert });
 
   // Use enquiry from query if available, otherwise use initialEnquiry
   const enquiry = enquiryData || initialEnquiry || {};
@@ -824,7 +714,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   // Get original data for accessing raw API fields
   const originalData = enquiry?._originalData || enquiry;
 
-  console.log('[SingleEnquiry] 🔍 Full enquiry object keys:', Object.keys(enquiry), '| enquiry.CurrentStatus:', enquiry?.CurrentStatus, '| enquiry.CurrentSubStatus:', enquiry?.CurrentSubStatus, '| enquiry._originalData?.CurrentStatus:', enquiry?._originalData?.CurrentStatus, '| enquiry._originalData?.CurrentSubStatus:', enquiry?._originalData?.CurrentSubStatus, '| enquiry._originalData keys:', Object.keys(enquiry?._originalData || {}), '| StatusHistory:', JSON.stringify(enquiry?.StatusHistory || enquiry?._originalData?.StatusHistory || []));
   // Extract AssignedTo ID using useMemo to reactively update when enquiry data changes
   // IMPORTANT: Check StatusHistory first (most accurate), then _originalData, then normalized enquiry
   const assignedToId = useMemo(() => {
@@ -849,10 +738,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       for (const entry of sortedHistory) {
         if (entry.AssignedTo || entry.assignedTo) {
           id = entry.AssignedTo || entry.assignedTo;
-          console.log(
-            '[SingleEnquiry] âœ… Found AssignedTo in StatusHistory:',
-            id,
-          );
           break;
         }
       }
@@ -864,28 +749,16 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         enquiry?._originalData?.AssignedTo ||
         originalData?.AssignedTo ||
         originalData?.assignedTo;
-      if (id) {
-        console.log(
-          '[SingleEnquiry] âœ… Found AssignedTo in _originalData:',
-          id,
-        );
-      }
     }
 
     // Priority 3: Check normalized enquiry fields
     if (!id) {
       id = enquiry?.AssignedTo || enquiry?.assignedTo;
-      if (id) {
-        console.log('[SingleEnquiry] âœ… Found AssignedTo in enquiry:', id);
-      }
     }
 
     // Priority 4: Use stored fallback if current data doesn't have it
     if (!id) {
       id = initialAssignedToRef.current;
-      if (id) {
-        console.log('[SingleEnquiry] âš ï¸ Using fallback AssignedTo:', id);
-      }
     }
 
     // Update fallback if we found a new value
@@ -903,19 +776,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     }
 
     // Debug: Log assignedToId extraction with detailed info
-    console.log('[SingleEnquiry] ðŸ” AssignedTo ID extracted (useMemo):', {
-      'StatusHistory length': statusHistory?.length || 0,
-      'enquiry?._originalData?.AssignedTo': enquiry?._originalData?.AssignedTo,
-      'originalData?.AssignedTo': originalData?.AssignedTo,
-      'originalData?.assignedTo': originalData?.assignedTo,
-      'enquiry?.AssignedTo': enquiry?.AssignedTo,
-      'enquiry?.assignedTo': enquiry?.assignedTo,
-      'Final assignedToId': id,
-      'assignedToId type': typeof id,
-      'originalData exists': !!originalData,
-      'enquiry exists': !!enquiry,
-      'enquiry._originalData exists': !!enquiry?._originalData,
-    });
 
     return id || null;
   }, [
@@ -936,11 +796,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
 
   // Debug: Log assignedToName from hook
   useEffect(() => {
-    console.log('[SingleEnquiry] ðŸ‘¤ AssignedToName from hook:', {
-      assignedToId: assignedToId,
-      assignedToName: assignedToName,
-      'assignedToName type': typeof assignedToName,
-    });
   }, [assignedToId, assignedToName]);
 
   // Log originalData for debugging - Enhanced to show all fields
@@ -1021,14 +876,13 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     clientNameMap,
   ]);
 
-  // Get dates - check multiple possible fields
+  // Get dates - enquiries store no top-level CreatedDate, so the real creation
+  // time comes from the Mongo ObjectId; fall back to any explicit field.
   const createdAt =
-    enquiry?.createdAt || originalData?.createdAt || new Date().toISOString();
-  const updatedAt =
-    enquiry?.updatedAt ||
-    originalData?.updatedAt ||
+    objectIdToDate(enquiryId) ||
     enquiry?.createdAt ||
-    createdAt;
+    originalData?.createdAt ||
+    new Date().toISOString();
 
   // Use ref to track last shouldRefresh value to prevent duplicate refetches
   const lastShouldRefreshRef = useRef(shouldRefresh);
@@ -1044,7 +898,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           refetch()
             .then(result => {
               if (__DEV__) {
-                const data = result?.data;
               }
             })
             .catch(error => {});
@@ -1058,7 +911,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     }, [shouldRefresh, enquiryId, refetch]),
   );
 
-  const showAllDetails = user?.role === 'admin';
   const isDesigner = user?.role === 'coral' || user?.role === 'co' || user?.role === 'cad' || user?.role === 'cd' || user?.roleId === 2 || user?.roleId === 3;
 
   const roleCode = useMemo(() => {
@@ -1073,7 +925,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     return null;
   }, [user]);
 
-  console.log('[SingleEnquiry] 🏷️ roleCode resolved:', roleCode, '| user.role:', user?.role, '| user.RoleCode:', user?.RoleCode, '| user.roleId:', user?.roleId);
 
   const currentStatus = useMemo(() => {
     const val = originalData?.CurrentStatus || enquiry?.CurrentStatus;
@@ -1109,13 +960,11 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     const src = originalData || enquiry;
     const srcWithStatus = { ...src, CurrentStatus: currentStatus, CurrentSubStatus: currentSubStatus };
     const result = actionsFor(srcWithStatus, roleCode);
-    console.log('[SingleEnquiry] 📋 cardActions computed:', { roleCode, 'src.CurrentStatus': src?.CurrentStatus, 'src.CurrentSubStatus': src?.CurrentSubStatus, 'derivedStatus': currentStatus, 'derivedSubStatus': currentSubStatus, result });
     return result;
   }, [originalData, enquiry, roleCode, currentStatus, currentSubStatus]);
 
   const actionButtons = cardActions?.buttons || [];
   const has = useCallback((action) => actionButtons.includes(action), [actionButtons]);
-  console.log('[SingleEnquiry] 🔘 actionButtons:', actionButtons, '| has(ACTION.ASSIGN):', has(ACTION.ASSIGN), '| has(ACTION.UPLOAD_CORAL):', has(ACTION.UPLOAD_CORAL), '| has(ACTION.UPDATE_QUOTATION):', has(ACTION.UPDATE_QUOTATION), '| has(ACTION.VIEW_QUOTATION):', has(ACTION.VIEW_QUOTATION), '| has(ACTION.MOVE_TO_APPROVAL):', has(ACTION.MOVE_TO_APPROVAL), '| has(ACTION.ACCEPT_APPROVAL):', has(ACTION.ACCEPT_APPROVAL));
 
   const coralDesigners = useMemo(
     () => (usersList || []).filter(u => u.role === 2 || u.roleId === 2 || u.roleNumber === 2),
@@ -1134,12 +983,9 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const isProduction = statusLower === 'production';
   const isApprovalPending = statusLower === 'design approval pending';
   const isApprovedCad = statusLower === 'approved cad';
-  const isQuotation = statusLower === 'quotation';
   const isPlacementStage = statusLower === 'order placement';
   const isJustCreated = statusLower === 'enquiry created' || statusLower === 'created' || statusLower === 'new' || statusLower === 'pending';
 
-  const isCostMissing = subStatus === SUBSTATUS.CM;
-  const isQuotationReview = subStatus === SUBSTATUS.QR;
   const isAssignPending = subStatus === SUBSTATUS.AP;
 
   const resolvedAssignedId = assignedToId || (typeof assignedToId === 'string' ? assignedToId : '');
@@ -1154,34 +1000,10 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const shouldShowAdminProduction = has(ACTION.CHAT) && isProduction;
   const shouldShowCoralDesignerButtons = has(ACTION.UPLOAD_CORAL);
   const shouldShowCadDesignerButtons = has(ACTION.UPLOAD_CAD) || has(ACTION.UPLOAD_FINAL_CAD);
-  const shouldShowQuotationButtons = has(ACTION.VIEW_QUOTATION) || has(ACTION.MOVE_TO_APPROVAL) || has(ACTION.UPDATE_QUOTATION);
   const shouldShowAssignCoral = has(ACTION.ASSIGN) && !hasAssignedUser && (cardActions?.assignType === 'coral' || isJustCreated || (isCoralPending && isAssignPending));
   const shouldShowAssignCad = has(ACTION.ASSIGN) && !hasAssignedUser && (cardActions?.assignType === 'cad' || (isCadPending && isAssignPending));
   const shouldShowApprovalButtons = has(ACTION.ACCEPT_APPROVAL) || has(ACTION.REJECT_APPROVAL);
 
-  console.log('[SingleEnquiry] 🚩 shouldShow flags:', {
-    shouldShowAssignCoral, shouldShowAssignCad,
-    shouldShowAdminCoralUpload, shouldShowAdminCadUpload,
-    shouldShowCoralDesignerButtons, shouldShowCadDesignerButtons,
-    shouldShowQuotationButtons, shouldShowApprovalButtons,
-    shouldShowFinalLookAndPlacement, shouldShowAdminApprovedCad,
-    shouldShowAdminProduction,
-    isPlacementStage,
-    'hasAssignedUser': hasAssignedUser,
-    statusLower, subStatus,
-    'has(ACTION.ASSIGN)': has(ACTION.ASSIGN),
-    'has(ACTION.UPLOAD_CORAL)': has(ACTION.UPLOAD_CORAL),
-    'has(ACTION.UPLOAD_CAD)': has(ACTION.UPLOAD_CAD),
-    'has(ACTION.UPDATE_QUOTATION)': has(ACTION.UPDATE_QUOTATION),
-    'has(ACTION.VIEW_QUOTATION)': has(ACTION.VIEW_QUOTATION),
-    'has(ACTION.MOVE_TO_APPROVAL)': has(ACTION.MOVE_TO_APPROVAL),
-    'has(ACTION.ACCEPT_APPROVAL)': has(ACTION.ACCEPT_APPROVAL),
-    'has(ACTION.REJECT_APPROVAL)': has(ACTION.REJECT_APPROVAL),
-    'has(ACTION.FINAL_LOOK)': has(ACTION.FINAL_LOOK),
-    'has(ACTION.MOVE_TO_ORDER_PLACEMENT)': has(ACTION.MOVE_TO_ORDER_PLACEMENT),
-    'has(ACTION.CHAT)': has(ACTION.CHAT),
-    'has(ACTION.UPLOAD_FINAL_CAD)': has(ACTION.UPLOAD_FINAL_CAD),
-  });
 
   const currentInferredDesignType = useMemo(() => {
     const rawData = originalData || enquiry;
@@ -1405,11 +1227,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
             }
             if (cacheKeys.length > 0) {
               await AsyncStorage.multiRemove(cacheKeys);
-              if (__DEV__) {
-                console.log(
-                  `ðŸ§¹ Cleared all ${cacheKeys.length} image cache entries`,
-                );
-              }
             }
 
             // Try saving after clearing all cache
@@ -1421,9 +1238,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                   timestamp: Date.now(),
                 }),
               );
-              if (__DEV__) {
-                console.log('âœ… Cache saved after clearing all image cache');
-              }
               return true;
             } catch (clearAllError) {
               // Storage is consistently full - disable AsyncStorage caching and use memory cache only
@@ -1447,12 +1261,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                 const firstKey = memoryCacheRef.current.keys().next().value;
                 memoryCacheRef.current.delete(firstKey);
               }
-              if (__DEV__) {
-                console.log(
-                  'ðŸ’¾ Stored in memory cache (AsyncStorage full):',
-                  cacheKey,
-                );
-              }
               return true; // Consider it "saved" in memory cache
             }
           }
@@ -1470,9 +1278,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                   timestamp: Date.now(),
                 }),
               );
-              if (__DEV__) {
-                console.log('âœ… Cache saved after normal cleanup');
-              }
               return true; // Success after normal cleanup
             } catch (retryError) {
               if (__DEV__) {
@@ -1492,9 +1297,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                     timestamp: Date.now(),
                   }),
                 );
-                if (__DEV__) {
-                  console.log('âœ… Cache saved after aggressive cleanup');
-                }
                 return true; // Success after aggressive cleanup
               } catch (finalError) {
                 // Last resort: clear ALL remaining cache
@@ -1516,11 +1318,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                         timestamp: Date.now(),
                       }),
                     );
-                    if (__DEV__) {
-                      console.log(
-                        'âœ… Cache saved after clearing all remaining cache',
-                      );
-                    }
                     return true;
                   } catch (lastError) {
                     // Storage is consistently full - use memory cache
@@ -1543,12 +1340,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                         .next().value;
                       memoryCacheRef.current.delete(firstKey);
                     }
-                    if (__DEV__) {
-                      console.log(
-                        'ðŸ’¾ Stored in memory cache (all cleanup failed):',
-                        cacheKey,
-                      );
-                    }
                     return true; // Consider it "saved" in memory cache
                   }
                 }
@@ -1569,12 +1360,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           if (memoryCacheRef.current.size > MAX_MEMORY_CACHE_SIZE) {
             const firstKey = memoryCacheRef.current.keys().next().value;
             memoryCacheRef.current.delete(firstKey);
-          }
-          if (__DEV__) {
-            console.log(
-              'ðŸ’¾ Stored in memory cache (AsyncStorage disabled):',
-              cacheKey,
-            );
           }
           return true;
         }
@@ -1671,10 +1456,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           <Button
             title="Retry"
             onPress={() => {
-              console.log(
-                '[SingleEnquiry] ðŸ”„ Retrying fetch for enquiry:',
-                enquiryId,
-              );
               refetch();
             }}
             variant="primary"
@@ -1690,170 +1471,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       </View>
     );
   }
-
-  const handleApprove = () => {
-    const src = enquiry?._originalData || enquiry;
-    const cadVersions   = src?.Cad   || [];
-    const coralVersions = src?.Coral || [];
-
-    console.log('[handleApprove] cadVersions:', cadVersions.length, 'coralVersions:', coralVersions.length, 'status:', status);
-
-    let designType, versions;
-    if (cadVersions.length > 0) {
-      designType = 'cad';
-      versions   = cadVersions;
-    } else if (coralVersions.length > 0) {
-      designType = 'coral';
-      versions   = coralVersions;
-    } else {
-      showAlert('Error', 'No design versions available to approve', 'error');
-      return;
-    }
-
-    const versionIndex = versions.length - 1;
-    const version = versions[versionIndex]?.Version || `Version ${versionIndex + 1}`;
-    const currentStatus = (status || '').toLowerCase();
-    const isApprovedCadStatus = currentStatus === 'approved cad';
-
-    console.log('[handleApprove] designType:', designType, 'version:', version, 'isApprovedCadStatus:', isApprovedCadStatus);
-
-    showAlert(
-      'Approve Design Version',
-      `Approve ${designType.toUpperCase()} ${version}?`,
-      'warning',
-      [
-        { text: 'Cancel', style: 'cancel', onPress: () => {} },
-        {
-          text: 'Approve',
-          onPress: async () => {
-            try {
-              const eid = enquiry.id || enquiry._id;
-
-              if (isApprovedCadStatus) {
-                // Quotation approved â†’ Final Cad Upload
-                console.log('[handleApprove] CAD approved status â†’ intent: approveDesign');
-                await approveDesignVersion({
-                  enquiryId: eid,
-                  designType,
-                  version,
-                  intent: 'approveDesign',
-                }).unwrap();
-              } else {
-                // First approval â€” send for approval (Quotation â†’ Approved Cad)
-                const intent = designType === 'cad' ? 'forApproval' : 'approveDesign';
-                console.log('[handleApprove] First approval â†’ intent:', intent, 'designType:', designType);
-                await approveDesignVersion({
-                  enquiryId: eid,
-                  designType,
-                  version,
-                  intent,
-                }).unwrap();
-              }
-
-              showAlert('Success', `${designType.toUpperCase()} ${version} approved successfully`, 'success');
-              refetch();
-            } catch (error) {
-              showAlert(
-                'Error',
-                error?.data?.error || error?.message || 'Failed to approve design version.',
-                'error',
-              );
-            }
-          },
-        },
-      ],
-    );
-  };
-
-  const handleReject = () => {
-    // Get available design versions
-    const originalData = enquiry?._originalData || enquiry;
-    const coralVersions = originalData?.Coral || enquiry?.Coral || [];
-    const cadVersions = originalData?.Cad || enquiry?.Cad || [];
-
-    // Determine which design type and version to reject
-    let designType = 'coral';
-    let versionIndex =
-      coralVersions.length > 0
-        ? coralVersions.length - 1
-        : cadVersions.length > 0
-        ? cadVersions.length - 1
-        : null;
-
-    if (coralVersions.length === 0 && cadVersions.length > 0) {
-      designType = 'cad';
-    }
-
-    if (versionIndex === null) {
-      showAlert('Error', 'No design versions available to reject', 'error');
-      return;
-    }
-
-    // Store design type and version for rejection
-    setSelectedDesignType(designType);
-    setSelectedVersionIndex(versionIndex);
-    setShowApprovalModal(true);
-  };
-
-  const confirmReject = async () => {
-    if (!approvalMessage.trim()) {
-      showAlert('Error', 'Please provide a reason for rejection', 'error');
-      return;
-    }
-
-    if (!selectedDesignType || selectedVersionIndex === null) {
-      showAlert('Error', 'Design version information is missing', 'error');
-      return;
-    }
-
-    try {
-      const originalData = enquiry?._originalData || enquiry;
-      const versions =
-        selectedDesignType === 'coral'
-          ? originalData?.Coral || enquiry?.Coral || []
-          : originalData?.Cad || enquiry?.Cad || [];
-
-      if (selectedVersionIndex >= versions.length) {
-        showAlert('Error', 'Selected version not found', 'error');
-        return;
-      }
-
-      const version =
-        versions[selectedVersionIndex]?.Version ||
-        `Version ${selectedVersionIndex + 1}`;
-      const enquiryId = enquiry.id || enquiry._id;
-
-      await rejectDesignVersion({
-        enquiryId,
-        designType: selectedDesignType,
-        version,
-        reason: approvalMessage.trim(),
-      }).unwrap();
-
-      showAlert(
-        'Success',
-        `${selectedDesignType.toUpperCase()} ${version} rejected successfully`,
-        'success',
-      );
-
-      // Reset state
-      setShowApprovalModal(false);
-      setApprovalMessage('');
-      setSelectedDesignType(null);
-      setSelectedVersionIndex(null);
-
-      // Refetch enquiry data to get updated rejection status
-      refetch();
-    } catch (error) {
-      showAlert(
-        'Error',
-        error?.data?.error ||
-          error?.message ||
-          'Failed to reject design version. Please try again.',
-        'error',
-      );
-    }
-  };
 
   const getReturnRoute = () => {
     const state = navigation.getState();
@@ -2037,13 +1654,12 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         }
 
         try {
-          const result = await updateAssetDescription({
+          await updateAssetDescription({
             enquiryId: currentEnquiryId,
             designType: 'reference',
             assetId: newImage.Id,
             description: comment,
           }).unwrap();
-          console.log('[confirmReferenceUpload] Description updated for image', newImage.Id, '->', comment);
         } catch (descErr) {
           console.warn(
             '[confirmReferenceUpload] Failed to update description for image',
@@ -2074,97 +1690,18 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     }
   };
 
-  const hasDetailValue = cell => {
-    if (!cell) return false;
-    const value = cell.value;
-    const result =
-      value !== null && value !== undefined && String(value).trim() !== '';
 
-    // Debug: Log hasDetailValue check for Assigned To
-    if (cell.label === 'Assigned To') {
-      console.log('[SingleEnquiry] âœ… hasDetailValue check for Assigned To:', {
-        cell: cell,
-        value: value,
-        'value type': typeof value,
-        'String(value).trim()': String(value).trim(),
-        result: result,
-      });
-    }
-
-    return result;
-  };
-
-  const renderDetailCell = cell => {
-    if (!cell) {
-      return <View style={styles.detailCellPlaceholder} />;
-    }
-
-    const valueExists = hasDetailValue(cell);
-
-    // Debug: Log renderDetailCell for Assigned To
-    if (cell.label === 'Assigned To') {
-      console.log('[SingleEnquiry] ðŸŽ¨ renderDetailCell for Assigned To:', {
-        cell: cell,
-        valueExists: valueExists,
-        'cell.showIfEmpty': cell.showIfEmpty,
-        showAllDetails: showAllDetails,
-        'will render': valueExists || cell.showIfEmpty || showAllDetails,
-        'value to display': valueExists
-          ? cell.value
-          : cell.placeholder ?? 'N/A',
-      });
-    }
-
-    if (!valueExists && !cell.showIfEmpty && !showAllDetails) {
-      return <View style={styles.detailCellPlaceholder} />;
-    }
-
-    return (
-      <View style={styles.detailCell}>
-        <View style={styles.detailCellLabelRow}>
-          {cell.icon && (
-            <Icon
-              name={cell.icon}
-              size={14}
-              color={colors.primary}
-              style={styles.detailCellIcon}
-            />
-          )}
-          <Text style={styles.detailCellLabel}>{cell.label}</Text>
-        </View>
-        <Text style={styles.detailCellValue}>
-          {valueExists ? cell.value : cell.placeholder ?? 'N/A'}
-        </Text>
-      </View>
-    );
-  };
-
-  const renderDetailRow = (leftCell, rightCell, options = {}) => {
-    const shouldRender =
-      hasDetailValue(leftCell) ||
-      hasDetailValue(rightCell) ||
-      leftCell?.showIfEmpty ||
-      rightCell?.showIfEmpty ||
-      showAllDetails ||
-      options.showIfEmpty;
-
-    if (!shouldRender) {
-      return null;
-    }
-
-    return (
-      <View style={styles.detailRowTwoColumn}>
-        {renderDetailCell(leftCell)}
-        {renderDetailCell(rightCell)}
-      </View>
-    );
-  };
 
   const renderEnquiryDetails = () => {
     // Extract metal details - check ALL possible locations (originalData, enquiry normalized, enquiry raw)
     const metal = originalData?.Metal || enquiry?.Metal || enquiry?.metal || {};
     const metalColor = metal.Color || metal.color || null;
-    const metalQuality = metal.Quality || metal.quality || null;
+    const metalQualityList = metal.Qualities || metal.qualities;
+    const metalQuality =
+      (Array.isArray(metalQualityList) ? metalQualityList.filter(Boolean).join(', ') : '') ||
+      metal.Quality ||
+      metal.quality ||
+      null;
 
     // Extract weights - check ALL possible locations with comprehensive fallback
     const metalWeight =
@@ -2188,7 +1725,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       originalData?.styleNumber ||
       null;
     // Extract Gati Order Number - check ALL possible locations and variations
-    console.log('originalData-------gatiOrderNumber-->', originalData);
     const gatiOrderNumber =
       originalData?.GatiOrderNumber ||
       originalData?.gatiOrderNumber ||
@@ -2214,7 +1750,13 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       enquiry?.category ||
       originalData?.category ||
       null;
+    const stoneTypeList =
+      originalData?.StoneTypes ||
+      enquiry?.StoneTypes ||
+      enquiry?.stoneTypes ||
+      originalData?.stoneTypes;
     const stoneType =
+      (Array.isArray(stoneTypeList) ? stoneTypeList.filter(Boolean).join(', ') : '') ||
       originalData?.StoneType ||
       enquiry?.StoneType ||
       enquiry?.stoneType ||
@@ -2237,12 +1779,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       enquiry?.SpecialRemarks ||
       enquiry?.specialRemarks ||
       originalData?.specialRemarks ||
-      null;
-    const approvedDate =
-      originalData?.ApprovedDate ||
-      enquiry?.ApprovedDate ||
-      enquiry?.approvedDate ||
-      originalData?.approvedDate ||
       null;
     const shippingDate =
       originalData?.ShippingDate ||
@@ -2282,10 +1818,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           foundUser.email ||
           foundUser.Email ||
           assignedTo;
-        console.log('[SingleEnquiry] âœ… Found user in usersList:', {
-          userId: foundUser.id || foundUser._id,
-          name: assignedTo,
-        });
       }
     }
 
@@ -2298,27 +1830,14 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
       const idStr = String(assignedToId).trim();
       if (idStr.length > 8) {
         assignedTo = `User ${idStr.substring(0, 8)}...`;
-        console.log(
-          '[SingleEnquiry] âš ï¸ Using truncated ID as fallback:',
-          assignedTo,
-        );
       } else {
         assignedTo = `User ${idStr}`;
-        console.log('[SingleEnquiry] âš ï¸ Using ID as fallback:', assignedTo);
       }
     } else if (!assignedTo || assignedTo === '-') {
       assignedTo = '-';
     }
 
     // Debug: Log final assignedTo value being used for display
-    console.log('[SingleEnquiry] ðŸ“‹ Final AssignedTo for display:', {
-      assignedToId: assignedToId,
-      'assignedToName (from hook)': assignedToName,
-      'assignedTo (final)': assignedTo,
-      'will display': assignedTo !== '-',
-      'usersList length': usersList?.length || 0,
-      'renderEnquiryDetails called': true,
-    });
 
     // Format metal weight - only return value if exists, otherwise null (so field won't display)
     let metalWeightText = null;
@@ -2353,22 +1872,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     const cadVersions = originalData?.Cad || enquiry?.Cad || [];
 
     // Debug: Log version structure
-    if (__DEV__ && (coralVersions.length > 0 || cadVersions.length > 0)) {
-      console.log('[SingleEnquiry] Version structure check:', {
-        coralVersionsCount: coralVersions.length,
-        cadVersionsCount: cadVersions.length,
-        latestCoralVersion:
-          coralVersions.length > 0
-            ? coralVersions[coralVersions.length - 1]
-            : null,
-        latestCadVersion:
-          cadVersions.length > 0 ? cadVersions[cadVersions.length - 1] : null,
-        enquiryCoralCode: enquiry?.CoralCode,
-        originalDataCoralCode: originalData?.CoralCode,
-        enquiryCadCode: enquiry?.CadCode,
-        originalDataCadCode: originalData?.CadCode,
-      });
-    }
 
     // Helper function to extract code from a version object
     const getCodeFromVersion = version => {
@@ -2387,35 +1890,18 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         null;
 
       // Debug logging in development
-      if (__DEV__ && version && !code) {
-        console.log(
-          '[SingleEnquiry] Version object keys:',
-          Object.keys(version),
-        );
-        console.log(
-          '[SingleEnquiry] Version object:',
-          JSON.stringify(version, null, 2).substring(0, 500),
-        );
-      }
 
       return code;
     };
 
     // Get code from latest version (most recent)
-    const latestCoralVersion =
-      coralVersions.length > 0 ? coralVersions[coralVersions.length - 1] : null;
-    const latestCadVersion =
-      cadVersions.length > 0 ? cadVersions[cadVersions.length - 1] : null;
 
     // Also check all versions to find any code (fallback if latest doesn't have one)
-    let anyCoralCode = null;
-    let anyCadCode = null;
 
     // Check all versions in reverse order (latest first) to find first available code
     for (let i = coralVersions.length - 1; i >= 0; i--) {
       const code = getCodeFromVersion(coralVersions[i]);
       if (code) {
-        anyCoralCode = code;
         break; // Use the latest version that has a code
       }
     }
@@ -2423,47 +1909,14 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     for (let i = cadVersions.length - 1; i >= 0; i--) {
       const code = getCodeFromVersion(cadVersions[i]);
       if (code) {
-        anyCadCode = code;
         break; // Use the latest version that has a code
       }
     }
 
     // Debug logging
-    if (__DEV__) {
-      console.log('[SingleEnquiry] Code extraction:', {
-        coralVersionsCount: coralVersions.length,
-        cadVersionsCount: cadVersions.length,
-        latestCoralCode: getCodeFromVersion(latestCoralVersion),
-        anyCoralCode,
-        latestCadCode: getCodeFromVersion(latestCadVersion),
-        anyCadCode,
-        enquiryCoralCode: enquiry?.CoralCode,
-        originalDataCoralCode: originalData?.CoralCode,
-      });
-    }
 
     // Priority: Enquiry-level > Latest version > Any version
-    const coralCode =
-      enquiry?.CoralCode ||
-      originalData?.CoralCode ||
-      enquiry?.coralCode ||
-      originalData?.coralCode ||
-      enquiry?.coralVersion ||
-      originalData?.coralVersion ||
-      getCodeFromVersion(latestCoralVersion) ||
-      anyCoralCode ||
-      'N/A';
 
-    const cadCode =
-      enquiry?.CadCode ||
-      originalData?.CadCode ||
-      enquiry?.cadCode ||
-      originalData?.cadCode ||
-      enquiry?.cadVersion ||
-      originalData?.cadVersion ||
-      getCodeFromVersion(latestCadVersion) ||
-      anyCadCode ||
-      'N/A';
 
     const specs = [
       { label: 'Budget Range', value: budget ? `₹${budget}` : null, hide: isDesigner },
@@ -2538,14 +1991,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                   <Icon name="share" size={14} color={colors.primaryDark} />
                   <Text style={styles.shareBtnText}>Share</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.shareBtn}
-                  onPress={() => setShowSummaryModal(true)}
-                  activeOpacity={0.75}
-                >
-                  <Icon name="description" size={14} color={colors.primaryDark} />
-                  <Text style={styles.shareBtnText}>Summary</Text>
-                </TouchableOpacity>
               </View>
             </View>
           </View>
@@ -2564,7 +2009,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                         <Text style={styles.specAvatarText}>{assignedTo ? assignedTo.charAt(0).toUpperCase() : '?'}</Text>
                       </View>
                     ) : null}
-                    <Text style={styles.specValue} numberOfLines={1}>{s.value}</Text>
+                    <Text style={styles.specValue}>{s.value}</Text>
                   </View>
                 </View>
               ))}
@@ -2581,30 +2026,14 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           <View style={styles.timelineRow}>
             <View style={styles.timelineItem}>
               <Text style={styles.timelineLabel}>Created</Text>
-              <Text style={styles.timelineValue}>{formatDate(createdAt)}</Text>
+              <Text style={styles.timelineValue}>{formatDateTime(createdAt)}</Text>
             </View>
             <View style={styles.timelineDivider} />
             <View style={styles.timelineItem}>
-              <Text style={styles.timelineLabel}>Last Updated</Text>
-              <Text style={styles.timelineValue}>{formatDate(updatedAt)}</Text>
+              <Text style={styles.timelineLabel}>Delivery Date</Text>
+              <Text style={styles.timelineValue}>{shippingDate ? formatDate(shippingDate) : 'Date not mentioned yet'}</Text>
             </View>
           </View>
-          {(shippingDate || (approvedDate && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4)) ? (
-            <View style={styles.timelineRow}>
-              {shippingDate ? (
-                <View style={styles.timelineItem}>
-                  <Text style={styles.timelineLabel}>Shipping</Text>
-                  <Text style={styles.timelineValue}>{formatDate(shippingDate)}</Text>
-                </View>
-              ) : null}
-              {approvedDate && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4 ? (
-                <View style={styles.timelineItem}>
-                  <Text style={styles.timelineLabel}>Approved</Text>
-                  <Text style={styles.timelineValue}>{formatDate(approvedDate)}</Text>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
         </View>
 
         {/* Description Card */}
@@ -3586,38 +3015,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
 
     // Debug logging to see what we have (after buildImageMeta is defined)
     if (__DEV__ && (images.length > 0 || videos.length > 0)) {
-      const coralVideoCount = coralVersions.reduce(
-        (count, v) => count + (v?.Videos?.length || v?.videos?.length || 0),
-        0,
-      );
-      const cadVideoCount = cadVersions.reduce(
-        (count, v) => count + (v?.Videos?.length || v?.videos?.length || 0),
-        0,
-      );
-      const sampleMeta = images[0] ? buildImageMeta(images[0]) : null;
-      console.log('ðŸ” [SingleEnquiryScreen] Media data:', {
-        imagesCount: images.length - videos.length,
-        videosCount: videos.length,
-        totalMedia: images.length,
-        hasReferenceImages: !!(
-          enquiry?.ReferenceImages || originalData?.ReferenceImages
-        ),
-        hasReferenceVideos: !!(
-          enquiry?.ReferenceVideos || originalData?.ReferenceVideos
-        ),
-        coralVideoCount: coralVideoCount,
-        cadVideoCount: cadVideoCount,
-        sampleImage: sampleMeta
-          ? {
-              type: typeof sampleMeta.image,
-              keys:
-                typeof sampleMeta.image === 'object'
-                  ? Object.keys(sampleMeta.image)
-                  : [],
-              isVideo: sampleMeta.isVideo,
-            }
-          : null,
-      });
     }
 
     // If only one media item, show it without slider
@@ -3767,7 +3164,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     // Check if Coral/CAD data exists
     const hasCoral = coralCode || coralVersions.length > 0;
     const hasCAD = cadCode || cadVersions.length > 0;
-    console.log('🔍 [SingleEnquiryScreen] coralVersions:', coralVersions);
 
     const renderVersionColumn = (type, versions, hasData, code, iconName, label) => (
       <View style={styles.versionColumn}>
@@ -3982,30 +3378,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     </Card>
   );
 
-  const handleViewCAD = () => {
-    // Get all CAD versions
-    const cadVersions = originalData?.Cad || enquiry?.Cad || [];
-
-    if (cadVersions.length === 0) {
-      showAlert('No Versions', 'No CAD versions available', 'info');
-      return;
-    }
-
-    // If only one version, go directly
-    if (cadVersions.length === 1) {
-      navigation.navigate('DesignViewer', {
-        designType: 'cad',
-        enquiry: enquiry,
-        versionIndex: 0,
-      });
-      return;
-    }
-
-    // Show version selector for multiple versions
-    setSelectedDesignType('cad');
-    setShowVersionSelector(true);
-  };
-
   const closeQuotationActions = () => {
     setShowQuotationActions(false);
     setShowReasonInput(false);
@@ -4150,18 +3522,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const renderAdminActions = () => {
     const currentEnquiryId = enquiry?.id || enquiry?._id || enquiryId;
 
-    console.log('[SingleEnquiry] 🔧 renderAdminActions called | shouldShow flags:', {
-      shouldShowAssignCoral, shouldShowAssignCad,
-      shouldShowAdminCoralUpload, shouldShowAdminCadUpload,
-      shouldShowCoralDesignerButtons, shouldShowCadDesignerButtons,
-      has_UPDATE_QUOTATION: has(ACTION.UPDATE_QUOTATION),
-      has_VIEW_QUOTATION_AND_MOVE_TO_APPROVAL: has(ACTION.VIEW_QUOTATION) && has(ACTION.MOVE_TO_APPROVAL),
-      shouldShowApprovalButtons,
-      shouldShowFinalLookAndPlacement,
-      isPlacementStage,
-      shouldShowAdminApprovedCad,
-      shouldShowAdminProduction,
-    });
 
     return (
       <Card style={[styles.actionsCard, styles.adminActionsCard]}>
@@ -4402,7 +3762,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                     const enquiryData = originalData || enquiry;
                     await handleMoveToOrderPlacement(enquiryData);
                   } catch (e) {
-                    console.log('[MoveToOrderPlacement] error:', JSON.stringify(e, null, 2));
                   } finally {
                     setIsActionLoading(false);
                   }
@@ -4513,71 +3872,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
           </TouchableOpacity>
         </View>
       </Card>
-    );
-  };
-
-  const renderApprovalModal = () => {
-    // Get version info for display
-    const originalData = enquiry?._originalData || enquiry;
-    const versions =
-      selectedDesignType === 'coral'
-        ? originalData?.Coral || enquiry?.Coral || []
-        : originalData?.Cad || enquiry?.Cad || [];
-    const version =
-      selectedVersionIndex !== null && selectedVersionIndex < versions.length
-        ? versions[selectedVersionIndex]?.Version ||
-          `Version ${selectedVersionIndex + 1}`
-        : 'this version';
-
-    return (
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text
-            style={{
-              fontSize: 16,
-              fontWeight: 'bold',
-              color: colors.textPrimary,
-            }}
-          >
-            Reject Design Version
-          </Text>
-          <Text
-            style={{ color: colors.textSecondary, fontSize: 13, marginTop: 8 }}
-          >
-            {selectedDesignType
-              ? `${selectedDesignType.toUpperCase()} ${version}`
-              : 'Design version'}
-          </Text>
-          <Text
-            style={{ color: colors.textSecondary, fontSize: 13, marginTop: 8 }}
-          >
-            Please provide a reason for rejection:
-          </Text>
-
-          <Input
-            placeholder="Enter rejection reason..."
-            value={approvalMessage}
-            onChangeText={setApprovalMessage}
-            multiline
-            numberOfLines={3}
-            style={styles.modalInput}
-          />
-
-          <View style={styles.modalButtons}>
-            <Button
-              title="Cancel"
-              variant="outline"
-              onPress={() => setShowApprovalModal(false)}
-              style={styles.modalButton}
-            />
-            <Button
-              title="Reject"
-              onPress={confirmReject}
-              style={[styles.modalButton, styles.rejectButton]}
-            />
-          </View>
-        </View>
-      </View>
     );
   };
 
@@ -5193,8 +4487,6 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         </FinalLookModal>
       )}
 
-      {showApprovalModal && renderApprovalModal()}
-
       <ShareEnquiryModal
         visible={showShareModal}
         enquiry={{ ...enquiry, clientName }}
@@ -5202,59 +4494,14 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         isDesigner={isDesigner}
       />
 
-      <Modal visible={showSummaryModal} transparent animationType="slide" onRequestClose={() => setShowSummaryModal(false)}>
-        <View style={styles.summaryOverlay}>
-          <View style={styles.summaryBox}>
-            <View style={styles.summaryHeader}>
-              <Text style={styles.summaryTitle}>Enquiry Summary</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (summaryTextRef.current) {
-                      Clipboard.setString(summaryTextRef.current);
-                      showAlert('Copied', 'Summary copied to clipboard', 'success', [{ text: 'OK' }]);
-                    }
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Icon name="content-copy" size={20} color={colors.primaryDark} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setShowSummaryModal(false)}>
-                  <Icon name="close" size={24} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
-              {(() => {
-                const summaryCandidates = [
-                  enquiry?.Summary,
-                  enquiry?.summary,
-                  enquiry?._originalData?.Summary,
-                  enquiry?._originalData?.summary,
-                  enquiry?.data?.Summary,
-                  enquiry?.data?.summary,
-                  originalData?.Summary,
-                  originalData?.summary,
-                ];
-                const sm = summaryCandidates.find(
-                  value => typeof value === 'string' && value.trim().length > 0,
-                );
-                summaryTextRef.current = sm || '';
-                return renderMdSummary(sm, styles) || <Text style={styles.noSummary}>No summary available for this enquiry.</Text>;
-              })()}
-            </ScrollView>
-          </View>
-        </View>
-
-        <BrandedAlert
-          visible={alertConfig.visible}
-          title={alertConfig.title}
-          message={alertConfig.message}
-          type={alertConfig.type}
-          buttons={alertConfig.buttons}
-          onClose={hideAlert}
-        />
-      </Modal>
+      <BrandedAlert
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        buttons={alertConfig.buttons}
+        onClose={hideAlert}
+      />
 
       <EnquiryHistoryModal
         visible={showHistoryModal}
@@ -5513,6 +4760,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   specValue: {
+    flex: 1,
+    flexWrap: 'wrap',
     fontSize: 14,
     fontFamily: fonts.bold,
     color: colors.textPrimary,
@@ -5573,14 +4822,6 @@ const styles = StyleSheet.create({
     width: 1,
     height: 28,
     backgroundColor: colors.borderLight,
-  },
-  codesRow: {
-    gap: 4,
-  },
-  codeText: {
-    fontSize: 13,
-    color: colors.textPrimary,
-    fontFamily: fonts.medium,
   },
   // Design versions
   versionsRow: {
@@ -5719,73 +4960,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  detailsCard: {
-    marginBottom: spacing.lg,
-  },
-  detailsHeader: {
-    flexDirection: 'column',
-    marginBottom: 16,
-  },
-  statusContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    minWidth: 120,
-    maxWidth: '90%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 1,
-  },
-  priorityBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    minWidth: 100,
-    maxWidth: '100%',
-    alignItems: 'center',
-    flexShrink: 1,
-  },
-  detailsGrid: {
-    gap: 12,
-  },
-  detailRowTwoColumn: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  detailCell: {
-    flex: 1,
-    paddingVertical: 4,
-  },
-  detailCellPlaceholder: {
-    flex: 1,
-    paddingVertical: 4,
-  },
-  detailCellLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-    gap: 4,
-  },
-  detailCellIcon: {
-    marginRight: 4,
-  },
-  detailCellLabel: {
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: colors.textSecondary,
-  },
-  detailCellValue: {
-    fontSize: 13,
-    color: colors.textPrimary,
   },
   descHeader: {
     flexDirection: 'row',
@@ -6036,11 +5210,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     color: colors.textWhite,
   },
-  sliderImageContainer: {
-    paddingHorizontal: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   imagePlaceholder: {
     width: 150,
     height: 150,
@@ -6056,26 +5225,6 @@ const styles = StyleSheet.create({
   noImagesText: {
     marginTop: 12,
     textAlign: 'center',
-  },
-  paginationContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 12,
-    paddingVertical: 8,
-  },
-  paginationDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.border || '#E0E0E0',
-    marginHorizontal: 4,
-  },
-  paginationDotActive: {
-    backgroundColor: colors.primary || '#2196F3',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
   },
   errorContainer: {
     flex: 1,
@@ -6105,32 +5254,6 @@ const styles = StyleSheet.create({
   backButton: {
     marginTop: 20,
   },
-  versionsCard: {
-    marginBottom: spacing.lg,
-  },
-  versionItem: {
-    marginBottom: 16,
-  },
-  versionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  versionTitle: {
-    marginLeft: 8,
-    fontWeight: fonts.medium,
-  },
-  versionFile: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.backgroundSecondary,
-    padding: 12,
-    borderRadius: 8,
-  },
-  fileName: {
-    flex: 1,
-    marginLeft: 8,
-  },
   actionsCard: {
     marginBottom: spacing.lg,
     backgroundColor: '#ffffff',
@@ -6139,37 +5262,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
   },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-  },
   actionButton: {
     flex: 1,
-  },
-  approveButton: {
-    backgroundColor: colors.success,
-  },
-  rejectButton: {
-    backgroundColor: colors.error,
-  },
-  deleteButton: {
-    backgroundColor: colors.error,
-  },
-  downloadButton: {
-    backgroundColor: colors.info || '#2196F3',
-  },
-  coralButton: {
-    backgroundColor: colors.warning || '#F59E0B',
-  },
-  cadButton: {
-    backgroundColor: colors.info || '#2196F3',
-  },
-  uploadButton: {
-    marginBottom: 16,
-  },
-  editButton: {
-    marginBottom: 16,
   },
   historyButton: {
     backgroundColor: colors.info || '#2196F3',
@@ -6197,36 +5291,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 14,
   },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.modalOverlay,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: colors.modalBackground,
-    borderRadius: 12,
-    padding: 20,
-    width: '100%',
-  },
-  modalText: {
-    marginBottom: 16,
-  },
-  modalInput: {
-    marginBottom: 20,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  modalButton: {
-    flex: 1,
-  },
   fullscreenImageBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.95)',
@@ -6247,15 +5311,6 @@ const styles = StyleSheet.create({
   modalImageWrapper: {
     width: Dimensions.get('window').width,
     height: Dimensions.get('window').height,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  zoomScrollView: {
-    flex: 1,
-    width: Dimensions.get('window').width,
-  },
-  zoomScrollContent: {
-    flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -6406,15 +5461,6 @@ const styles = StyleSheet.create({
     fontSize: fonts.sm,
     color: colors.error,
   },
-  videoContainer: {
-    marginRight: 12,
-    width: 150,
-    height: 150,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: colors.backgroundSecondary,
-    position: 'relative',
-  },
   fullscreenVideo: {
     width: '100%',
     height: '100%',
@@ -6465,27 +5511,10 @@ const styles = StyleSheet.create({
   adminActionButtonSecondary: {
     backgroundColor: colors.primary,
   },
-  adminActionButtonDanger: {
-    backgroundColor: colors.error,
-  },
-  adminActionButtonOutline: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
   adminActionText: {
     color: colors.textWhite,
     fontFamily: fonts.medium,
     fontSize: 14,
-  },
-  adminActionOutlineText: {
-    color: colors.primary,
-  },
-  UploadCoralCadd: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
   },
   QuickButtonContainer: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 8 },
   ChatButton: { flex: 1, backgroundColor: colors.background, borderColor: colors.primaryDark, borderWidth: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14 },
@@ -6650,98 +5679,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: 13,
     color: colors.textSecondary,
-  },
-  summaryOverlay: {
-    flex: 1,
-    backgroundColor: colors.modalOverlay,
-    justifyContent: 'flex-end',
-  },
-  summaryBox: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    width: '100%',
-  },
-  summaryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  summaryTitle: {
-    fontSize: 16,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  noSummary: {
-    padding: 20,
-    textAlign: 'center',
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm,
-    color: colors.textSecondary,
-  },
-  mdContainer: { padding: 16, paddingBottom: 8 },
-  mdHeading: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 13,
-    color: colors.primary,
-    marginTop: 14,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  mdHeadingLg: { fontSize: fonts.base || 14 },
-  mdRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || '#F0F0F0',
-  },
-  mdKey: {
-    flex: 1,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm || 13,
-    color: colors.textSecondary,
-    paddingRight: 8,
-  },
-  mdVal: {
-    flex: 1.5,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    textAlign: 'right',
-  },
-  mdBullet: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginVertical: 3,
-    paddingLeft: 4,
-  },
-  mdDot: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.base || 14,
-    color: colors.primary,
-    marginRight: 8,
-    lineHeight: 20,
-  },
-  mdBulletTxt: {
-    flex: 1,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  mdPara: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-    marginVertical: 4,
   },
 });
 

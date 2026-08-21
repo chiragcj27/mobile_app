@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
-import { fonts } from '../../constants/fonts';
 import { formatDateTime } from '../../utils/helpers';
 import { useUsers } from '../../features/users/usersHooks';
 import { getUserName } from '../../utils/userUtils';
@@ -18,49 +17,23 @@ const EnquiryHistoryModal = ({ visible, onClose, enquiry }) => {
   // Fetch and cache users
   useUsers();
 
-  // Extract StatusHistory from enquiry
-  const statusHistory = enquiry?.StatusHistory || enquiry?._originalData?.StatusHistory || [];
-  
-  // Sort history by timestamp (oldest first, newest last)
+  // Oldest first, newest last
   const sortedHistory = useMemo(() => {
-    return [...statusHistory].sort((a, b) => {
-      const dateA = new Date(a.Timestamp || a.timestamp || 0);
-      const dateB = new Date(b.Timestamp || b.timestamp || 0);
-      return dateA - dateB; // Ascending order (oldest first, newest last)
-    });
-  }, [statusHistory]);
+    const history = enquiry?.StatusHistory || enquiry?._originalData?.StatusHistory || [];
+    return [...history].sort(
+      (a, b) =>
+        new Date(a.Timestamp || a.timestamp || 0) - new Date(b.Timestamp || b.timestamp || 0),
+    );
+  }, [enquiry]);
 
-  // Status color mapping
-  const getStatusColor = (status) => {
-    const statusLower = String(status || '').toLowerCase();
-    if (statusLower.includes('enquiry created') || statusLower === 'created') {
-      return '#e8f0e8'; // Light green
-    } else if (statusLower.includes('cad') || statusLower === 'cad') {
-      return '#eff6ff'; // Light blue
-    } else if (statusLower.includes('coral') || statusLower === 'coral') {
-      return '#fef3c7'; // Light amber
-    } else if (statusLower.includes('approved')) {
-      return '#d1fae5'; // Light emerald
-    } else if (statusLower.includes('rejected')) {
-      return '#fee2e2'; // Light red
-    }
-    return '#f3f4f6'; // Light gray
-  };
-
-  const getStatusTextColor = (status) => {
-    const statusLower = String(status || '').toLowerCase();
-    if (statusLower.includes('enquiry created') || statusLower === 'created') {
-      return '#2d7a2d'; // Dark green
-    } else if (statusLower.includes('cad') || statusLower === 'cad') {
-      return '#1e40af'; // Dark blue
-    } else if (statusLower.includes('coral') || statusLower === 'coral') {
-      return '#b45309'; // Dark amber
-    } else if (statusLower.includes('approved')) {
-      return '#047857'; // Dark emerald
-    } else if (statusLower.includes('rejected')) {
-      return '#991b1b'; // Dark red
-    }
-    return '#374151'; // Dark gray
+  const statusPalette = (status) => {
+    const s = String(status || '').toLowerCase();
+    if (s.includes('enquiry created') || s === 'created') return { bg: '#e8f0e8', text: '#2d7a2d' };
+    if (s.includes('cad')) return { bg: '#eff6ff', text: '#1e40af' };
+    if (s.includes('coral')) return { bg: '#fef3c7', text: '#b45309' };
+    if (s.includes('approved')) return { bg: '#d1fae5', text: '#047857' };
+    if (s.includes('rejected')) return { bg: '#fee2e2', text: '#991b1b' };
+    return { bg: '#f3f4f6', text: '#374151' };
   };
 
   const renderHistoryItem = (item, index) => {
@@ -75,8 +48,7 @@ const EnquiryHistoryModal = ({ visible, onClose, enquiry }) => {
     const assignedToName = getUserName(assignedToId);
     const addedByName = getUserName(addedById);
     
-    const statusBgColor = getStatusColor(status);
-    const statusTextColor = getStatusTextColor(status);
+    const { bg: statusBgColor, text: statusTextColor } = statusPalette(status);
     
     // Format status display with SubStatus if available
     const statusDisplay = subStatus ? `${status} - ${subStatus}` : status;

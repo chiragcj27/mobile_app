@@ -15,10 +15,18 @@ import {
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { splitGroupedDataForRecalc } from '../../utils/stoneDataGrouper';
 import { extraChargesSuffix } from '../../utils/extraCharges';
+import { METAL_QUALITY_OPTIONS } from '../../constants/metalQualities';
+import { selectQuality } from '../../utils/metalQualitySelector';
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+
+const limitDecimals = (v, places) => {
+  const t = String(v ?? '').replace(/[^0-9.]/g, '');
+  const [whole, ...rest] = t.split('.');
+  if (rest.length === 0) return whole;
+  return `${whole}.${rest.join('').slice(0, places)}`;
+};
 
 const CHARGE_FIELDS = [
   { key: 'Loss', label: 'Loss', suffix: '%', source: 'charges' },
@@ -31,108 +39,125 @@ const CHARGE_FIELDS = [
   { key: 'LossAndLabourDuties', label: 'Loss+labour Duty', suffix: '%', source: 'charges', applicableKey: 'LossAndLabourDuties' },
 ];
 
+const chargeLabel = (field, type, metalKt) => {
+  if (field.key === 'SilverAndLabsDuties') return /lab/i.test(type) ? 'Silver+Lab Duty' : 'Silver';
+  if (field.key === 'GoldDuties') {
+    if (metalKt?.includes('Silver')) return 'Silver Duty';
+    if (metalKt?.includes('Platinum')) return 'Platinum Duty';
+    return 'Gold Duty';
+  }
+  return field.label;
+};
+
+const applyChargeOverrides = (data, overrides = {}) => {
+  const editableCharges = { ...data.editableCharges };
+  const dutyRates = { ...data.dutyRates };
+  CHARGE_FIELDS.forEach(({ key, source }) => {
+    const v = overrides[key];
+    if (v === undefined || v === '') return;
+    if (source === 'duty') dutyRates[key] = v;
+    else editableCharges[key] = v;
+  });
+  editableCharges.ExtraChargesType =
+    overrides.ExtraChargesType ?? editableCharges.ExtraChargesType ?? 'percentage';
+  return { ...data, editableCharges, dutyRates };
+};
+
 export default function SingleStonePricing({
   visible,
   onClose,
   onDone,
   catData,
-  clientId,
   metalKt,
-  selectedClient,
   onRecalculated,
-  onModifyPricing,
   onPreviewSummary,
   onClientPreview,
   onRequestRecalculate,
+  isRecalculating = false,
 }) {
   const [localGrouped, setLocalGrouped] = useState({});
   const [localCharges, setLocalCharges] = useState({});
-  const [commonMetal, setCommonMetal] = useState({ Weight: '', Rate: '', Ounce: '' });
+  const [localMetal, setLocalMetal] = useState({});
+  const [ktPickerType, setKtPickerType] = useState(null);
   const metalTouchedRef = useRef(false);
-  const [isCalculating, setIsCalculating] = useState(false);
 
   const [inlineEditIndex, setInlineEditIndex] = useState(null);
   const [inlineEditPrice, setInlineEditPrice] = useState('');
   const [editedPrices, setEditedPrices] = useState({});
   const inlinePriceRef = useRef(null);
+  const selfDismissRef = useRef(false);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  const editedPricesRef = useRef(editedPrices);
   const localChargesRef = useRef(localCharges);
   const localGroupedRef = useRef(localGrouped);
+  const localMetalRef = useRef(localMetal);
+  const lastResultRef = useRef({});
   const onRecalculatedRef = useRef(onRecalculated);
-  useEffect(() => { editedPricesRef.current = editedPrices; }, [editedPrices]);
   useEffect(() => { localChargesRef.current = localCharges; }, [localCharges]);
   useEffect(() => { localGroupedRef.current = localGrouped; }, [localGrouped]);
+  useEffect(() => { localMetalRef.current = localMetal; }, [localMetal]);
   useEffect(() => { onRecalculatedRef.current = onRecalculated; }, [onRecalculated]);
 
-  // Detect when parent finishes recalculation (catData prop updates)
   useEffect(() => {
-    if (isCalculating) setIsCalculating(false);
-  }, [catData]);
+    if (!visible) return;
+    setLocalCharges({});
+    setEditedPrices({});
+    setInlineEditIndex(null);
+    setInlineEditPrice('');
+    setLocalMetal({});
+    lastResultRef.current = {};
+    metalTouchedRef.current = false;
+  }, [visible]);
 
   useEffect(() => {
-    if (visible && catData) {
-      const entries = splitGroupedDataForRecalc({ dummy: catData });
-      const grouped = {};
-      entries.forEach(({ type, data }) => {
-        grouped[type] = data;
-      });
-      setLocalGrouped(grouped);
-      setLocalCharges({});
-      setEditedPrices({});
-      setInlineEditIndex(null);
-      setInlineEditPrice('');
-      // Seed the common Metal Weight & Rate from the first type (same idea as PricingCalculator)
-      const firstType = Object.keys(grouped)[0];
-      const m = firstType ? grouped[firstType]?.editableMetal : null;
-      const r = firstType ? grouped[firstType]?.pricingResult : null;
-      setCommonMetal({
-        Weight: m?.Weight != null && m.Weight !== '' ? String(m.Weight) : '',
-        Rate: m?.Rate != null && m.Rate !== '' ? String(m.Rate) : '',
-        Ounce: m?.Ounce != null && m.Ounce !== '' ? String(m.Ounce) : r?.GoldRatePerOunce ? String(r.GoldRatePerOunce) : '',
-      });
-      metalTouchedRef.current = false;
-    }
+    if (!visible || !catData) return;
+    const grouped = {};
+    (catData.types || []).forEach(type => {
+      if (catData.byType?.[type]) grouped[type] = catData.byType[type];
+    });
+    setLocalGrouped(grouped);
 
-    return () => {
-      if (!visible || !onRecalculatedRef.current) return;
-      const grouped = localGroupedRef.current;
-      const prices = editedPricesRef.current;
-      const charges = localChargesRef.current;
+    // A new pricing result means the backend has answered for that type, so its
+    // local edits stop overriding and the recalculated values show through.
+    setLocalMetal(prev => {
+      const next = { ...prev };
+      let changed = false;
       Object.keys(grouped).forEach(type => {
-        const data = grouped[type];
-        if (!data) return;
-        const mergedStones = (data.editableStones || []).map((s, i) => {
-          const key = `${type}_${i}`;
-          return prices[key] !== undefined ? { ...s, Price: num(prices[key]) } : s;
-        });
-        const ch = charges[type] || {};
-        const mergedData = {
-          ...data,
-          editableStones: mergedStones,
-          editableCharges: {
-            ...data.editableCharges,
-            Loss: ch.Loss !== undefined && ch.Loss !== '' ? ch.Loss : data.editableCharges?.Loss,
-            Labour: ch.Labour !== undefined && ch.Labour !== '' ? ch.Labour : data.editableCharges?.Labour,
-            ExtraCharges: ch.ExtraCharges !== undefined && ch.ExtraCharges !== '' ? ch.ExtraCharges : data.editableCharges?.ExtraCharges,
-            ExtraChargesType: ch.ExtraChargesType ?? data.editableCharges?.ExtraChargesType ?? 'percentage',
-            GoldDuties: ch.GoldDuties !== undefined && ch.GoldDuties !== '' ? ch.GoldDuties : data.editableCharges?.GoldDuties,
-            SilverAndLabsDuties: ch.SilverAndLabsDuties !== undefined && ch.SilverAndLabsDuties !== '' ? ch.SilverAndLabsDuties : data.editableCharges?.SilverAndLabsDuties,
-            LossAndLabourDuties: ch.LossAndLabourDuties !== undefined && ch.LossAndLabourDuties !== '' ? ch.LossAndLabourDuties : data.editableCharges?.LossAndLabourDuties,
-          },
-          dutyRates: {
-            ...data.dutyRates,
-            LabDuties: ch.LabDuties !== undefined && ch.LabDuties !== '' ? ch.LabDuties : data.dutyRates?.LabDuties,
-            NaturalDuties: ch.NaturalDuties !== undefined && ch.NaturalDuties !== '' ? ch.NaturalDuties : data.dutyRates?.NaturalDuties,
-          },
-        };
-        onRecalculatedRef.current(type, mergedData);
+        const result = grouped[type]?.pricingResult;
+        if (!result || lastResultRef.current[type] === result) return;
+        lastResultRef.current[type] = result;
+        if (next[type]) {
+          delete next[type];
+          changed = true;
+        }
       });
-    };
+      return changed ? next : prev;
+    });
   }, [visible, catData]);
+
+  useEffect(() => {
+    if (Object.keys(editedPrices).length === 0) return;
+    const grouped = localGroupedRef.current;
+    const updated = {};
+    Object.keys(grouped).forEach(type => {
+      const data = grouped[type];
+      if (!data) return;
+      let touched = false;
+      const mergedStones = (data.editableStones || []).map((s, i) => {
+        const v = editedPrices[`${type}_${i}`];
+        if (v === undefined || num(v) === num(s.Price)) return s;
+        touched = true;
+        return { ...s, Price: num(v) };
+      });
+      if (touched) updated[type] = { ...data, editableStones: mergedStones };
+    });
+    const types = Object.keys(updated);
+    if (types.length === 0) return;
+    setLocalGrouped(prev => ({ ...prev, ...updated }));
+    types.forEach(type => onRecalculatedRef.current?.(type, updated[type]));
+  }, [editedPrices]);
 
   const getEffectivePrice = useCallback((type, index) => {
     const key = `${type}_${index}`;
@@ -142,22 +167,17 @@ export default function SingleStonePricing({
   }, [editedPrices, localGrouped]);
 
   const getTypeMissingIndices = useCallback((type) => {
-    const data = localGrouped[type];
-    if (!data || !Array.isArray(data.editableStones)) return new Set();
-    return new Set(
-      data.editableStones.reduce((acc, s, i) => {
-        if (getEffectivePrice(type, i) <= 0) acc.push(i);
-        return acc;
-      }, [])
-    );
+    const stones = localGrouped[type]?.editableStones;
+    if (!Array.isArray(stones)) return new Set();
+    const missing = new Set();
+    stones.forEach((s, i) => { if (getEffectivePrice(type, i) <= 0) missing.add(i); });
+    return missing;
   }, [localGrouped, getEffectivePrice]);
 
-  const hasAnyMissing = useMemo(() => {
-    return Object.keys(localGrouped).some(type => {
-      const missing = getTypeMissingIndices(type);
-      return missing.size > 0;
-    });
-  }, [localGrouped, getTypeMissingIndices]);
+  const hasAnyMissing = useMemo(
+    () => Object.keys(localGrouped).some(type => getTypeMissingIndices(type).size > 0),
+    [localGrouped, getTypeMissingIndices],
+  );
 
   useEffect(() => {
     if (hasAnyMissing) {
@@ -192,56 +212,54 @@ export default function SingleStonePricing({
   }, [editedPrices]);
 
   useEffect(() => {
-    if (inlineEditIndex !== null && inlinePriceRef.current) {
-      Keyboard.dismiss();
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          inlinePriceRef.current?.focus();
-        }, 150);
-      });
-    }
+    if (inlineEditIndex === null) return;
+    selfDismissRef.current = true;
+    Keyboard.dismiss();
+    const id = setTimeout(() => inlinePriceRef.current?.focus(), 150);
+    return () => clearTimeout(id);
   }, [inlineEditIndex]);
 
   const saveInlineEdit = useCallback(() => {
     if (inlineEditIndex === null) return;
-    const [editType] = inlineEditIndex.split('_');
+    const editType = inlineEditIndex.slice(0, inlineEditIndex.lastIndexOf('_'));
 
-    setEditedPrices(prev => {
-      const next = { ...prev, [inlineEditIndex]: inlineEditPrice };
-      const missing = getTypeMissingIndices(editType);
-      const stillMissing = [...missing].filter(i => {
-        const key = `${editType}_${i}`;
-        const ep = next[key] !== undefined ? num(next[key]) : num(localGrouped[editType]?.editableStones?.[i]?.Price);
-        return ep <= 0;
-      });
-      if (stillMissing.length > 0) {
-        const nextIdx = stillMissing[0];
-        const nextKey = `${editType}_${nextIdx}`;
-        setTimeout(() => {
-          setInlineEditIndex(nextKey);
-          const nd = localGrouped[editType]?.editableStones?.[nextIdx];
-          setInlineEditPrice(next[nextKey] !== undefined ? String(next[nextKey]) : (num(nd?.Price) > 0 ? String(nd.Price) : ''));
-        }, 100);
-      } else {
-        setInlineEditIndex(null);
-        setInlineEditPrice('');
-        const allFilled = Object.keys(localGrouped).every(type => {
-          const data = localGrouped[type];
-          if (!data || !Array.isArray(data.editableStones) || data.editableStones.length === 0) return true;
-          return data.editableStones.every((s, i) => {
-            const key = `${type}_${i}`;
-            return (next[key] !== undefined ? num(next[key]) : num(s.Price)) > 0;
-          });
-        });
-        if (allFilled && onDone) {
-          setTimeout(() => onDone(), 200);
-        } else if (allFilled && onClose) {
-          setTimeout(() => onClose(), 200);
-        }
-      }
-      return next;
-    });
-  }, [inlineEditIndex, inlineEditPrice, localGrouped, getTypeMissingIndices, onDone, onClose]);
+    const next = { ...editedPrices, [inlineEditIndex]: inlineEditPrice };
+    setEditedPrices(next);
+
+    const priceAt = (type, i, stone) => {
+      const v = next[`${type}_${i}`];
+      return v !== undefined ? num(v) : num(stone?.Price);
+    };
+
+    const stones = localGrouped[editType]?.editableStones || [];
+    const nextMissing = stones.findIndex((st, i) => priceAt(editType, i, st) <= 0);
+    if (nextMissing !== -1) {
+      const nextKey = `${editType}_${nextMissing}`;
+      const stone = stones[nextMissing];
+      setTimeout(() => {
+        setInlineEditIndex(nextKey);
+        setInlineEditPrice(
+          next[nextKey] !== undefined ? String(next[nextKey])
+            : num(stone?.Price) > 0 ? String(stone.Price) : ''
+        );
+      }, 100);
+      return;
+    }
+
+    setInlineEditIndex(null);
+    setInlineEditPrice('');
+
+    const allFilled = Object.keys(localGrouped).every(type =>
+      (localGrouped[type]?.editableStones || []).every((st, i) => priceAt(type, i, st) > 0)
+    );
+    if (!allFilled) return;
+    if (onDone) {
+      metalTouchedRef.current = false;
+      setTimeout(onDone, 200);
+    } else if (onClose) {
+      setTimeout(onClose, 200);
+    }
+  }, [inlineEditIndex, inlineEditPrice, editedPrices, localGrouped, onDone, onClose]);
 
   useEffect(() => {
     if (hasAnyMissing && inlineEditIndex === null) {
@@ -259,6 +277,11 @@ export default function SingleStonePricing({
   const onRequestRecalculateRef = useRef(onRequestRecalculate);
   useEffect(() => { onRequestRecalculateRef.current = onRequestRecalculate; }, [onRequestRecalculate]);
 
+  const requestRecalculate = useCallback(() => {
+    metalTouchedRef.current = false;
+    onRequestRecalculateRef.current?.();
+  }, []);
+
   const updateLocalCharge = useCallback((type, field, value) => {
     setLocalCharges(prev => ({
       ...prev,
@@ -267,46 +290,50 @@ export default function SingleStonePricing({
     // The extra-charges type is toggled with a button (no keyboard blur to trigger the
     // keyboardDidHide recalc), so kick off a recalculation once the parent charge state syncs.
     if (field === 'ExtraChargesType') {
-      setIsCalculating(true);
-      setTimeout(() => onRequestRecalculateRef.current?.(), 0);
+      setTimeout(() => requestRecalculate(), 0);
     }
-  }, []);
+  }, [requestRecalculate]);
 
-  // Common Metal Weight & Rate — one value applied to every stone type (same as PricingCalculator).
-  const updateCommonMetal = useCallback((field, value) => {
+  const updateLocalMetal = useCallback((type, field, value) => {
     metalTouchedRef.current = true;
-    setCommonMetal(prev => ({ ...prev, [field]: value }));
-    setLocalGrouped(prev => {
-      const next = { ...prev };
-      Object.keys(next).forEach(type => {
-        next[type] = {
-          ...next[type],
-          editableMetal: { ...next[type].editableMetal, [field]: value },
-        };
-      });
-      return next;
+    const clean = field === 'Weight' ? limitDecimals(value, 3) : value;
+    if (field === 'Quality') {
+      const prevQuality =
+        localMetalRef.current[type]?.Quality
+        ?? localGroupedRef.current[type]?.editableMetal?.Quality
+        ?? metalKt;
+      selectQuality(type, clean, prevQuality);
+    }
+    setLocalMetal(prev => {
+      const next = { ...(prev[type] || {}), [field]: clean };
+      if (field === 'Rate' && parseFloat(clean) > 0) delete next.Ounce;
+      if (field === 'Ounce' && parseFloat(clean) > 0) delete next.Rate;
+      return { ...prev, [type]: next };
     });
-  }, []);
+    if (field === 'Quality') setTimeout(() => requestRecalculate(), 0);
+  }, [requestRecalculate, metalKt]);
 
-  // Push metal changes to the parent on every edit (recalc happens on keyboard dismiss).
   useEffect(() => {
-    if (!metalTouchedRef.current || !onRecalculatedRef.current) return;
+    if (!onRecalculatedRef.current) return;
+    const types = Object.keys(localMetal);
+    if (types.length === 0) return;
     const grouped = localGroupedRef.current;
-    Object.keys(grouped).forEach(type => {
-      const data = grouped[type];
-      if (!data) return;
-      const mergedData = {
-        ...data,
-        editableMetal: {
-          ...data.editableMetal,
-          Weight: commonMetal.Weight !== '' ? commonMetal.Weight : data.editableMetal?.Weight,
-          Rate: commonMetal.Rate !== '' ? commonMetal.Rate : data.editableMetal?.Rate,
-          Ounce: commonMetal.Ounce !== '' ? commonMetal.Ounce : data.editableMetal?.Ounce,
-        },
+    const updated = {};
+    types.forEach(type => {
+      if (!grouped[type]) return;
+      const override = { ...localMetal[type] };
+      // The payload prices by ounce whenever one is present, so an explicit rate
+      // edit has to clear the stored ounce or the rate is ignored.
+      if (parseFloat(override.Rate) > 0) override.Ounce = '';
+      if (parseFloat(override.Ounce) > 0) override.Rate = '';
+      updated[type] = {
+        ...grouped[type],
+        editableMetal: { ...grouped[type].editableMetal, ...override },
       };
-      onRecalculatedRef.current(type, mergedData);
     });
-  }, [commonMetal]);
+    setLocalGrouped(prev => ({ ...prev, ...updated }));
+    Object.keys(updated).forEach(type => onRecalculatedRef.current(type, updated[type]));
+  }, [localMetal]);
 
   // Push charge changes to parent on every edit (local state sync)
   useEffect(() => {
@@ -316,55 +343,93 @@ export default function SingleStonePricing({
     types.forEach(type => {
       const data = localGroupedRef.current[type];
       if (!data) return;
-      const ch = localCharges[type] || {};
-      const mergedData = {
-        ...data,
-        editableCharges: {
-          ...data.editableCharges,
-          Loss: ch.Loss !== undefined && ch.Loss !== '' ? ch.Loss : data.editableCharges?.Loss,
-          Labour: ch.Labour !== undefined && ch.Labour !== '' ? ch.Labour : data.editableCharges?.Labour,
-          ExtraCharges: ch.ExtraCharges !== undefined && ch.ExtraCharges !== '' ? ch.ExtraCharges : data.editableCharges?.ExtraCharges,
-          ExtraChargesType: ch.ExtraChargesType ?? data.editableCharges?.ExtraChargesType ?? 'percentage',
-          GoldDuties: ch.GoldDuties !== undefined && ch.GoldDuties !== '' ? ch.GoldDuties : data.editableCharges?.GoldDuties,
-          SilverAndLabsDuties: ch.SilverAndLabsDuties !== undefined && ch.SilverAndLabsDuties !== '' ? ch.SilverAndLabsDuties : data.editableCharges?.SilverAndLabsDuties,
-          LossAndLabourDuties: ch.LossAndLabourDuties !== undefined && ch.LossAndLabourDuties !== '' ? ch.LossAndLabourDuties : data.editableCharges?.LossAndLabourDuties,
-        },
-        dutyRates: {
-          ...data.dutyRates,
-          LabDuties: ch.LabDuties !== undefined && ch.LabDuties !== '' ? ch.LabDuties : data.dutyRates?.LabDuties,
-          NaturalDuties: ch.NaturalDuties !== undefined && ch.NaturalDuties !== '' ? ch.NaturalDuties : data.dutyRates?.NaturalDuties,
-        },
-      };
-      onRecalculatedRef.current(type, mergedData);
+      onRecalculatedRef.current(type, applyChargeOverrides(data, localCharges[type]));
     });
   }, [localCharges]);
 
   // Trigger recalculation when keyboard closes after editing duties
   useEffect(() => {
     const subscription = Keyboard.addListener('keyboardDidHide', () => {
+      if (selfDismissRef.current) {
+        selfDismissRef.current = false;
+        return;
+      }
       const charges = localChargesRef.current;
       // Recalculate when charges or the common metal weight/rate changed.
       if (Object.keys(charges).length === 0 && !metalTouchedRef.current) return;
-      setIsCalculating(true);
-      onRequestRecalculateRef.current?.();
+      requestRecalculate();
     });
     return () => subscription?.remove();
-  }, []);
+  }, [requestRecalculate]);
 
   const getApplicableFields = useCallback((type) => {
-    const applicable = localGrouped[type]?.pricingResult?.Applicable;
+    const applicable = (catData?.byType?.[type]?.pricingResult ?? localGrouped[type]?.pricingResult)?.Applicable;
     return CHARGE_FIELDS.filter(f => {
       if (f.key === 'SilverAndLabsDuties' && metalKt?.includes('Silver')) return true;
       if (!f.applicableKey) return true;
       if (!applicable) return true;
       return applicable[f.applicableKey] === true;
     });
-  }, [localGrouped]);
+  }, [catData, localGrouped, metalKt]);
+
+  const renderMetalSection = (type) => {
+    const m = localGrouped[type]?.editableMetal || {};
+    const r = localGrouped[type]?.pricingResult;
+    const edit = localMetal[type] || {};
+    const shown = (key, fallback) => {
+      const raw = edit[key] !== undefined ? edit[key] : fallback;
+      if (raw == null || raw === '') return '';
+      return key === 'Weight' ? limitDecimals(raw, 3) : String(raw);
+    };
+    const quality = edit.Quality ?? m.Quality ?? metalKt;
+
+    const FIELDS = [
+      { key: 'Weight', label: 'Weight (g)', suffix: 'g', fallback: m.Weight },
+      { key: 'Rate', label: 'Metal Rate ($/g)', suffix: '$/g', fallback: m.Rate },
+      { key: 'Ounce', label: 'Per Ounce ($)', suffix: '$/oz', fallback: m.Ounce ?? r?.GoldRatePerOunce },
+    ];
+
+    return (
+      <View style={s.chargesSection}>
+        <Text style={s.chargesTitle}>Metal Details</Text>
+        <View style={s.chargesGrid}>
+          <View style={s.chargeField}>
+            <Text style={s.chargeLabel}>Metal KT</Text>
+            <TouchableOpacity
+              style={s.ktDropdown}
+              activeOpacity={0.8}
+              onPress={() => setKtPickerType(type)}
+            >
+              <Text style={[s.ktDropdownText, !quality && s.ktDropdownPlaceholder]}>
+                {quality || 'Select KT'}
+              </Text>
+              <Icon name="arrow-drop-down" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          {FIELDS.map(f => (
+            <View key={f.key} style={s.chargeField}>
+              <Text style={s.chargeLabel}>{f.label}</Text>
+              <View style={s.chargeInputWrap}>
+                <TextInput
+                  style={s.chargeInput}
+                  value={shown(f.key, f.fallback)}
+                  onChangeText={(v) => updateLocalMetal(type, f.key, v)}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={colors.textLight}
+                />
+                <Text style={s.chargeSuffix}>{f.suffix}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
 
   const renderChargesSection = (type) => {
     const fields = getApplicableFields(type);
     const ch = localCharges[type] || {};
-    const hasLabStone = /lab/i.test(type);
 
     return (
       <View style={s.chargesSection}>
@@ -375,11 +440,7 @@ export default function SingleStonePricing({
             const placeholder = localGrouped[type]?.editableCharges?.[field.key]
               ?? localGrouped[type]?.dutyRates?.[field.key]
               ?? '0';
-            const label = field.key === 'SilverAndLabsDuties'
-              ? (hasLabStone ? 'Silver+Lab Duty' : 'Silver')
-              : field.key === 'GoldDuties'
-                ? (metalKt?.includes('Silver') ? 'Silver Duty' : metalKt?.includes('Platinum') ? 'Platinum Duty' : 'Gold Duty')
-                : field.label;
+            const label = chargeLabel(field, type, metalKt);
 
             if (field.key === 'ExtraCharges') {
               const ecType = ch.ExtraChargesType
@@ -448,7 +509,7 @@ export default function SingleStonePricing({
     const stones = data.editableStones || [];
     const missing = getTypeMissingIndices(type);
     const hasMissing = missing.size > 0;
-    const result = data.pricingResult;
+    const result = catData?.byType?.[type]?.pricingResult ?? data.pricingResult;
 
     if (hasMissing) {
       const missingStones = stones
@@ -535,23 +596,35 @@ export default function SingleStonePricing({
             })}
           </View>
 
+          {renderMetalSection(type)}
           {renderChargesSection(type)}
         </View>
       );
     }
+
+    const hasResult = !!result && num(result.TotalPrice) > 0;
+    const isPending = isRecalculating || !hasResult;
+    const money = v => (isPending ? '—' : `$${num(v)}`);
 
     return (
       <View key={type} style={s.typeSection}>
         <View style={s.typeSectionHeader}>
           <Icon name="diamond" size={18} color={colors.primary} />
           <Text style={s.typeSectionTitle}>{type}</Text>
-          <View style={s.successBadge}>
-            <Icon name="check-circle" size={12} color={colors.success} />
-            <Text style={s.successBadgeText}>Calculated</Text>
-          </View>
+          {isPending ? (
+            <View style={s.pendingBadge}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={s.pendingBadgeText}>Calculating</Text>
+            </View>
+          ) : (
+            <View style={s.successBadge}>
+              <Icon name="check-circle" size={12} color={colors.success} />
+              <Text style={s.successBadgeText}>Calculated</Text>
+            </View>
+          )}
         </View>
 
-        <View style={[s.typeCard, isCalculating && s.typeCardCalculating]}>
+        <View style={[s.typeCard, isRecalculating && s.typeCardCalculating]}>
           <View style={s.typeCardHeader}>
             <View style={{ flex: 1 }}>
               <Text style={s.typeCardName}>{type}</Text>
@@ -559,30 +632,29 @@ export default function SingleStonePricing({
                 {stones.length} stone lines • {result?.TotalPieces ?? 0} pcs • {result?.DiamondWeight ?? 0} ct
               </Text>
             </View>
-            {isCalculating && <ActivityIndicator size="small" color={colors.primary} />}
+            {isRecalculating && <ActivityIndicator size="small" color={colors.primary} />}
           </View>
-          {!isCalculating && (
-            <View style={s.typeCardBody}>
-              <View style={s.typeCardRow}>
-                <Text style={s.typeCardLabel}>Metal Price</Text>
-                <Text style={s.typeCardValue}>${num(result?.MetalPrice)}</Text>
-              </View>
-              <View style={s.typeCardRow}>
-                <Text style={s.typeCardLabel}>Diamonds</Text>
-                <Text style={s.typeCardValue}>${num(result?.DiamondsPrice)}</Text>
-              </View>
-              <View style={s.typeCardRow}>
-                <Text style={s.typeCardLabel}>Labour & Duties</Text>
-                <Text style={s.typeCardValue}>${num(result?.DutiesAmount)}</Text>
-              </View>
-              <View style={[s.typeCardRow, { borderBottomWidth: 0 }]}>
-                <Text style={s.typeCardLabelTotal}>Total Price</Text>
-                <Text style={s.typeCardValueTotal}>${num(result?.TotalPrice)}</Text>
-              </View>
+          <View style={s.typeCardBody}>
+            <View style={s.typeCardRow}>
+              <Text style={s.typeCardLabel}>Metal Price</Text>
+              <Text style={s.typeCardValue}>{money(result?.MetalPrice)}</Text>
             </View>
-          )}
+            <View style={s.typeCardRow}>
+              <Text style={s.typeCardLabel}>Diamonds</Text>
+              <Text style={s.typeCardValue}>{money(result?.DiamondsPrice)}</Text>
+            </View>
+            <View style={s.typeCardRow}>
+              <Text style={s.typeCardLabel}>Labour & Duties</Text>
+              <Text style={s.typeCardValue}>{money(result?.DutiesAmount)}</Text>
+            </View>
+            <View style={[s.typeCardRow, { borderBottomWidth: 0 }]}>
+              <Text style={s.typeCardLabelTotal}>Total Price</Text>
+              <Text style={s.typeCardValueTotal}>{money(result?.TotalPrice)}</Text>
+            </View>
+          </View>
         </View>
 
+        {renderMetalSection(type)}
         {renderChargesSection(type)}
       </View>
     );
@@ -622,55 +694,6 @@ export default function SingleStonePricing({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Common Metal Weight & Rate — kept at the top, applies to all types */}
-            <View style={s.chargesSection}>
-              <Text style={s.chargesTitle}>Metal Weight & Rate</Text>
-              <View style={s.chargesGrid}>
-                <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>Weight (g)</Text>
-                  <View style={s.chargeInputWrap}>
-                    <TextInput
-                      style={s.chargeInput}
-                      value={String(commonMetal.Weight || '')}
-                      onChangeText={(v) => updateCommonMetal('Weight', v)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textLight}
-                    />
-                    <Text style={s.chargeSuffix}>g</Text>
-                  </View>
-                </View>
-                <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>24K Rate ($/g)</Text>
-                  <View style={s.chargeInputWrap}>
-                    <TextInput
-                      style={s.chargeInput}
-                      value={String(commonMetal.Rate || '')}
-                      onChangeText={(v) => updateCommonMetal('Rate', v)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textLight}
-                    />
-                    <Text style={s.chargeSuffix}>$/g</Text>
-                  </View>
-                </View>
-                <View style={s.chargeField}>
-                  <Text style={s.chargeLabel}>Per Ounce ($)</Text>
-                  <View style={s.chargeInputWrap}>
-                    <TextInput
-                      style={s.chargeInput}
-                      value={String(commonMetal.Ounce ?? '')}
-                      onChangeText={(v) => updateCommonMetal('Ounce', v)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textLight}
-                    />
-                    <Text style={s.chargeSuffix}>$/oz</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-
             {hasAnyMissing && (
               <View style={s.globalWarningBanner}>
                 <Icon name="warning" size={15} color={colors.secondary} />
@@ -684,12 +707,19 @@ export default function SingleStonePricing({
 
             {!hasAnyMissing && (
               <TouchableOpacity
-                style={s.recalcAllBtn}
-                onPress={onRequestRecalculate}
+                style={[s.recalcAllBtn, isRecalculating && s.recalcAllBtnDisabled]}
+                onPress={requestRecalculate}
+                disabled={isRecalculating}
                 activeOpacity={0.85}
               >
-                <Icon name="refresh" size={18} color={colors.textWhite} />
-                <Text style={s.recalcAllBtnText}>Recalculate All</Text>
+                {isRecalculating ? (
+                  <ActivityIndicator size="small" color={colors.textWhite} />
+                ) : (
+                  <Icon name="refresh" size={18} color={colors.textWhite} />
+                )}
+                <Text style={s.recalcAllBtnText}>
+                  {isRecalculating ? 'Recalculating...' : 'Recalculate All'}
+                </Text>
               </TouchableOpacity>
             )}
 
@@ -705,26 +735,58 @@ export default function SingleStonePricing({
               <Icon name="visibility" size={18} color="#fff" />
               <Text style={s.clientPreviewBtnText}>Client Preview</Text>
             </TouchableOpacity>
-            <View style={s.bottomBarRow}>
-              <TouchableOpacity
-                style={s.bottomBarBtnOutline}
-                onPress={onModifyPricing}
-                activeOpacity={0.85}
-              >
-                <Text style={s.bottomBarBtnOutlineText}>Modify Pricing</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={s.adminPreviewBtn}
-                onPress={onPreviewSummary}
-                activeOpacity={0.85}
-              >
-                <Icon name="visibility" size={16} color="#fff" />
-                <Text style={s.adminPreviewBtnText}>Admin Preview</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={s.adminPreviewBtn}
+              onPress={onPreviewSummary}
+              activeOpacity={0.85}
+            >
+              <Icon name="visibility" size={16} color="#fff" />
+              <Text style={s.adminPreviewBtnText}>Admin Preview</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
+
+      <Modal
+        visible={!!ktPickerType}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setKtPickerType(null)}
+      >
+        <TouchableOpacity
+          style={s.ktPickerOverlay}
+          activeOpacity={1}
+          onPress={() => setKtPickerType(null)}
+        >
+          <TouchableOpacity activeOpacity={1} style={s.ktPickerSheet}>
+            <Text style={s.ktPickerTitle}>Select Metal KT</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {METAL_QUALITY_OPTIONS.map(opt => {
+                const active =
+                  (localMetal[ktPickerType]?.Quality
+                    ?? localGrouped[ktPickerType]?.editableMetal?.Quality
+                    ?? metalKt) === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[s.ktPickerOption, active && s.ktPickerOptionActive]}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      updateLocalMetal(ktPickerType, 'Quality', opt.value);
+                      setKtPickerType(null);
+                    }}
+                  >
+                    <Text style={[s.ktPickerOptionText, active && s.ktPickerOptionTextActive]}>
+                      {opt.label}
+                    </Text>
+                    {active && <Icon name="check" size={20} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </Modal>
   );
 }
@@ -824,6 +886,21 @@ const s = StyleSheet.create({
     color: colors.success,
   },
 
+  pendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.backgroundSecondary || '#F8F9FB',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  pendingBadgeText: {
+    fontSize: 11,
+    fontFamily: fonts.bold,
+    color: colors.textSecondary,
+  },
+
   stoneTable: {
     borderWidth: 1,
     borderColor: colors.borderLight || '#E8E8E8',
@@ -869,6 +946,62 @@ const s = StyleSheet.create({
     color: colors.textPrimary,
     textAlign: 'center',
   },
+  ktDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: colors.background,
+  },
+  ktDropdownText: {
+    fontSize: fonts.md,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+    flex: 1,
+  },
+  ktDropdownPlaceholder: { color: colors.textLight },
+  ktPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  ktPickerSheet: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    minWidth: 280,
+    maxHeight: '60%',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
+    elevation: 5,
+  },
+  ktPickerTitle: {
+    padding: 16,
+    fontSize: fonts.lg,
+    fontFamily: fonts.bold,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+    textAlign: 'center',
+    color: colors.textPrimary,
+  },
+  ktPickerOption: {
+    flexDirection: 'row',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  ktPickerOptionActive: { backgroundColor: colors.backgroundSecondary },
+  ktPickerOptionText: {
+    fontSize: fonts.base,
+    fontFamily: fonts.regular,
+    color: colors.textPrimary,
+  },
+  ktPickerOptionTextActive: { fontFamily: fonts.bold, color: colors.primary },
+
   chargesSection: {
     marginTop: 4,
     marginBottom: 8,
@@ -951,13 +1084,18 @@ const s = StyleSheet.create({
   typeCard: {
     backgroundColor: colors.primaryExtraLight || '#E6F0F1',
     borderRadius: 12,
-    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.borderLight || '#F0F0F0',
+    ...(Platform.OS === 'ios'
+      ? {
+          overflow: 'visible',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+        }
+      : null),
   },
   typeCardHeader: {
     padding: 12,
@@ -1030,10 +1168,6 @@ const s = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 12,
   },
-  bottomBarRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
   clientPreviewBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1063,32 +1197,6 @@ const s = StyleSheet.create({
     fontSize: fonts.sm || 14,
     color: '#fff',
   },
-  bottomBarBtnOutline: {
-    flex: 1,
-    borderWidth: 2,
-    borderColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  bottomBarBtnOutlineText: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 14,
-    color: colors.primary,
-  },
-  bottomBarBtnPrimary: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  bottomBarBtnPrimaryText: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 14,
-    color: '#fff',
-  },
   recalcAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1098,6 +1206,9 @@ const s = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     marginTop: 8,
+  },
+  recalcAllBtnDisabled: {
+    opacity: 0.6,
   },
   recalcAllBtnText: {
     fontFamily: fonts.bold,

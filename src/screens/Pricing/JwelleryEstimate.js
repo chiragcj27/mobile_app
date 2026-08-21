@@ -36,7 +36,7 @@ export default function JwelleryEstimate() {
   const { clients = [] } = useClients();
 
   const [stoneType, setStoneType] = useState('NaturalRegular');
-  const [metalKt, setMetalKt] = useState('18K');
+  const [metalKt, setMetalKt] = useState('');
   const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
 
   const [topView, setTopView] = useState(null);
@@ -194,9 +194,7 @@ export default function JwelleryEstimate() {
     };
 
     try {
-      console.log('Payload being sent:', JSON.stringify(payload, null, 2));
       const response = await jwelleryPriceData(payload).unwrap();
-      console.log('Estimate Response:', response);
       setEstimateResult(response);
       setCompactView(true);
     } catch (error) {

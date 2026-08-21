@@ -12,7 +12,7 @@ import { SUBSTATUS } from '../constants/enquiry';
 import { getUserName } from '../utils/userUtils';
 import { matchSizeToCatalog } from '../constants/referenceMappings';
 import { injectStockTypeDropdown } from '../utils/excelDropdown';
-import { getCategoryCode, getStoneItemCode, getStoneSieveCode, getGatiStockTypes, getDefaultGatiStockType, getToneCode } from '../constants/gatiCodes';
+import { getCategoryCode, getStoneItemCode, getStoneSieveCode, getGatiStockTypes, getDefaultGatiStockType, getToneCode, getMetalItemCode } from '../constants/gatiCodes';
 
 
 const getEnquiryId = (enquiry) =>
@@ -84,9 +84,7 @@ const generateStyleMasterData = (raw, stones, pricing) => {
   const itemSize = matchSizeToCatalog(rawSize === 'NA' ? '' : rawSize, category);
   const metalWt = pricing?.Metal?.Weight || '';
   const defaultStockType = getDefaultGatiStockType(metalQuality, stones.length > 0);
-  const metalInitial = /plat|pt/i.test(metalQuality) ? 'P' : /silver|925/i.test(metalQuality) ? 'S' : 'G';
-  const qualityNum = String(metalQuality || '').replace(/[^0-9]/g, '');
-  const metalItemCode = `${metalInitial}${qualityNum}KT`; // metal code e.g. "G14KT" (per reference import)
+  const metalItemCode = getMetalItemCode(metalQuality);
   const cadDesigner = getUserName(getAssignedId(raw));
   const inwardDate = raw?.CreatedDate ? new Date(raw.CreatedDate) : new Date();
   const styleNo = raw?.StyleNumber || '';
@@ -109,6 +107,7 @@ const generateStyleMasterData = (raw, stones, pricing) => {
   setCol(metal, 'MakeType', 'Casting');
   setCol(metal, 'InwardQty', 1);
   setCol(metal, 'ItemPcs', 1);
+  setCol(metal, 'ItemSize', itemSize);
   setCol(metal, 'ItemCode', metalItemCode);
   setCol(metal, 'RawFormula', 'WEIGHT*RATE');
   setCol(metal, 'Weight', metalWt);
@@ -222,7 +221,6 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
     const hasApprovedCad = !!approvedCad;
     const remarks = approvalMessage || '';
 
-    console.log('[handleAcceptApproval] enquiryId:', enquiryId, 'hasCoral:', hasCoral, 'hasCad:', hasCad, 'hasApprovedCoral:', hasApprovedCoral, 'hasApprovedCad:', hasApprovedCad, 'coralVersion:', coralVersion, 'cadVersion:', cadVersion, 'approvalMessage:', remarks);
 
     if (hasApprovedCoral && hasCad) {
       await updateAssetData({
@@ -277,7 +275,6 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
   const handleMoveToOrderPlacement = useCallback(async (enquiry) => {
     const enquiryId = getEnquiryId(enquiry);
     const raw = enquiry?._originalData || enquiry;
-    console.log('[handleMoveToOrderPlacement] enquiryId:', enquiryId, 'raw.Metal:', JSON.stringify(raw?.Metal));
     const cadData = Array.isArray(raw?.Cad) ? raw.Cad : [];
     const latestCadVersion = cadData.length > 0
       ? String(cadData[cadData.length - 1]?.Version || cadData.length)
@@ -294,9 +291,7 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
 
   const handleFinalExcelGeneration = useCallback(async (enquiry) => {
     try {
-      const enquiryId = getEnquiryId(enquiry);
       const raw = enquiry?._originalData || enquiry;
-      console.log('[handleFinalExcelGeneration] enquiryId:', enquiryId, 'raw keys:', Object.keys(raw || {}));
       const cadVersions = Array.isArray(raw?.Cad) ? raw.Cad : [];
       const category = raw?.Category || '';
 
@@ -320,11 +315,7 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
 
       const metalColor = raw?.Metal?.Color || raw?.Metal?.Type || '';
       const metalQuality = raw?.Metal?.Quality || '';
-      // Metal code = metal-name initial (Gold=G, Silver=S, Platinum=P) + karat + KT, e.g. "G18KT"
-      const metalNameInitial = /plat|pt/i.test(metalQuality) ? 'P' : /silver|925/i.test(metalQuality) ? 'S' : 'G';
-      const qualityNum = String(metalQuality || '').replace(/[^0-9]/g, '');
-      const mItemCode = `${metalNameInitial}${qualityNum}KT`;
-      console.log('[handleFinalExcelGeneration] Metal source: raw.Metal:', JSON.stringify(raw?.Metal), 'metalColor:', metalColor, 'metalQuality:', metalQuality, 'mItemCode:', mItemCode);
+      const mItemCode = getMetalItemCode(metalQuality);
 
       const isRing = category.toLowerCase() === 'ring';
       const rawSize = isRing
@@ -378,7 +369,6 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
         EndClientPrice: '',
       }];
 
-      console.log('[handleFinalExcelGeneration] mainData:', JSON.stringify(mainData), 'stoneCount:', stones.length, 'firstRow:', rows.length > 0 ? JSON.stringify(rows[0]) : 'none');
       return { mainData, rows, stoneCount: stones.length };
     } catch (error) {
       console.error('[handleFinalExcelGeneration] Error:', error);
@@ -388,11 +378,9 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
 
   const generateAndShareExcel = useCallback(async (enquiry) => {
     try {
-      const enquiryId = getEnquiryId(enquiry);
       const raw = enquiry?._originalData || enquiry;
-      console.log('[generateAndShareExcel] enquiryId:', enquiryId, 'raw.Metal:', JSON.stringify(raw?.Metal), 'styleNumber:', raw?.StyleNumber);
 
-      const { mainData, rows, stoneCount } = await handleFinalExcelGeneration(enquiry);
+      const { rows, stoneCount } = await handleFinalExcelGeneration(enquiry);
 
       if (!rows || rows.length === 0) {
         return { success: false, message: 'No stones found in final CAD' };
@@ -410,7 +398,6 @@ export const useEnquiryActions = ({ onAlert } = {}) => {
 
       // --- Generate Style Master Excel ---
       const styleMasterData = generateStyleMasterData(raw, stones, pricing);
-      console.log('[generateAndShareExcel] StyleMaster metalColor from row[7]:', styleMasterData.rows[0]?.[7], 'headers:', styleMasterData.headers);
       const smWb = XLSX.utils.book_new();
       const smWs = XLSX.utils.aoa_to_sheet([styleMasterData.headers, ...styleMasterData.rows]);
       smWs['!cols'] = styleMasterData.headers.map(() => ({ wch: 18 }));

@@ -30,9 +30,10 @@ import PdfViewerTestScreen from '../screens/Test/PdfViewerTestScreen';
 import PricingCalci from '../screens/Pricing/PricingCalculator';
 import ClientHandlerDashboardScreen from '../screens/ClientHandler/ClientHandlerDashboardScreen';
 import Reports from '../screens/Reports/reports'
+import ReportsDashboard from '../screens/Reports/ReportsDashboardScreen'
 import JwelleryEstimate from '../screens/Pricing/JwelleryEstimate';
 import PricingPreviewScreen from '../screens/Pricing/previewScreen';
-import ModifyPricingScreen from '../screens/Pricing/ModifyPricingScreen';
+import InventoryScreen from '../screens/Inventory/InventoryScreen'; 
 // TEST SCREENS - Commented out for production
 // Uncomment these lines if you need to test notifications in the future
 // import FontTest from '../components/FontTest';
@@ -76,6 +77,12 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           <Stack.Screen
             name="ClientHandlerEnquiries"
             component={EnquiryListScreen}
+            options={{ headerShown: false }}
+          />
+          {/*Inventory screen */}
+          <Stack.Screen
+            name="Inventory"
+            component={InventoryScreen}
             options={{ headerShown: false }}
           />
           <Stack.Screen
@@ -210,14 +217,6 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           }}/>
 
           <Stack.Screen
-          name="ModifyPricingScreen"
-          component={ModifyPricingScreen}
-          options={{
-            headerShown: false,
-            gestureEnabled: true,
-          }}/>
-
-          <Stack.Screen
           name="EstimateJwellery"
           component={JwelleryEstimate}
            options={({ route }) => ({
@@ -227,6 +226,10 @@ const StackNavigator = ({ isAuthenticated, showOnboarding, onOnboardingComplete 
           <Stack.Screen
             name="Reports"
             component={Reports}/>
+          <Stack.Screen
+            name="ReportsDashboard"
+            component={ReportsDashboard}
+            options={{ headerShown: false }}/>
 
           <Stack.Screen
             name="UploadDesign"

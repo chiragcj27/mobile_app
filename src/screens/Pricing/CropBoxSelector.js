@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -37,19 +37,20 @@ export default function CropBoxSelector({
   const imgRectRef = useRef(null);
 
   // The displayed image rectangle inside the container (resizeMode="contain" letterboxes it).
-  const imgRect = useMemo(() => {
-    if (!container || !imageWidth || !imageHeight) return null;
+  useEffect(() => {
+    if (!container || !imageWidth || !imageHeight) {
+      imgRectRef.current = null;
+      return;
+    }
     const scale = Math.min(container.width / imageWidth, container.height / imageHeight);
     const w = imageWidth * scale;
     const h = imageHeight * scale;
-    const r = {
+    imgRectRef.current = {
       left: (container.width - w) / 2,
       top: (container.height - h) / 2,
       width: w,
       height: h,
     };
-    imgRectRef.current = r;
-    return r;
   }, [container, imageWidth, imageHeight]);
 
   const measureCanvas = () => {
@@ -100,7 +101,6 @@ export default function CropBoxSelector({
     const ir = imgRectRef.current;
     // No box (or a stray tap) → treat as the whole image.
     if (!rect || !ir || rect.w < 8 || rect.h < 8) {
-      console.log('[crop][selector] no/tiny box → whole image', { rect, imgRect: ir });
       onConfirm({ x: 0, y: 0, w: 1, h: 1 });
       return;
     }
@@ -109,7 +109,6 @@ export default function CropBoxSelector({
     const fw = clamp01(Math.min(rect.w / ir.width, 1 - fx));
     const fh = clamp01(Math.min(rect.h / ir.height, 1 - fy));
     const fractions = { x: +fx.toFixed(4), y: +fy.toFixed(4), w: +fw.toFixed(4), h: +fh.toFixed(4) };
-    console.log('[crop][selector] box → fractions', { boxPx: rect, imgRect: ir, fractions });
     onConfirm(fractions);
   };
 
