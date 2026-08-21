@@ -321,9 +321,14 @@ export default function SingleStonePricing({
     const updated = {};
     types.forEach(type => {
       if (!grouped[type]) return;
+      const override = { ...localMetal[type] };
+      // The payload prices by ounce whenever one is present, so an explicit rate
+      // edit has to clear the stored ounce or the rate is ignored.
+      if (parseFloat(override.Rate) > 0) override.Ounce = '';
+      if (parseFloat(override.Ounce) > 0) override.Rate = '';
       updated[type] = {
         ...grouped[type],
-        editableMetal: { ...grouped[type].editableMetal, ...localMetal[type] },
+        editableMetal: { ...grouped[type].editableMetal, ...override },
       };
     });
     setLocalGrouped(prev => ({ ...prev, ...updated }));
