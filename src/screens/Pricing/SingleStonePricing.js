@@ -93,6 +93,7 @@ export default function SingleStonePricing({
   const localChargesRef = useRef(localCharges);
   const localGroupedRef = useRef(localGrouped);
   const localMetalRef = useRef(localMetal);
+  const lastResultRef = useRef({});
   const onRecalculatedRef = useRef(onRecalculated);
   useEffect(() => { localChargesRef.current = localCharges; }, [localCharges]);
   useEffect(() => { localGroupedRef.current = localGrouped; }, [localGrouped]);
@@ -106,6 +107,7 @@ export default function SingleStonePricing({
     setInlineEditIndex(null);
     setInlineEditPrice('');
     setLocalMetal({});
+    lastResultRef.current = {};
     metalTouchedRef.current = false;
   }, [visible]);
 
@@ -116,6 +118,23 @@ export default function SingleStonePricing({
       if (catData.byType?.[type]) grouped[type] = catData.byType[type];
     });
     setLocalGrouped(grouped);
+
+    // A new pricing result means the backend has answered for that type, so its
+    // local edits stop overriding and the recalculated values show through.
+    setLocalMetal(prev => {
+      const next = { ...prev };
+      let changed = false;
+      Object.keys(grouped).forEach(type => {
+        const result = grouped[type]?.pricingResult;
+        if (!result || lastResultRef.current[type] === result) return;
+        lastResultRef.current[type] = result;
+        if (next[type]) {
+          delete next[type];
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
   }, [visible, catData]);
 
   useEffect(() => {
@@ -287,8 +306,8 @@ export default function SingleStonePricing({
     }
     setLocalMetal(prev => {
       const next = { ...(prev[type] || {}), [field]: clean };
-      if (field === 'Rate' && parseFloat(clean) > 0) next.Ounce = '';
-      if (field === 'Ounce' && parseFloat(clean) > 0) next.Rate = '';
+      if (field === 'Rate' && parseFloat(clean) > 0) delete next.Ounce;
+      if (field === 'Ounce' && parseFloat(clean) > 0) delete next.Rate;
       return { ...prev, [type]: next };
     });
     if (field === 'Quality') setTimeout(() => requestRecalculate(), 0);
