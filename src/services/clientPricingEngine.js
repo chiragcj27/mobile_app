@@ -2,6 +2,7 @@ import secureStorage from '../utils/secureStorage';
 import { decodeJWT } from '../utils/helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { classifyMetal, classifyStone, readDutyRates } from '../utils/pricingDuties';
+import { normalizeExtraCharges } from '../utils/extraCharges';
 
 const API_BASE_URL = "https://workflowapi-quhn.onrender.com"
 const CLIENT_PRICING_CACHE_KEY = '@pricing_engine_client_pricing';
@@ -465,7 +466,8 @@ export const computeUnitPriceFromSource = (source, selectedFilters = {}, pricing
   const clientDiamondPrices = normalizeDiamondPriceRows(pricingConfig);
   const loss = safeNumber(firstDefined(pricingConfig?.loss, pricingConfig?.Loss));
   const labour = safeNumber(firstDefined(pricingConfig?.labour, pricingConfig?.Labour));
-  const extraCharges = safeNumber(firstDefined(pricingConfig?.extraCharges, pricingConfig?.ExtraCharges));
+  const extraChargesConfig = normalizeExtraCharges(firstDefined(pricingConfig?.extraCharges, pricingConfig?.ExtraCharges));
+  const extraCharges = extraChargesConfig.Value;
   const dutyRates = readDutyRates(pricingConfig);
 
   const { quality, weight } = resolveUnitMetal(source, selectedFilters);
@@ -510,8 +512,13 @@ export const computeUnitPriceFromSource = (source, selectedFilters = {}, pricing
     dutiesBreakdown.SilverAndLabsDuties +
     dutiesBreakdown.LossAndLabourDuties;
 
-  const subtotal = metalPrice + diamondPrice + extraCharges;
-  const total = Math.ceil(subtotal + dutiesAmount);
+  // Mirror the server: extra charges apply on top of (metal + diamonds + duties) —
+  // a fixed type adds a flat amount, a percentage type scales the running total.
+  const preExtra = metalPrice + diamondPrice + dutiesAmount;
+  const subtotal = extraChargesConfig.Type === 'fixed'
+    ? preExtra + extraCharges
+    : preExtra * (1 + extraCharges / 100);
+  const total = Math.ceil(subtotal);
 
   if (__DEV__) {
     const lengthFilter =
@@ -534,13 +541,13 @@ export const computeUnitPriceFromSource = (source, selectedFilters = {}, pricing
         ),
     );
     const productKey = source?.styleNo || source?._id || source?.name || 'unknown';
-    const finalBeforeRound = round3(subtotal + dutiesAmount);
+    const finalBeforeRound = round3(subtotal);
     const formulaSummary = [
       `metalRateWithLoss = ${round3(metalRate)} * (1 + ${round3(loss)}/100) = ${round3(metalRateWithLoss)}`,
       `metalPerGram = ${round3(metalRateWithLoss)} + labour(${round3(labour)}) = ${round3(metalPerGram)}`,
       `metalPrice = weight(${round3(weight)}) * ${round3(metalPerGram)} = ${round3(metalPrice)}`,
       `diamondPrice = ${diamondComputation.breakdown.length ? diamondComputation.breakdown.map((row) => row.formula).join(' + ') : '0'} = ${round3(diamondPrice)}`,
-      `subtotal = metalPrice(${round3(metalPrice)}) + diamondPrice(${round3(diamondPrice)}) + extraCharges(${round3(extraCharges)}) = ${round3(subtotal)}`,
+      `subtotal = (metalPrice(${round3(metalPrice)}) + diamondPrice(${round3(diamondPrice)}) + duties(${round3(dutiesAmount)})) ${extraChargesConfig.Type === 'fixed' ? `+ ${round3(extraCharges)} fixed` : `* (1 + ${round3(extraCharges)}%)`} = ${round3(subtotal)}`,
       `dutiesAmount = ${round3(dutiesAmount)} [natural=${round3(dutiesBreakdown.NaturalDuties)}, lab=${round3(dutiesBreakdown.LabDuties)}, gold=${round3(dutiesBreakdown.GoldDuties)}, silverLab=${round3(dutiesBreakdown.SilverAndLabsDuties)}, lossLabour=${round3(dutiesBreakdown.LossAndLabourDuties)}]`,
       `final = ceil(${round3(finalBeforeRound)}) = ${total}`,
     ];

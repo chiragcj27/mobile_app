@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Image, InteractionManager } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Image, InteractionManager, Platform } from 'react-native';
 import Video from 'react-native-video';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../../constants/colors';
@@ -1356,12 +1356,17 @@ const getStatusColor = (status) => {
 };
 
 const getPriorityColor = (priority) => {
-  const colors = {
+  const p = (priority || '').toLowerCase().trim();
+  const priorityColors = {
     high: '#EF4444',
+    'super high': '#EF4444',
     medium: '#F59E0B',
     low: '#10B981',
+    normal: '#10B981',
+    urgent: '#EF4444',
+    'super urgent': '#EF4444',
   };
-  return colors[priority] || '#6B7280';
+  return priorityColors[p] || '#6B7280';
 };
 
 const formatDate = (dateString) => {
@@ -1706,7 +1711,7 @@ const styles = StyleSheet.create({
     elevation: 3,
     borderWidth: 1,
     borderColor: colors.borderLight,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
   },
   compactEnquiryCardTablet: {
     width: '31%',
