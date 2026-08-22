@@ -67,10 +67,8 @@ export const regroupApiResults = (apiResults, existingGroupedData, categoryMap =
       editableMetal: {
         Weight: result.Metal?.Weight ?? prevMetal?.Weight ?? 0,
         Quality: result.Metal?.Quality ?? prevMetal?.Quality ?? '',
-        Rate: result.Metal?.Rate ?? prevMetal?.Rate ?? 0,
-        Ounce: result.GoldRatePerOunce
-          ? String(result.GoldRatePerOunce)
-          : prevMetal?.Ounce || '',
+        Rate: result.Metal?.Rate ?? 0,
+        Ounce: result.GoldRatePerOunce ? String(result.GoldRatePerOunce) : '',
       },
       editableCharges: {
         Loss: result.Client?.Loss ?? 0,

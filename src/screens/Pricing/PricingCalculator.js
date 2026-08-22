@@ -26,7 +26,7 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
 import { buildRecalculatePayload } from '../../utils/pricingRecalc';
-import { selectQuality, getSelectedQuality, commitQuality } from '../../utils/metalQualitySelector';
+import { selectQuality, getSelectedQuality, commitQuality, resetSelectedQuality } from '../../utils/metalQualitySelector';
 import {
   groupStoneDataByCategory,
   splitGroupedDataForRecalc,
@@ -181,6 +181,7 @@ export default function PricingCalci({ route, navigation }) {
     setImageFile(null);
     setMetalWeight('');
     pendingWeightRef.current = null;
+    resetSelectedQuality();
     setGroupedData({});
     setStoneRecalcStatus({});
     setPdfHtml(null);
@@ -578,6 +579,7 @@ export default function PricingCalci({ route, navigation }) {
         return next;
       });
 
+      succeededTypes.forEach(({ type }) => commitQuality(type));
       commitQuality(clientId || 'pricing');
       pendingWeightRef.current = null;
     }
@@ -721,7 +723,7 @@ export default function PricingCalci({ route, navigation }) {
           { text: 'Try Again', onPress: () => runExtraction(file, crop) },
         ]);
       } else {
-        showAlert('Extraction Error', 'Failed to extract pricing data. Check configuration.', 'error');
+        showAlert('Time out Error', 'Retry the extraction ', 'error');
       }
       resetToFresh();
     }

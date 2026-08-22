@@ -6,7 +6,7 @@ export const selectQuality = (key, quality, seedCurrent) => {
 
   if (!existing) {
     selectors.set(k, { current: seedCurrent || quality, updated: quality });
-  } else if (quality && quality !== existing.updated) {
+  } else {
     selectors.set(k, { current: existing.updated, updated: quality });
   }
 

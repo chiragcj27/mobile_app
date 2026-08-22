@@ -79,6 +79,7 @@ export default function SingleStonePricing({
   const [localCharges, setLocalCharges] = useState({});
   const [localMetal, setLocalMetal] = useState({});
   const [ktPickerType, setKtPickerType] = useState(null);
+  const [pickedQuality, setPickedQuality] = useState({});
   const metalTouchedRef = useRef(false);
 
   const [inlineEditIndex, setInlineEditIndex] = useState(null);
@@ -107,6 +108,7 @@ export default function SingleStonePricing({
     setInlineEditIndex(null);
     setInlineEditPrice('');
     setLocalMetal({});
+    setPickedQuality({});
     lastResultRef.current = {};
     metalTouchedRef.current = false;
   }, [visible]);
@@ -121,20 +123,16 @@ export default function SingleStonePricing({
 
     // A new pricing result means the backend has answered for that type, so its
     // local edits stop overriding and the recalculated values show through.
-    setLocalMetal(prev => {
-      const next = { ...prev };
-      let changed = false;
-      Object.keys(grouped).forEach(type => {
-        const result = grouped[type]?.pricingResult;
-        if (!result || lastResultRef.current[type] === result) return;
-        lastResultRef.current[type] = result;
-        if (next[type]) {
-          delete next[type];
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
+    const retired = Object.keys(grouped).filter(type => {
+      const result = grouped[type]?.pricingResult;
+      if (!result || lastResultRef.current[type] === result) return false;
+      lastResultRef.current[type] = result;
+      return true;
     });
+    if (retired.length > 0) {
+      setLocalMetal({});
+      setLocalCharges({});
+    }
   }, [visible, catData]);
 
   useEffect(() => {
@@ -303,6 +301,7 @@ export default function SingleStonePricing({
         ?? localGroupedRef.current[type]?.editableMetal?.Quality
         ?? metalKt;
       selectQuality(type, clean, prevQuality);
+      setPickedQuality(prev => ({ ...prev, [type]: clean }));
     }
     setLocalMetal(prev => {
       const next = { ...(prev[type] || {}), [field]: clean };
@@ -381,12 +380,13 @@ export default function SingleStonePricing({
       if (raw == null || raw === '') return '';
       return key === 'Weight' ? limitDecimals(raw, 3) : String(raw);
     };
-    const quality = edit.Quality ?? m.Quality ?? metalKt;
+    const quality =
+      edit.Quality ?? pickedQuality[type] ?? r?.MetalKT ?? m.Quality ?? metalKt;
 
     const FIELDS = [
       { key: 'Weight', label: 'Weight (g)', suffix: 'g', fallback: m.Weight },
-      { key: 'Rate', label: 'Metal Rate ($/g)', suffix: '$/g', fallback: m.Rate },
-      { key: 'Ounce', label: 'Per Ounce ($)', suffix: '$/oz', fallback: m.Ounce ?? r?.GoldRatePerOunce },
+      { key: 'Rate', label: 'Metal Rate ($/g)', suffix: '$/g', fallback: r?.GoldRate24K ?? m.Rate },
+      { key: 'Ounce', label: 'Per Ounce ($)', suffix: '$/oz', fallback: r?.GoldRatePerOunce ?? m.Ounce },
     ];
 
     return (
@@ -453,7 +453,7 @@ export default function SingleStonePricing({
                     <View style={[s.chargeInputWrap, { flex: 1 }]}>
                       <TextInput
                         style={s.chargeInput}
-                        value={rawValue !== undefined ? String(rawValue) : ''}
+                        value={rawValue !== undefined ? String(rawValue) : String(placeholder ?? '')}
                         onChangeText={(v) => updateLocalCharge(type, field.key, v)}
                         keyboardType="decimal-pad"
                         placeholder={String(placeholder)}
@@ -486,7 +486,7 @@ export default function SingleStonePricing({
                 <View style={s.chargeInputWrap}>
                   <TextInput
                     style={s.chargeInput}
-                    value={rawValue !== undefined ? String(rawValue) : ''}
+                    value={rawValue !== undefined ? String(rawValue) : String(placeholder ?? '')}
                     onChangeText={(v) => updateLocalCharge(type, field.key, v)}
                     keyboardType="decimal-pad"
                     placeholder={String(placeholder)}
@@ -764,6 +764,8 @@ export default function SingleStonePricing({
               {METAL_QUALITY_OPTIONS.map(opt => {
                 const active =
                   (localMetal[ktPickerType]?.Quality
+                    ?? pickedQuality[ktPickerType]
+                    ?? localGrouped[ktPickerType]?.pricingResult?.MetalKT
                     ?? localGrouped[ktPickerType]?.editableMetal?.Quality
                     ?? metalKt) === opt.value;
                 return (
