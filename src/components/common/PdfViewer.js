@@ -16,7 +16,7 @@ import { fonts } from '../../constants/fonts';
  *
  * When `html` is provided it takes priority over `url`.
  */
-const PdfViewer = ({ url, html, style }) => {
+const PdfViewer = ({ url, html, style, onMessage }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(false);
 
@@ -41,6 +41,7 @@ const PdfViewer = ({ url, html, style }) => {
             style={styles.webview}
             onLoadEnd={() => setLoading(false)}
             onError={() => { setLoading(false); setError(true); }}
+            onMessage={onMessage}
             javaScriptEnabled={true}
             domStorageEnabled={true}
             startInLoadingState={false}
