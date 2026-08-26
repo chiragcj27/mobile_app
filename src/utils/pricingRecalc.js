@@ -43,7 +43,7 @@ function resolveDutyRates(data, selectedClient) {
   return result;
 }
 
-export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true, previousMetalQuality, updatedMetalQuality }) => {
+export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClient, commonMetal = {}, isRecalculate = true, previousMetalQuality, updatedMetalQuality, quantity = 1 }) => {
   const formattedStones = (Array.isArray(data?.editableStones) ? data.editableStones : [])
     .map(s => ({
       Type: s.Type,
@@ -82,7 +82,7 @@ export const buildRecalculatePayload = ({ clientId, data, metalKt, selectedClien
     details: {
       Metal: metalPayload,
       Stones: formattedStones,
-      Quantity: 1,
+      Quantity: parseInt(quantity, 10) || 1,
       Loss: previousCharges.Loss,
       Labour: previousCharges.Labour,
       ExtraCharges: makeExtraCharges(previousCharges.ExtraCharges, previousCharges.ExtraChargesType),
