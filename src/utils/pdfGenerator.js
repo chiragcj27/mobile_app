@@ -740,8 +740,8 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   const metalQuality = src?.Metal?.Quality || src?.metal?.quality || null;
 
   // ── Gather design versions ──────────────────────────────────────────────
-  const coralVersions = Array.isArray(src?.Coral) ? src.Coral : [];
-  const cadVersions   = Array.isArray(src?.Cad)   ? src.Cad   : [];
+const coralVersions = Array.isArray(src?.Coral) ? [...src.Coral].reverse() : [];
+const cadVersions = Array.isArray(src?.Cad) ? [...src.Cad].reverse() : [];
 
 
   // Final CAD = version explicitly marked as final

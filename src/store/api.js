@@ -501,6 +501,29 @@ export const api = createApi({
       },
     }),
 
+    // Approval Desk — read a client's reply into a structured instruction record
+    parseApprovalEnquiry: builder.mutation({
+      query: ({ enquiry, mode, message, previous, answers }) => ({
+        url: '/api/enquiries/parse/approval_parse',
+        method: 'POST',
+        body: {
+          enquiry,
+          mode,
+          message,
+          previous,
+          answers,
+        },
+      }),
+      transformResponse: response => response?.data || response,
+      transformErrorResponse: response => ({
+        status: response?.status,
+        message:
+          response?.data?.message ||
+          response?.error ||
+          'Could not read the client message.',
+      }),
+    }),
+
     // Submit final enquiry with images and data
     submitEnquiry: builder.mutation({
       queryFn: async (
@@ -6092,6 +6115,7 @@ export const {
 
   // Enquiry Parsing
   useParseEnquiryMutation,
+  useParseApprovalEnquiryMutation,
   useSubmitEnquiryMutation,
 
   // Enquiries

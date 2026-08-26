@@ -59,6 +59,7 @@ import { EnquiryHistoryModal } from '../../components/modals';
 import QuotationModal from '../../components/modals/QuotationModal';
 import FinalLookModal from '../../components/modals/FinalLookModal';
 import ShareEnquiryModal from '../../components/modals/ShareEnquiryModal';
+import ApprovalDecisionModal from '../../components/modals/ApprovalDecisionModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../../config/apiConfig';
 import { useUsers } from '../../features/users/usersHooks';
@@ -357,6 +358,7 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
   const [updateReason, setUpdateReason] = useState('');
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [activeDesignType, setActiveDesignType] = useState(null);
+  const [approvalMode, setApprovalMode] = useState(null);
   const [showQuotationModal, setShowQuotationModal] = useState(false);
   const [showFinalLookModal, setShowFinalLookModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -3496,6 +3498,88 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
     }
   };
 
+  // ── Approval Desk (client-reply parsing) ──────────────────────────────────
+  const handleSingleEnquiryApprovalConfirm = async ({ instruction }) => {
+    setIsActionLoading(true);
+    try {
+      const acceptData = originalData || enquiry;
+      const src = acceptData?._originalData || acceptData;
+      const itemSrc = enquiry?._originalData || enquiry;
+      const coralArr =
+        (Array.isArray(src?.Coral) && src.Coral.length && src.Coral) ||
+        (Array.isArray(itemSrc?.Coral) && itemSrc.Coral.length && itemSrc.Coral) ||
+        [];
+      const cadArr =
+        (Array.isArray(src?.Cad) && src.Cad.length && src.Cad) ||
+        (Array.isArray(itemSrc?.Cad) && itemSrc.Cad.length && itemSrc.Cad) ||
+        [];
+      const rawCoral = src?.lastCoral || acceptData?.lastCoral || itemSrc?.lastCoral || enquiry?.lastCoral || coralArr[coralArr.length - 1] || null;
+      const rawCad = src?.lastCad || acceptData?.lastCad || itemSrc?.lastCad || enquiry?.lastCad || cadArr[cadArr.length - 1] || null;
+      const readVersion = raw =>
+        raw && typeof raw === 'object'
+          ? String(raw.Version || raw.version || '')
+          : String(raw || '');
+      const wantCad = currentInferredDesignType === 'cad';
+      const coralVersion = wantCad ? '' : readVersion(rawCoral);
+      const cadVersion = wantCad ? readVersion(rawCad) : '';
+      const approvedCoral =
+        src?.approvedCoral ||
+        coralArr.find(v => v?.IsApprovedVersion === true) ||
+        null;
+      const approvedCad =
+        src?.approvedCad ||
+        cadArr.find(v => v?.IsApprovedVersion === true) ||
+        null;
+
+      if (!approvedCoral && !approvedCad && !coralVersion && !cadVersion) {
+        throw new Error('No design versions found to approve.');
+      }
+
+      await handleAcceptApproval(acceptData, coralVersion, cadVersion, approvedCoral, approvedCad, instruction);
+      showAlert('Accepted', 'Design accepted successfully.', 'success', [{ text: 'OK' }]);
+      setApprovalMode(null);
+    } catch (e) {
+      showAlert(
+        'Failed',
+        e?.data?.message || e?.message || 'Could not complete the approval.',
+        'error',
+        [{ text: 'OK' }],
+      );
+      throw e;
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleSingleEnquiryRejectionConfirm = async ({ instruction }) => {
+    setIsActionLoading(true);
+    try {
+      const numericVersion = getVersionFromLast(activeDesignType);
+      await updateAssetData({
+        enquiryId,
+        type: activeDesignType,
+        version: String(numericVersion),
+        data: {
+          IsApprovedVersion: false,
+          ReasonForRejection: instruction,
+        },
+      }).unwrap();
+      showAlert('Sent for Redo', 'Design sent back for redo.', 'success', [{ text: 'OK' }]);
+      setApprovalMode(null);
+      setActiveDesignType(null);
+    } catch (e) {
+      showAlert(
+        'Failed',
+        e?.data?.message || e?.message || 'Could not reject. Please try again.',
+        'error',
+        [{ text: 'OK' }],
+      );
+      throw e;
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleRejectQuotationFn = async () => {
     if (!updateReason.trim() || !activeDesignType) return;
     setIsActionLoading(true);
@@ -3648,85 +3732,16 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         ) : shouldShowApprovalButtons ? (
           <View style={styles.QuickButtonContainer}>
             <TouchableOpacity
-              style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
+              style={[styles.QuickActionButton, { backgroundColor: colors.primary }]}
               disabled={isActionLoading}
               onPress={() => {
-                const acceptData = originalData || enquiry;
-                const src = acceptData?._originalData || acceptData;
-                const itemSrc = enquiry?._originalData || enquiry;
-                // Fall back to the Coral/Cad version arrays when the backend didn't send
-                // last*/approved* fields — otherwise the version string comes out empty and
-                // the accept bails with "No design versions found to approve".
-                const coralArr =
-                  (Array.isArray(src?.Coral) && src.Coral.length && src.Coral) ||
-                  (Array.isArray(itemSrc?.Coral) && itemSrc.Coral.length && itemSrc.Coral) ||
-                  [];
-                const cadArr =
-                  (Array.isArray(src?.Cad) && src.Cad.length && src.Cad) ||
-                  (Array.isArray(itemSrc?.Cad) && itemSrc.Cad.length && itemSrc.Cad) ||
-                  [];
-                const rawCoral = src?.lastCoral || acceptData?.lastCoral || itemSrc?.lastCoral || enquiry?.lastCoral || coralArr[coralArr.length - 1] || null;
-                const rawCad = src?.lastCad || acceptData?.lastCad || itemSrc?.lastCad || enquiry?.lastCad || cadArr[cadArr.length - 1] || null;
-                const readVersion = raw =>
-                  raw && typeof raw === 'object'
-                    ? String(raw.Version || raw.version || '')
-                    : String(raw || '');
-                // Only send the version for the design type that's currently in play so we
-                // never approve an old Coral version while a CAD is the one pending.
-                const wantCad = currentInferredDesignType === 'cad';
-                const coralVersion = wantCad ? '' : readVersion(rawCoral);
-                const cadVersion = wantCad ? readVersion(rawCad) : '';
-                const versionLabel = cadVersion
-                  ? `CAD Version ${cadVersion}`
-                  : coralVersion
-                    ? `Coral Version ${coralVersion}`
-                    : '';
-                const acceptMessage = versionLabel
-                  ? `Accept and approve this design? (${versionLabel})`
-                  : 'Accept and approve this design?';
-                showAlert(
-                'Confirm Accept',
-                acceptMessage,
-                'info',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                   { text: 'Confirm', onPress: async () => {
-                    hideAlert();
-                    setIsActionLoading(true);
-                    try {
-                      const approvedCoral =
-                        src?.approvedCoral ||
-                        coralArr.find(v => v?.IsApprovedVersion === true) ||
-                        null;
-                      const approvedCad =
-                        src?.approvedCad ||
-                        cadArr.find(v => v?.IsApprovedVersion === true) ||
-                        null;
-
-                      if (!approvedCoral && !approvedCad && !coralVersion && !cadVersion) {
-                        showAlert('Missing Data', 'No design versions found to approve.', 'error', [{ text: 'OK' }]);
-                        setIsActionLoading(false);
-                        return;
-                      }
-
-                      await handleAcceptApproval(acceptData, coralVersion, cadVersion, approvedCoral, approvedCad);
-                      showAlert('Accepted', 'Design accepted successfully.', 'success', [{ text: 'OK' }]);
-                    } catch (e) {
-                      const errDetail = e?.data
-                        ? JSON.stringify(e.data)
-                        : e?.message || String(e);
-                      showAlert('Failed', `Accept failed: ${errDetail}`, 'error', [{ text: 'OK' }]);
-                    } finally {
-                      setIsActionLoading(false);
-                    }
-                  }},
-                ]
-              );
+                setActiveDesignType(currentInferredDesignType);
+                setApprovalMode('approve');
               }}
             >
               {isActionLoading
                 ? <ActivityIndicator size="small" color="#fff" />
-                : <><Icon name="check" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Accept</Text></>}
+                : <><Icon name="check" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Approve</Text></>}
             </TouchableOpacity>
             {has(ACTION.REJECT_APPROVAL) && (
               <TouchableOpacity
@@ -3734,15 +3749,12 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
                 disabled={isActionLoading}
                 onPress={() => {
                   setActiveDesignType(currentInferredDesignType);
-                  setShowQuotationActions(true);
-                  setShowReasonInput(true);
-                  setIsRejectingApproval(true);
-                  setUpdateReason('');
+                  setApprovalMode('reject');
                 }}
               >
                 <Icon name="close" size={16} color={colors.textWhite} />
                 <View style={{ width: 4 }} />
-                <Text style={styles.QuickActionButtonText}>Reject</Text>
+                <Text style={styles.QuickActionButtonText}>Redo</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -4492,6 +4504,21 @@ const SingleEnquiryScreen = ({ route, navigation }) => {
         enquiry={{ ...enquiry, clientName }}
         onClose={() => setShowShareModal(false)}
         isDesigner={isDesigner}
+      />
+
+      <ApprovalDecisionModal
+        visible={approvalMode !== null}
+        mode={approvalMode}
+        enquiry={originalData || enquiry}
+        onClose={() => {
+          if (isActionLoading) return;
+          setApprovalMode(null);
+        }}
+        onConfirm={
+          approvalMode === 'approve'
+            ? handleSingleEnquiryApprovalConfirm
+            : handleSingleEnquiryRejectionConfirm
+        }
       />
 
       <BrandedAlert

@@ -11,7 +11,7 @@ import { Platform } from 'react-native';
 // Set these to true/false to control which URL is used
 
 // Force production URL even in development (useful for testing production API)
-export const USE_PRODUCTION_URL = true;
+export const USE_PRODUCTION_URL = false;
 
 // Use custom URL (set CUSTOM_API_URL below)
 export const USE_CUSTOM_URL = false;
@@ -30,12 +30,12 @@ export const PHYSICAL_DEVICE_IP = '192.168.51.175'; // Change to your computer's
 const PRODUCTION_API_URL = 'https://workflowapi-quhn.onrender.com';
 
 // Custom API URL (only used if USE_CUSTOM_URL is true)
-const CUSTOM_API_URL = `http://${PHYSICAL_DEVICE_IP}:3000`; // Change to your custom URL
+const CUSTOM_API_URL = `http://${PHYSICAL_DEVICE_IP}:3001`; // Change to your custom URL
 
 // Development URLs
-const DEV_ANDROID_EMULATOR_URL = 'http://10.0.2.2:3000';
-const DEV_IOS_SIMULATOR_URL = 'http://localhost:3000';
-const DEV_ANDROID_PHYSICAL_URL = `http://${PHYSICAL_DEVICE_IP}:3000`;
+const DEV_ANDROID_EMULATOR_URL = 'http://10.0.2.2:3001';
+const DEV_IOS_SIMULATOR_URL = 'http://localhost:3001';
+const DEV_ANDROID_PHYSICAL_URL = `http://${PHYSICAL_DEVICE_IP}:3001`;
 
 /**
  * Get the base URL for API requests
@@ -100,8 +100,8 @@ export const getSocketBaseUrl = () => {
   if (USE_SEPARATE_SOCKET_PORT) {
     const apiUrl = getApiBaseUrl();
     // Replace port in URL
-    if (apiUrl.includes(':3000')) {
-      return apiUrl.replace(':3000', `:${SOCKET_PORT}`);
+    if (apiUrl.includes(':3001')) {
+      return apiUrl.replace(':3001', `:${SOCKET_PORT}`);
     }
     // If no port specified, add socket port
     return `${apiUrl}:${SOCKET_PORT}`;

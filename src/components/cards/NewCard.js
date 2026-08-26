@@ -39,6 +39,7 @@ import {
 import { actionsFor, resolveRoleCode, ACTION, SUBSTATUS, STATUS, ROLE } from '../../constants/enquiry';
 import { useEnquiryActions } from '../../hooks/useEnquiryActions';
 import { useBrandedAlert } from '../../hooks/useBrandedAlert';
+import ApprovalDecisionModal from '../modals/ApprovalDecisionModal';
 
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -112,7 +113,8 @@ export default function NewEnquiryCard({
   const { alertConfig: alertCfg, showAlert, hideAlert } = useBrandedAlert();
   
   const [activeDesignType, setActiveDesignType] = useState(null);
-  
+  const [approvalMode, setApprovalMode] = useState(null);
+
 
   const coralDesigners = useMemo(
     () => (users || []).filter(u => u.role === 2 || u.roleId === 2 || u.roleNumber === 2),
@@ -501,6 +503,96 @@ export default function NewEnquiryCard({
     }
   };
 
+  // ── Approval Desk (client-reply parsing) ──────────────────────────────────
+  const submitParsedApproval = async instruction => {
+    const acceptData = fullEnquiryData || item;
+    const src = acceptData?._originalData || acceptData;
+    const itemSrc = item?._originalData || item;
+
+    const rawCoral =
+      src?.lastCoral ||
+      acceptData?.lastCoral ||
+      itemSrc?.lastCoral ||
+      item?.lastCoral;
+
+    const rawCad =
+      src?.lastCad ||
+      acceptData?.lastCad ||
+      itemSrc?.lastCad ||
+      item?.lastCad;
+
+    const coralVersion =
+      rawCoral && typeof rawCoral === 'object'
+        ? String(rawCoral.Version || rawCoral.version || '')
+        : String(rawCoral || '');
+
+    const cadVersion =
+      rawCad && typeof rawCad === 'object'
+        ? String(rawCad.Version || rawCad.version || '')
+        : String(rawCad || '');
+
+    const approvedCoral =
+      source?.approvedCoral || src?.approvedCoral || null;
+    const approvedCad =
+      source?.approvedCad || src?.approvedCad || null;
+
+    if (!approvedCoral && !approvedCad && !coralVersion && !cadVersion) {
+      throw new Error('No design versions found to approve.');
+    }
+
+    return handleAcceptApproval(
+      acceptData,
+      coralVersion,
+      cadVersion,
+      approvedCoral,
+      approvedCad,
+      instruction,
+    );
+  };
+
+  const submitParsedRejection = async instruction => {
+    const numericVersion = getVersionFromLast(activeDesignType);
+
+    return updateAssetData({
+      enquiryId,
+      type: activeDesignType,
+      version: String(numericVersion),
+      data: {
+        IsApprovedVersion: false,
+        ReasonForRejection: instruction,
+      },
+    }).unwrap();
+  };
+
+  const handleApprovalConfirm = async ({ instruction }) => {
+    setIsActionLoading(true);
+
+    try {
+      if (approvalMode === 'approve') {
+        await submitParsedApproval(instruction);
+        showAlert('Accepted', 'Design accepted successfully.', 'success', [{ text: 'OK' }]);
+      } else {
+        await submitParsedRejection(instruction);
+        showAlert('Sent for Redo', 'Design sent back for redo.', 'success', [{ text: 'OK' }]);
+      }
+
+      setApprovalMode(null);
+      setActiveDesignType(null);
+    } catch (error) {
+      showAlert(
+        'Failed',
+        error?.data?.message ||
+          error?.message ||
+          'Could not complete the approval.',
+        'error',
+        [{ text: 'OK' }],
+      );
+      throw error;
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleRejectQuotation = async () => {
     if (!updateReason.trim() || !activeDesignType) return;
     setIsActionLoading(true);
@@ -806,35 +898,29 @@ export default function NewEnquiryCard({
         ) : shouldShowApprovalButtons ? (
           <View style={styles.QuickButtonContainer}>
             <TouchableOpacity
-              style={[styles.QuickActionButton, { backgroundColor: '#059669' }]}
+              style={[styles.QuickActionButton, { backgroundColor: colors.primary }]}
               disabled={isActionLoading}
               onPress={() => {
                 setActiveDesignType(currentInferredDesignType);
-                setIsApproving(true);
-                setShowQuotationActions(true);
-                setShowReasonInput(true);
-                setUpdateReason('');
+                setApprovalMode('approve');
               }}
             >
               {isActionLoading
                 ? <ActivityIndicator size="small" color="#fff" />
-                : <><Icon name="check" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Accept</Text></>}
+                : <><Icon name="check" size={16} color={colors.textWhite} /><View style={{ width: 4 }} /><Text style={styles.QuickActionButtonText}>Approve</Text></>}
             </TouchableOpacity>
             {has(ACTION.REJECT_APPROVAL) && (
               <TouchableOpacity
                 style={[styles.QuickActionButton, { backgroundColor: '#DC2626' }]}
                 disabled={isActionLoading}
-                onPress={() => { 
+                onPress={() => {
                   setActiveDesignType(currentInferredDesignType);
-                  setShowQuotationActions(true); 
-                  setShowReasonInput(true); 
-                  setIsRejectingApproval(true); 
-                  setUpdateReason(''); 
+                  setApprovalMode('reject');
                 }}
               >
                 <Icon name="close" size={16} color={colors.textWhite} />
                 <View style={{ width: 4 }} />
-                <Text style={styles.QuickActionButtonText}>Reject</Text>
+                <Text style={styles.QuickActionButtonText}>Redo</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1373,6 +1459,19 @@ export default function NewEnquiryCard({
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      <ApprovalDecisionModal
+        visible={approvalMode !== null}
+        mode={approvalMode}
+        enquiry={fullEnquiryData || item}
+        onClose={() => {
+          if (isActionLoading) return;
+
+          setApprovalMode(null);
+          setActiveDesignType(null);
+        }}
+        onConfirm={handleApprovalConfirm}
+      />
 
       <BrandedAlert
         visible={alertCfg.visible}
