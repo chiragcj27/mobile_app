@@ -21,7 +21,6 @@ import ImageCropPicker from 'react-native-image-crop-picker';
 
 import { Card } from '../../components/cards/Cards';
 import Icon from '../../components/common/Icon';
-import SingleStonePricing from './SingleStonePricing';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useClients } from '../../features/clients/clientsHooks';
@@ -108,9 +107,6 @@ export default function PricingCalci({ route, navigation }) {
   const [pdfHtml, setPdfHtml] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
-  const [stoneRecalcStatus, setStoneRecalcStatus] = useState({});
-  const [showSingleStoneModal, setShowSingleStoneModal] = useState(false);
-  const [singleStoneCatKey, setSingleStoneCatKey] = useState(null);
   const [extractPhase, setExtractPhase] = useState('');
   // Crop-box selection: the picked original waits here while the user marks the chart region.
   const [cropSelectorVisible, setCropSelectorVisible] = useState(false);
@@ -123,14 +119,12 @@ export default function PricingCalci({ route, navigation }) {
   const pendingWeightRef = useRef(null);
   const isAutoRecalculatingRef = useRef(false);
   const dataChangedRef = useRef(false);
-  const singleStoneCatKeyRef = useRef(singleStoneCatKey);
   const groupedDataRef = useRef(groupedData);
   const handleRecalculateAllRef = useRef(null);
   const needsAutoRecalcRef = useRef(false);
   // Fire exactly one automatic follow-up recalculation after a successful calc/recalc.
   // The follow-up run sets this false so it never triggers a third pass (no loop).
   const isFollowUpRecalcRef = useRef(false);
-  useEffect(() => { singleStoneCatKeyRef.current = singleStoneCatKey; }, [singleStoneCatKey]);
   useEffect(() => { groupedDataRef.current = groupedData; }, [groupedData]);
 
   const { clients = [] } = useClients();
@@ -162,7 +156,6 @@ export default function PricingCalci({ route, navigation }) {
   // Only an actual change of client starts over.
   useEffect(() => {
     setGroupedData({});
-    setStoneRecalcStatus({});
     setMetalKt('');
     setMetalWeight('');
     pendingWeightRef.current = null;
@@ -170,8 +163,6 @@ export default function PricingCalci({ route, navigation }) {
     setIsRecalculating(false);
     setPdfHtml(null);
     setShowPdfModal(false);
-    setSingleStoneCatKey(null);
-    setShowSingleStoneModal(false);
   }, [clientId]);
 
   // Wipe all extraction/pricing state back to a clean slate (keeps the selected client,
@@ -183,11 +174,8 @@ export default function PricingCalci({ route, navigation }) {
     pendingWeightRef.current = null;
     resetSelectedQuality();
     setGroupedData({});
-    setStoneRecalcStatus({});
     setPdfHtml(null);
     setShowPdfModal(false);
-    setSingleStoneCatKey(null);
-    setShowSingleStoneModal(false);
     setIsRecalculating(false);
     setIsExtracting(false);
     setExtractPhase('');
@@ -301,8 +289,6 @@ export default function PricingCalci({ route, navigation }) {
       return !data.pricingResult.TotalPrice || parseFloat(data.pricingResult.TotalPrice) <= 0;
     });
   }, [groupedData]);
-
-  const hasStoneTypeBeenRecalculated = type => Boolean(stoneRecalcStatus[type]);
 
   const extractStoneTypeFromImage = async type => {
     if (!type || !clientId || !imageFile) return null;
@@ -420,8 +406,9 @@ export default function PricingCalci({ route, navigation }) {
 
     setIsRecalculating(true);
 
+    // Types without any extracted data yet are "new" and go through their first extraction/calc.
     const newTypes = selectedTypes.filter(
-      type => !hasStoneTypeBeenRecalculated(type),
+      type => !Object.values(groupedData).some(catData => catData.byType?.[type]),
     );
 
     const rawMultiData = {};
@@ -567,14 +554,6 @@ export default function PricingCalci({ route, navigation }) {
           } else {
             next[cat] = updatedGrouped[cat];
           }
-        });
-        return next;
-      });
-
-      setStoneRecalcStatus((prev) => {
-        const next = { ...prev };
-        succeededTypes.forEach(({ type }) => {
-          next[type] = true;
         });
         return next;
       });
@@ -878,31 +857,7 @@ export default function PricingCalci({ route, navigation }) {
     }
   };
 
-  const openSingleStoneModal = (category) => {
-    if (category) {
-      setSingleStoneCatKey(category);
-      setShowSingleStoneModal(true);
-    }
-  };
 
-  const handleSingleStoneRecalculated = (type, updatedData) => {
-    setGroupedData(prev => {
-      const next = { ...prev };
-      Object.keys(next).forEach(cat => {
-        if (next[cat].byType[type]) {
-          next[cat] = {
-            ...next[cat],
-            byType: {
-              ...next[cat].byType,
-              [type]: updatedData,
-            },
-          };
-        }
-      });
-      return next;
-    });
-    setStoneRecalcStatus(prev => ({ ...prev, [type]: true }));
-  };
 
   const clientOptions = clients.map(c => ({
     label: c.name || 'Unknown',
@@ -942,33 +897,6 @@ export default function PricingCalci({ route, navigation }) {
       });
       return next;
     });
-  };
-
-  const recalculateInPlace = () => {
-    setTimeout(() => { handleRecalculateAllRef.current?.(); }, 300);
-  };
-
-  const openPreviewFromModal = (isClientPreview) => {
-    setShowSingleStoneModal(false);
-    const catKey = singleStoneCatKeyRef.current;
-    setTimeout(async () => {
-      if (handleRecalculateAllRef.current) {
-        await handleRecalculateAllRef.current();
-      }
-      await new Promise(r => setTimeout(r, 150));
-      const pairs = buildPreviewPairs(groupedDataRef.current[catKey]);
-      navigation.navigate('PricingPreview', {
-        pricingEntries: pairs.map(p => p.result),
-        clientName: resolvedClientName,
-        metalKt,
-        preCropImageKey: '@pre_crop_image',
-        isClientPreview,
-        clientId,
-        selectedClient,
-        onEntriesUpdated: updated =>
-          applyPreviewEntries(pairs.map(p => p.type), updated),
-      });
-    }, 400);
   };
 
   const getTodayPrice = () => {
@@ -1307,14 +1235,10 @@ export default function PricingCalci({ route, navigation }) {
               )}
               {!hasMissing && (
                 <Text style={styles.missingWarningText}>
-                  please click on the title below for more details of pricing
+                  Use the preview buttons below for more details of pricing
                 </Text>
               )}
-              <TouchableOpacity
-                style={styles.accordionHeader}
-                onPress={() => openSingleStoneModal(category)}
-                activeOpacity={0.7}
-              >
+              <View style={styles.accordionHeader}>
                 <View
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}
                 >
@@ -1346,7 +1270,7 @@ export default function PricingCalci({ route, navigation }) {
                 
                 </>: <Text style={{color: colors.error}}>$0.00</Text>}
                 <Icon name="chevron-right" size={22} color={colors.textSecondary} style={{marginLeft: 8}}/>
-              </TouchableOpacity>
+              </View>
                   {!hasMissing && (
                     <>
                      <TouchableOpacity
@@ -1489,21 +1413,6 @@ export default function PricingCalci({ route, navigation }) {
       <BrandedAlert {...alertConfig} onClose={hideAlert} />
       </Modal>
 
-      <SingleStonePricing
-        visible={showSingleStoneModal}
-        onClose={() => {
-          setShowSingleStoneModal(false);
-          setSingleStoneCatKey(null);
-        }}
-        onDone={recalculateInPlace}
-        catData={singleStoneCatKey ? groupedData[singleStoneCatKey] : null}
-        isRecalculating={isRecalculating}
-        metalKt={metalKt}
-        onRecalculated={handleSingleStoneRecalculated}
-        onPreviewSummary={() => openPreviewFromModal(false)}
-        onClientPreview={() => openPreviewFromModal(true)}
-        onRequestRecalculate={recalculateInPlace}
-      />
 
       {/* EXTRACTION TIMEOUT WARNING MODAL */}
       <Modal
