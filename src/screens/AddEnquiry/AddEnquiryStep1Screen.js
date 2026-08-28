@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
    KeyboardAvoidingView, Platform ,
 } from 'react-native';
-import { Input, Button } from '../../components/common';
+import { Input } from '../../components/common';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import IconComponent from '../../components/common/Icon';
@@ -24,6 +24,7 @@ import { useClients } from '../../features/clients/clientsHooks';
 import { useAuth } from '../../context/AuthContext';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import BrandedAlert from '../../components/common/BrandedAlert';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 
 
@@ -36,7 +37,6 @@ const CLIENT_REMARK_BY_PROJECT_TYPE = {
 
 const AddEnquiryStep1Screen = ({ route, navigation }) => {
   // This screen is only for creating new enquiries
-  const isEditMode = false;
   const { user } = useAuth();
   const [parseEnquiry, { isLoading: isParsing }] = useParseEnquiryMutation();
   const [submitEnquiry, { isLoading: isSubmitting }] = useSubmitEnquiryMutation();
@@ -90,10 +90,7 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
   const [enquiryDescription, setEnquiryDescription] = useState('');
   const [parsedData, setParsedData] = useState(null);
   const [dynamicMissingFields, setDynamicMissingFields] = useState([]);
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
 
   // Fetch clients for dropdown (using cached hook)
   const { clients: clientsData = [] } = useClients({
@@ -198,23 +195,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
     user?.email,
     clients,
   ]);
-
-  const handleSelectImages = async () => {
-    const result = await launchImageLibrary({
-      mediaType: 'mixed',
-      selectionLimit: 10,
-    });
-    if (result.assets) {
-      setReferenceImages(prev => [
-        ...prev,
-        ...result.assets.map(a => ({
-          uri: a.uri,
-          name: a.fileName,
-          type: a.type,
-        })),
-      ]);
-    }
-  };
 
   // handle text submit toggle
   const handleTextSubmit = async () => {
@@ -361,17 +341,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
   const validateForm = () => {
     const newErrors = {};
 
-    console.log('🔍 [validateForm] Starting validation...');
-    console.log('🔍 formData.title:', formData.title);
-    console.log('🔍 formData.clientId:', formData.clientId);
-    console.log('🔍 formData.clientName:', formData.clientName);
-    console.log('🔍 formData.status:', formData.status);
-    console.log('🔍 isClient:', isClient);
-    console.log('🔍 TextSubmitted:', TextSubmitted);
-    console.log('🔍 parsedData:', parsedData);
-    console.log('🔍 missingFieldsData:', missingFieldsData);
-    console.log('🔍 user.id:', user?.id);
-    console.log('🔍 user.clientId:', user?.clientId);
 
     // Title validation - check all possible sources
     if (TextSubmitted && parsedData) {
@@ -424,19 +393,11 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
       newErrors.metalQuality = 'Metal quality is required';
     }
 
-    console.log('🔍 [validateForm] Validation complete. Errors:', newErrors);
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const validateCurrentStep = () => {
-    console.log('🔍 [validateCurrentStep] Starting step validation...');
-    console.log('🔍 currentStep:', currentStep);
-    console.log('🔍 isClient:', isClient);
-    console.log('🔍 TextSubmitted:', TextSubmitted);
-    console.log('🔍 parsedData:', parsedData);
-    console.log('🔍 formData:', formData);
-    console.log('🔍 missingFieldsData:', missingFieldsData);
     
     const stepErrors = {};
 
@@ -500,7 +461,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
       }
     }
 
-    console.log('🔍 [validateCurrentStep] Step errors:', stepErrors);
     setErrors(prev => ({ ...prev, ...stepErrors }));
     return Object.keys(stepErrors).length === 0;
   };
@@ -622,7 +582,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
       
       if (isAIParsingFlow) {
         // AI PARSING FLOW - Use submitEnquiry (creates enquiry + uploads images)
-        console.log('🤖 [AI PARSING FLOW] Using submitEnquiry mutation');
         
         // Prepare final enquiry data - merge formData with missingFieldsData and parsedData
         // Priority: missingFieldsData > parsedData > formData > defaults
@@ -690,9 +649,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
         }
 
         if (__DEV__) {
-          console.log('📤 ===== AI PARSING FLOW - FINAL SUBMISSION =====');
-          console.log('📤 Final Data Object:', JSON.stringify(finalData, null, 2));
-          console.log('📤 Reference Images Count:', referenceImages.length);
         }
 
         const result = await submitEnquiry({
@@ -709,40 +665,33 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
         if (typeof result === 'string' && result.length === 24) {
           // MongoDB ObjectId is 24 characters
           enquiryId = result;
-          console.log('🔍 Method 0 (Direct String ID): result =', result);
         }
         
         // Method 1: Direct ID fields
         if (!enquiryId) {
           enquiryId = result?.id || result?._id;
-          console.log('🔍 Method 1 (Direct): result.id =', result?.id, ', result._id =', result?._id);
         }
         
         // Method 2: Nested in data
         if (!enquiryId) {
           enquiryId = result?.data?.id || result?.data?._id;
-          console.log('🔍 Method 2 (Nested data): result.data.id =', result?.data?.id, ', result.data._id =', result?.data?._id);
         }
         
         // Method 3: Nested in enquiry field
         if (!enquiryId) {
           enquiryId = result?.enquiry?.id || result?.enquiry?._id;
-          console.log('🔍 Method 3 (Nested enquiry): result.enquiry.id =', result?.enquiry?.id, ', result.enquiry._id =', result?.enquiry?._id);
         }
         
         // Method 4: Check if result itself is the enquiry object with nested _id
         if (!enquiryId && result?.insertedId) {
           enquiryId = result.insertedId;
-          console.log('🔍 Method 4 (insertedId): result.insertedId =', result.insertedId);
         }
         
         // Method 5: Check for MongoDB insertedId in nested objects
         if (!enquiryId && result?.data?.insertedId) {
           enquiryId = result.data.insertedId;
-          console.log('🔍 Method 5 (data.insertedId): result.data.insertedId =', result.data.insertedId);
         }
         
-        console.log('🔍 [ENQUIRY ID EXTRACTION] Final enquiryId:', enquiryId);
         
         // Build enquiry payload - if result is just a string ID, create a minimal object
         if (typeof result === 'string') {
@@ -754,7 +703,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
         } else {
           enquiryPayload = result?.data || result?.enquiry || result || { id: enquiryId, _id: enquiryId };
         }
-        console.log('🔍 Final enquiryPayload keys:', Object.keys(enquiryPayload || {}));
         
         if (!enquiryId) {
           console.error('❌ Failed to extract enquiry ID from response!');
@@ -775,9 +723,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
         }
         
         // Navigate to chat prompt screen
-        console.log('🎉 [AI PARSING FLOW] Enquiry created successfully!');
-        console.log('🎉 Enquiry ID:', enquiryId);
-        console.log('🎉 Enquiry Payload:', JSON.stringify(enquiryPayload, null, 2));
         
         showAlert(
           'Enquiry Created!',
@@ -809,7 +754,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
         );
       } else {
         // MANUAL FLOW (OLD CODE BEHAVIOR) - Use submitEnquiry (same API as AI flow)
-        console.log('📝 [MANUAL FLOW] Using submitEnquiry mutation (OLD CODE BEHAVIOR)');
         
         // Map Priority from form values to API format (OLD CODE)
         const priorityMap = {
@@ -873,10 +817,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
           ApprovedDate: formData.approvedDate && formData.approvedDate.trim() ? formData.approvedDate : null,
         };
 
-        console.log('📤 Creating enquiry (Manual Flow - OLD CODE):', JSON.stringify(enquiryData, null, 2));
-        console.log('📋 [ENQUIRY CREATION] Initial Status:', enquiryStatus);
-        console.log('📋 [ENQUIRY CREATION] User Role:', user?.role);
-        console.log('📋 [ENQUIRY CREATION] Is Client:', isClient);
 
         // Use submitEnquiry with empty referenceImages array (OLD CODE BEHAVIOR)
         const result = await submitEnquiry({
@@ -892,40 +832,33 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
         if (typeof result === 'string' && result.length === 24) {
           // MongoDB ObjectId is 24 characters
           enquiryId = result;
-          console.log('🔍 Method 0 (Direct String ID): result =', result);
         }
         
         // Method 1: Direct ID fields
         if (!enquiryId) {
           enquiryId = result?.id || result?._id;
-          console.log('🔍 Method 1 (Direct): result.id =', result?.id, ', result._id =', result?._id);
         }
         
         // Method 2: Nested in data
         if (!enquiryId) {
           enquiryId = result?.data?.id || result?.data?._id;
-          console.log('🔍 Method 2 (Nested data): result.data.id =', result?.data?.id, ', result.data._id =', result?.data?._id);
         }
         
         // Method 3: Nested in enquiry field
         if (!enquiryId) {
           enquiryId = result?.enquiry?.id || result?.enquiry?._id;
-          console.log('🔍 Method 3 (Nested enquiry): result.enquiry.id =', result?.enquiry?.id, ', result.enquiry._id =', result?.enquiry?._id);
         }
         
         // Method 4: Check if result itself is the enquiry object with nested _id
         if (!enquiryId && result?.insertedId) {
           enquiryId = result.insertedId;
-          console.log('🔍 Method 4 (insertedId): result.insertedId =', result.insertedId);
         }
         
         // Method 5: Check for MongoDB insertedId in nested objects
         if (!enquiryId && result?.data?.insertedId) {
           enquiryId = result.data.insertedId;
-          console.log('🔍 Method 5 (data.insertedId): result.data.insertedId =', result.data.insertedId);
         }
         
-        console.log('🔍 [MANUAL FLOW] Final enquiryId:', enquiryId);
         
         if (!enquiryId) {
           console.error('❌ Failed to extract enquiry ID from response!');
@@ -994,6 +927,14 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
     { label: 'None', value: '' },
     ...(stoneTypesData || []),
   ];
+
+  const clientStoneTypeOptions = useMemo(() => {
+    const selectedClient = clients.find(c => (c.id || c._id) === formData.clientId);
+    const applicable = selectedClient?.applicableStoneTypes || [];
+    if (applicable.length === 0) return stoneTypeOptions;
+    const allowed = new Set(applicable);
+    return stoneTypeOptions.filter(opt => !opt.value || allowed.has(opt.value));
+  }, [formData.clientId, clients, stoneTypeOptions]);
 
   const goToNextStep = () => {
     if (currentStep < totalSteps) {
@@ -1220,7 +1161,7 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
       {renderChipRow(
         'Stone type',
         formData.stoneType,
-        stoneTypeOptions,
+        clientStoneTypeOptions,
         (val) => handleInputChange('stoneType', val),
       )}
       {renderChipRow(
@@ -1328,45 +1269,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
     );
   };
 
-  const renderImageUploadStep = () => {
-    return (
-      <View style={styles.stepContent}>
-        <Text style={styles.stepQuestion}>Upload Reference Images</Text>
-        <Text style={styles.stepHint}>
-          Add images or videos to help us understand your design requirements
-        </Text>
-        <TouchableOpacity
-          style={styles.uploadArea}
-          onPress={handleImagePicker}
-          activeOpacity={0.7}
-        >
-          <IconComponent name="cloud-upload" size={40} color={colors.primary} />
-          <Text style={styles.uploadText}>Tap to add images / videos</Text>
-          <Text style={styles.uploadSubtext}>Camera or Gallery</Text>
-        </TouchableOpacity>
-        {referenceImages.length > 0 && (
-          <View style={styles.previewRow}>
-            {referenceImages.map((img, i) => (
-              <View key={i} style={styles.previewItem}>
-                <Image source={{ uri: img.uri }} style={styles.previewThumb} />
-                <TouchableOpacity
-                  onPress={() =>
-                    setReferenceImages(prev =>
-                      prev.filter((_, idx) => idx !== i),
-                    )
-                  }
-                  style={styles.removeImageButton}
-                >
-                  <IconComponent name="close" size={16} color={colors.error} />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
-    );
-  };
-
   const renderRequiredFields = () => {
     const fieldsToRender = dynamicMissingFields.length > 0 ? dynamicMissingFields : [];
     
@@ -1419,12 +1321,23 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
             </View>
           );
         } else if (item.options.length > 0) {
+          // Resolve options — filter StoneType by client's applicableStoneTypes
+          const resolvedOptions = (item.field === 'StoneType' || item.field === 'Stone')
+            ? (() => {
+                const cId = formData.clientId || parsedData?.ClientId || missingFieldsData.ClientId;
+                const selectedClient = clients.find(c => (c.id || c._id) === cId);
+                const applicable = selectedClient?.applicableStoneTypes || [];
+                if (applicable.length === 0) return item.options;
+                const allowed = new Set(applicable);
+                return item.options.filter(opt => allowed.has(opt.value));
+              })()
+            : item.options;
           // Render dropdown for fields with options
           return (
             <View key={index} style={styles.tileGroup}>
               <Text style={styles.dropdownLabel}>{item.label}</Text>
               <View style={styles.chipRowWrap}>
-                {item.options.map(option => {
+                {resolvedOptions.map(option => {
                   const selected = missingFieldsData[item.field] === option.value;
                   return (
                     <TouchableOpacity
@@ -1627,12 +1540,6 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
   const isSubmitDisabled = false;
 
   const onPrimaryPress = () => {
-    console.log('🔘 [onPrimaryPress] Button clicked!');
-    console.log('🔘 Current Step:', currentStep);
-    console.log('🔘 Total Steps:', totalSteps);
-    console.log('🔘 TextSubmitted:', TextSubmitted);
-    console.log('🔘 Is Client:', isClient);
-    console.log('🔘 Role:', roleLower);
     
     if (!validateCurrentStep()) {
       return;
@@ -1641,10 +1548,8 @@ const AddEnquiryStep1Screen = ({ route, navigation }) => {
     
     // If we're on the last step, validateCurrentStep already ran full validation
     if (currentStep === totalSteps) {
-      console.log('🎯 [onPrimaryPress] Calling handleSubmit...');
       handleSubmit();
     } else {
-      console.log('➡️ [onPrimaryPress] Going to next step...');
       goToNextStep();
     }
   };
@@ -1792,10 +1697,6 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     marginBottom: 16,
   },
-  projectTileRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
   projectTileRowWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1840,20 +1741,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     color: colors.textSecondary,
   },
-  section: {
-    marginTop: 20,
-  },
-  sectionTitle: {
-    marginBottom: 12,
-    fontSize: fonts.base,
-    fontFamily: fonts.medium,
-  },
   tileGroup: {
     marginTop: 16,
     marginBottom: 8,
-  },
-  chipScrollContent: {
-    paddingVertical: 4,
   },
   chipRowWrap: {
     flexDirection: 'row',
@@ -2021,9 +1911,7 @@ const styles = StyleSheet.create({
     height: '50%',
     overflow: 'scroll',
     shadowColor: colors.shadow || colors.textPrimary,
-    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
     elevation: 8,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 10 },
@@ -2038,7 +1926,6 @@ const styles = StyleSheet.create({
   },
   dropdownOptionSelected: {
     backgroundColor: colors.backgroundSecondary,
-    borderRadius: 10,
     margin: 10,
     borderBottomColor: colors.primary,
     borderBottomWidth: 2,
@@ -2054,58 +1941,6 @@ const styles = StyleSheet.create({
   dropdownOptionTextSelected: {
     fontFamily: fonts.bold,
     color: colors.primary,
-  },
-  disabledDropdown: {
-    backgroundColor: colors.backgroundSecondary,
-    opacity: 0.6,
-  },
-  disabledText: {
-    color: colors.textSecondary,
-  },
-  weightRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  weightInput: {
-    flex: 1,
-  },
-  datePickerContainer: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 20,
-  },
-  datePickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  datePickerCancel: {
-    padding: 8,
-  },
-  datePickerCancelText: {
-    fontSize: fonts.base,
-    color: colors.textSecondary,
-  },
-  datePickerTitle: {
-    fontSize: fonts.lg,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  datePickerDone: {
-    padding: 8,
-  },
-  datePickerDoneText: {
-    fontSize: fonts.base,
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  datePicker: {
-    width: '100%',
-    height: 200,
   },
   // new input styles
   inputBox: {
@@ -2165,9 +2000,6 @@ const styles = StyleSheet.create({
   previewItem: {
     alignItems: 'center',
     position: 'relative',
-  },
-  removeImageButton: {
-    marginTop: 4,
   },
   previewThumb: {
     width: 60,

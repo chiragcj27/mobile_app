@@ -10,12 +10,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Button, Input } from '../common';
+import { Button } from '../common';
 import Icon from '../common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { useClients } from '../../features/clients/clientsHooks';
-import { useGetUsersQuery, useGetStoneTypesQuery } from '../../store/api';
 
 const EnquiryFiltersModal = ({
   visible,
@@ -32,19 +30,6 @@ const EnquiryFiltersModal = ({
 
   // Check if user is a designer (coral or cad)
   const isDesigner = user?.role === 'coral' || user?.role === 'cad';
-
-  // Fetch clients for dropdown (using cached hook) - skip for designers
-  const { clients: clientsData = [] } = useClients({
-    skip: !user || isDesigner,
-  });
-
-  const clients = Array.isArray(clientsData) ? clientsData : [];
-
-  // Fetch users for Assigned To dropdown - skip for designers
-  const { data: usersData = [] } = useGetUsersQuery(undefined, {
-    skip: !user || isDesigner,
-  });
-  const users = Array.isArray(usersData) ? usersData : [];
 
   useEffect(() => {
     setLocalFilters(filters);
@@ -72,11 +57,6 @@ const EnquiryFiltersModal = ({
       unassigned: false,
       priority: 'all',
       category: 'all',
-      clientId: 'all',
-      assignedTo: 'all',
-      stoneType: 'all',
-      metalColor: 'all',
-      metalQuality: 'all',
       shippingDateFrom: '',
       shippingDateTo: '',
       assignedDateFrom: '',
@@ -88,9 +68,6 @@ const EnquiryFiltersModal = ({
     onClearFilters();
     onClose();
   };
-
-  // Fetch stone types from API
-  const { data: stoneTypesData = [] } = useGetStoneTypesQuery();
 
   const priorityOptions = [
     { label: 'All Priority', value: 'all' },
@@ -111,55 +88,6 @@ const EnquiryFiltersModal = ({
     { label: 'Bangle', value: 'Bangle' },
     { label: 'Belt Buckle', value: 'Belt Buckle' },
     { label: 'Custom', value: 'Custom' },
-  ];
-
-  // Create client options for dropdown
-  const clientOptions = [
-    { label: 'All Clients', value: 'all' },
-    ...clients.map(client => ({
-      label: client.name || 'Unknown Client',
-      value: String(client.id || client._id).trim(),
-    })),
-  ];
-
-  // Create assigned-to options from users (exclude clients by role)
-  const assignedToOptions = [
-    { label: 'All Users', value: 'all' },
-    ...users
-      .filter(userItem => {
-        const roleString = String(userItem.role || '').toLowerCase();
-        return roleString !== 'client';
-      })
-      .map(userItem => ({
-        label: userItem.name || userItem.email || 'Unknown',
-        value: String(userItem.id || userItem._id).trim(),
-      })),
-  ];
-
-  // Stone type options from API with "All Stone Types" option for filters
-  const stoneTypeOptions = [
-    { label: 'All Stone Types', value: 'all' },
-    ...(stoneTypesData || []),
-  ];
-
-  const metalColorOptions = [
-    { label: 'All Colors', value: 'all' },
-    { label: 'White Gold', value: 'White Gold' },
-    { label: 'Rose Gold', value: 'Rose Gold' },
-    { label: 'Yellow Gold', value: 'Yellow Gold' },
-    { label: 'Two Tone Rose White Gold', value: 'Two Tone Rose White Gold' },
-    { label: 'Two Tone Yellow White Gold', value: 'Two Tone Yellow White Gold' },
-    { label: 'Three Tone Rose Yellow White Gold', value: 'Three Tone Rose Yellow White Gold' },
-  ];
-
-  const metalQualityOptions = [
-    { label: 'All Qualities', value: 'all' },
-    { label: '10K', value: '10K' },
-    { label: '14K', value: '14K' },
-    { label: '18K', value: '18K' },
-    { label: '22K', value: '22K' },
-    { label: 'Silver 925', value: 'Silver 925' },
-    { label: 'Platinum', value: 'Platinum' },
   ];
 
   const renderDropdown = (key, options, label) => {
@@ -387,13 +315,7 @@ const EnquiryFiltersModal = ({
       if (localFilters.clientId && localFilters.clientId !== 'all') count++;
       if (localFilters.assignedTo && localFilters.assignedTo !== 'all') count++;
       if (localFilters.stoneType && localFilters.stoneType !== 'all') count++;
-      if (localFilters.shippingDateFrom) count++;
-      if (localFilters.shippingDateTo) count++;
     }
-    if (localFilters.metalColor && localFilters.metalColor !== 'all') count++;
-    if (localFilters.metalQuality && localFilters.metalQuality !== 'all') count++;
-    if (localFilters.assignedDateFrom) count++;
-    if (localFilters.assignedDateTo) count++;
     if (localFilters.createdDateFrom) count++;
     if (localFilters.createdDateTo) count++;
     return count;
@@ -468,20 +390,6 @@ const EnquiryFiltersModal = ({
                 />
               </TouchableOpacity>
             </View>}
-            {!isDesigner && renderDropdown('clientId', clientOptions, 'Client')}
-            {!isDesigner && renderDropdown('assignedTo', assignedToOptions, 'Assigned To')}
-            {!isDesigner && renderDropdown('stoneType', stoneTypeOptions, 'Stone Type')}
-          </View>
-
-          {/* Material Filters Card */}
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <Icon name="diamond" size={20} color={colors.primary} />
-              <Text style={styles.sectionTitle}>Material Filters</Text>
-            </View>
-            
-            {renderDropdown('metalColor', metalColorOptions, 'Metal Color')}
-            {renderDropdown('metalQuality', metalQualityOptions, 'Metal Quality')}
           </View>
 
           {/* Date Ranges Card */}
@@ -490,9 +398,9 @@ const EnquiryFiltersModal = ({
               <Icon name="calendar-today" size={20} color={colors.primary} />
               <Text style={styles.sectionTitle}>Date Ranges</Text>
             </View>
-            
-            {!isDesigner && renderDateRange('shippingDateFrom', 'shippingDateTo', 'Shipping Date')}
-            {renderDateRange('assignedDateFrom', 'assignedDateTo', 'Assigned Date')}
+
+            {/* {!isDesigner && renderDateRange('shippingDateFrom', 'shippingDateTo', 'Shipping Date')}
+            {renderDateRange('assignedDateFrom', 'assignedDateTo', 'Assigned Date')} */}
             {renderDateRange('createdDateFrom', 'createdDateTo', 'Created Date')}
           </View>
         </ScrollView>
@@ -671,7 +579,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
     shadowRadius: 8,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
   },
   dropdownScroll: {
     maxHeight: 220,
@@ -810,16 +718,6 @@ const styles = StyleSheet.create({
   datePicker: {
     width: '100%',
     backgroundColor: colors.background,
-  },
-  textInput: {
-    backgroundColor: colors.backgroundSecondary,
-  },
-  filterHint: {
-    fontSize: fonts.xs,
-    fontFamily: fonts.regular,
-    color: colors.textLight,
-    marginTop: 6,
-    fontStyle: 'italic',
   },
   footer: {
     flexDirection: 'row',

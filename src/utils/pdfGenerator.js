@@ -4,11 +4,12 @@
  */
 
 import Share from 'react-native-share';
-import { Platform, Alert } from 'react-native';
+import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FILE_BASE_URL, API_BASE_URL } from '../config/apiConfig';
 import { getUserName } from './userUtils';
+import { LOGO_BASE64 } from '../constants/logo';
 
 // Import PDF generation library (react-native-html-to-pdf)
 let generatePDF = null;
@@ -720,58 +721,41 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
   const category = src?.Category || 'N/A';
   const stoneType = src?.StoneType || 'N/A';
   const priority = src?.Priority || 'Medium';
+  const priorityLower = (priority || '').toLowerCase().trim();
+  const priorityColorMap = {
+    'high': { bg: '#FEE2E2', text: '#DC2626', border: '#FCA5A5' },
+    'super high': { bg: '#FEE2E2', text: '#DC2626', border: '#FCA5A5' },
+    'urgent': { bg: '#FEE2E2', text: '#DC2626', border: '#FCA5A5' },
+    'super urgent': { bg: '#FEE2E2', text: '#DC2626', border: '#FCA5A5' },
+    'medium': { bg: '#FEF3C7', text: '#D97706', border: '#FCD34D' },
+    'normal': { bg: '#D1FAE5', text: '#059669', border: '#6EE7B7' },
+    'low': { bg: '#D1FAE5', text: '#059669', border: '#6EE7B7' },
+  };
+  const pColor = priorityColorMap[priorityLower] || { bg: '#e8f0ef', text: '#1a3c3c', border: '#b0ccc8' };
   const quantity = src?.Quantity ?? 1;
   const budget = src?.Budget || 'N/A';
   const remarks = (src?.Remarks || '').replace(/\n/g, '<br>');
+  const specialRemarks = (src?.SpecialRemarks || '').replace(/\n/g, '<br>');
   const styleNumber = src?.StyleNumber || null;
   const metalQuality = src?.Metal?.Quality || src?.metal?.quality || null;
-  const metalColor = src?.Metal?.Color || src?.metal?.color || null;
-  const stamping = src?.Stamping || null;
 
   // ── Gather design versions ──────────────────────────────────────────────
-  const coralVersions = Array.isArray(src?.Coral) ? src.Coral : [];
-  const cadVersions   = Array.isArray(src?.Cad)   ? src.Cad   : [];
+const coralVersions = Array.isArray(src?.Coral) ? [...src.Coral].reverse() : [];
+const cadVersions = Array.isArray(src?.Cad) ? [...src.Cad].reverse() : [];
 
-  const latestCoral = coralVersions.length > 0 ? coralVersions[coralVersions.length - 1] : null;
-
-  // ── Accepted vs Final CAD detection ─────────────────────────────────────
-  // Check StatusHistory for an "Approved Cad" entry indicating a previous acceptance
-  const statusHistory = Array.isArray(src?.StatusHistory) ? src.StatusHistory : [];
-  const hasApprovedCad = statusHistory.some(
-    e => (e.Status || e.status) === 'Approved Cad'
-  );
 
   // Final CAD = version explicitly marked as final
-  const finalCadVersion = cadVersions.reduce((found, v) => {
+  // Check both per-version IsFinalVersion AND enquiry-level IsFinalVersion
+  const enquiryIsFinal = src?.IsFinalVersion === true || src?.IsFinalVersion === 'true';
+  let finalCadVersion = cadVersions.reduce((found, v) => {
     if (v.IsFinalVersion === true || v.IsFinalVersion === 'true') return v;
     return found;
   }, null);
 
-  // Accepted CAD = latest non-rejected version that is NOT the final version
-  const acceptedCadVersion = (() => {
-    // If a final CAD exists, the accepted one is the last non-rejected before it
-    if (finalCadVersion) {
-      const idx = cadVersions.indexOf(finalCadVersion);
-      const beforeFinal = cadVersions.slice(0, idx).filter(v => !v.ReasonForRejection);
-      if (beforeFinal.length > 0) return beforeFinal[beforeFinal.length - 1];
-    }
-    // Otherwise look for any approved/approved-like version
-    const approved = cadVersions.filter(v =>
-      !v.ReasonForRejection && !(v.IsFinalVersion === true || v.IsFinalVersion === 'true')
-    );
-    if (approved.length > 0) return approved[approved.length - 1];
-    // Fallback: if StatusHistory shows approval was granted, show the latest non-rejected
-    if (hasApprovedCad) {
-      const nonRejected = cadVersions.filter(v => !v.ReasonForRejection);
-      return nonRejected.length > 0 ? nonRejected[nonRejected.length - 1] : null;
-    }
-    return null;
-  })();
-
-  // Determine if accepted and final CAD are the same version (used by both images & pricing sections)
-  const sameCadVersion = acceptedCadVersion && finalCadVersion &&
-    acceptedCadVersion.Version === finalCadVersion.Version &&
-    acceptedCadVersion === finalCadVersion;
+  // If no per-version flag but enquiry-level IsFinalVersion is true, the final CAD is the last one
+  if (!finalCadVersion && enquiryIsFinal && cadVersions.length > 0) {
+    finalCadVersion = cadVersions[cadVersions.length - 1];
+  }
 
   // ── Image helpers ───────────────────────────────────────────────────────
   const getImageUrl = async (imgObj) => {
@@ -794,51 +778,6 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
     } catch { return url; }
   };
 
-  const getDesignImages = async (design, label) => {
-    if (!design?.Images || !Array.isArray(design.Images) || design.Images.length === 0) {
-      return `<tr><td colspan="2" style="text-align:center;padding:16px;color:#999;">No ${label} image available</td></tr>`;
-    }
-    const rows = await Promise.all(design.Images.map(async (img, idx) => {
-      const imgUrl = await getImageUrl(img);
-      const desc = img.Description || img.description || `${label} ${idx + 1}`;
-      if (!imgUrl) return '';
-      return `<tr>
-        <td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${idx === 0 ? label : ''}</td>
-        <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;">
-          <img src="${imgUrl}" alt="${desc}" style="max-width:200px;max-height:200px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);" />
-          ${design.Version ? `<br><span style="font-size:11px;color:#999;">Version ${design.Version}</span>` : ''}
-          ${design.CoralCode ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CoralCode}</span>` : ''}
-          ${design.CadCode   ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CadCode}</span>`   : ''}
-        </td>
-      </tr>`;
-    }));
-    return rows.filter(Boolean).join('');
-  };
-
-  // ── Pricing data ────────────────────────────────────────────────────────
-  const getPricing = (design) => {
-    if (!design?.Pricing) return null;
-    const p = Array.isArray(design.Pricing) ? design.Pricing[0] : design.Pricing;
-    return p || null;
-  };
-
-  const coralPricing    = latestCoral        ? getPricing(latestCoral)        : null;
-  const acceptedPricing = acceptedCadVersion ? getPricing(acceptedCadVersion) : null;
-  const finalPricing    = finalCadVersion    ? getPricing(finalCadVersion)    : null;
-
-  const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
-  const fmtCurrency = v => `$${num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const fmtWeight = v => num(v).toFixed(3);
-
-  // Metal detail rows from Pricing[0].Metal
-  const fmtMetal = (p) => {
-    if (!p?.Metal) return '—';
-    const w = p.Metal.Weight != null ? `${num(p.Metal.Weight)}g` : null;
-    const q = p.Metal.Quality || null;
-    const r = p.Metal.Rate != null ? `$${num(p.Metal.Rate)}/g` : null;
-    return [w, q, r].filter(Boolean).join(' · ') || '—';
-  };
-
   // ── Checklist ──────────────────────────────────────────────────────────
   const checklist = src?.Checklist || {};
   const checklistFields = [
@@ -848,18 +787,10 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
     { key: 'DimensionsThickness', label: 'Dimensions (Thickness)' },
     { key: 'DeliveryDate',        label: 'Delivery Date' },
     { key: 'EnamelPaintwork',     label: 'Enamel / Paintwork' },
-    { key: 'RhodiumInstructions', label: 'Rhodium Instructions' },
+    { key: 'RhodiumInstructions', label: 'Rhodium Plating' },
     { key: 'Components',          label: 'Components' },
     { key: 'Findings',            label: 'Findings' },
   ];
-
-  const checklistHtml = checklistFields.map(f => {
-    const val = checklist[f.key] || '—';
-    return `<tr>
-      <td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:180px;">${f.label}</td>
-      <td style="padding:8px;border:1px solid #e0e0e0;color:#333;">${val}</td>
-    </tr>`;
-  }).join('');
 
   const generatedAt = checklist.GeneratedAt
     ? new Date(checklist.GeneratedAt).toLocaleString()
@@ -879,200 +810,222 @@ export const generateFinalLookHTML = async (enquiry, options = {}) => {
         if (!dataUri) return '';
         const desc = img.Description || img.description || `Reference ${idx + 1}`;
         return `<tr>
-          <td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${idx === 0 ? 'Reference' : ''}</td>
-          <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;">
-            <img src="${dataUri}" alt="${desc}" style="max-width:200px;max-height:200px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);" />
-            <br><span style="font-size:11px;color:#999;">${desc}</span>
+          <td style="padding:6px;vertical-align:top;">
+            <img alt="${desc}" style="max-width:100%;max-height:340px;border:1px solid #d1d5db;border-radius:6px;display:block;margin:0 auto;" src="${dataUri}"/>
+            <p style="font-size:9px;color:#6B7280;line-height:1.4;margin:4px 0 0;text-align:center;">${desc}</p>
           </td>
         </tr>`;
       }))).filter(Boolean).join('')
-    : '';
-
-  // ── Status History ────────────────────────────────────────────────────
-  const sortedHistory = [...statusHistory].sort(
-    (a, b) => new Date(a.Timestamp || a.timestamp || a.CreatedDate || a.createdDate || 0) -
-             new Date(b.Timestamp || b.timestamp || b.CreatedDate || b.createdDate || 0)
-  );
-  const statusHistoryHtml = sortedHistory.length > 0
-    ? sortedHistory.map(entry => {
-        const ts = entry.Timestamp || entry.timestamp || entry.CreatedDate || entry.createdDate || null;
-        const dateStr = ts ? new Date(ts).toLocaleString() : '—';
-        const status = entry.Status || entry.status || '—';
-        const subStatus = entry.SubStatus || entry.subStatus || '';
-        return `<tr>
-          <td style="padding:7px;border:1px solid #e0e0e0;white-space:nowrap;">${dateStr}</td>
-          <td style="padding:7px;border:1px solid #e0e0e0;">${status}</td>
-          <td style="padding:7px;border:1px solid #e0e0e0;">${subStatus || '—'}</td>
-        </tr>`;
-      }).join('')
-    : '<tr><td colspan="3" style="padding:7px;text-align:center;color:#999;">No status history available</td></tr>';
+    : '<p style="font-size:10px;color:#9CA3AF;padding:8px;">No reference images available</p>';
 
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  // ── Collect ALL design versions with pricing ──────────────────────────
-  const allVersionColumns = [];
-  coralVersions.forEach(v => {
-    const p = getPricing(v);
-    if (p) allVersionColumns.push({ label: `Coral${v.Version ? ` (V${v.Version})` : ''}`, pricing: p, version: v });
-  });
-  cadVersions.forEach(v => {
-    const p = getPricing(v);
-    if (p) {
-      const prefix = v.IsFinalVersion === true || v.IsFinalVersion === 'true' ? 'CAD Final' : 'CAD';
-      allVersionColumns.push({ label: `${prefix}${v.Version ? ` (V${v.Version})` : ''}`, pricing: p, version: v });
-    }
-  });
+  // ── Customer remark HTML ────────────────────────────────────────────
+  const remarkLines = remarks
+    ? remarks.split('<br>').filter(r => r.trim()).map(r =>
+        `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:11px;line-height:1.5;">
+          <span style="display:inline-block;width:6px;height:6px;min-width:6px;background-color:#D4AF37;border-radius:50%;margin-top:5px;"></span>
+          <span>${r.trim()}</span>
+        </div>`
+      ).join('')
+    : '<div style="font-size:11px;color:#6B7280;">No remarks provided</div>';
 
-  const versionColHeaders = allVersionColumns.map(v => `<th>${v.label}</th>`).join('');
+  // ── Logo ───────────────────────────────────────────────────────────
+  const logoSrc = LOGO_BASE64 ? `data:image/png;base64,${LOGO_BASE64}` : '';
 
-  const comparisonRows = [
-    { label: 'Metal (Wt · Quality · Rate)', getVal: (p) => fmtMetal(p), isString: true },
-    { label: 'Metal Price',      getVal: (p) => p?.MetalPrice },
-    { label: 'Diamond Weight',   getVal: (p) => p?.DiamondWeight, unit: 'ct' },
-    { label: 'Total Pieces',     getVal: (p) => p?.TotalPieces,   unit: 'pcs' },
-    { label: 'Diamonds Price',   getVal: (p) => p?.DiamondsPrice },
-    { label: 'Duties Amount',    getVal: (p) => p?.DutiesAmount },
-    { label: 'Undercut Price',   getVal: (p) => p?.UndercutPrice },
-    { label: 'Total Price',      getVal: (p) => p?.TotalPrice, isTotal: true },
-  ];
-
-  const comparisonHtml = comparisonRows.map(row => {
-    const cells = allVersionColumns.map(v => {
-      const val = row.getVal(v.pricing);
-      if (row.isString) return `<td style="padding:8px;border:1px solid #ddd;text-align:center;">${val || '—'}</td>`;
-      return val != null
-        ? `<td style="padding:8px;border:1px solid #ddd;text-align:center;">${row.unit ? `${num(val)} ${row.unit}` : fmtCurrency(val)}</td>`
-        : '<td style="padding:8px;border:1px solid #ddd;text-align:center;color:#ccc;">—</td>';
-    }).join('');
-    return `<tr${row.isTotal ? ' style="background:#f0f0f0;font-weight:bold;"' : ''}>
-      <td style="padding:8px;border:1px solid #ddd;font-weight:${row.isTotal ? 'bold' : 'medium'};color:#2B3735;">${row.label}</td>
-      ${cells}
-    </tr>`;
-  }).join('');
-
-  // ── Budget comparison (dynamic columns) ───────────────────────────────
-  const budgetRow = (() => {
-    const prices = allVersionColumns.map(v => num(v.pricing?.TotalPrice)).filter(n => n > 0);
-    const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
-    const budgetNum = parseFloat(String(budget).replace(/[^0-9.]/g, ''));
-    const underBudget = budgetNum > 0 ? maxPrice <= budgetNum : null;
-    const underLabel = underBudget === true ? '✅ Under Budget' : underBudget === false ? '⚠️ Over Budget' : 'N/A';
-    const dataCols = allVersionColumns.length || 1;
-    return `<tr>
-      <td style="padding:8px;border:1px solid #ddd;font-weight:bold;color:#2B3735;">Customer Budget</td>
-      <td style="padding:8px;border:1px solid #ddd;text-align:center;font-weight:bold;">${budget}</td>
-      <td style="padding:8px;border:1px solid #ddd;text-align:center;color:${underBudget ? '#059669' : '#DC2626'}" colspan="${dataCols}">${underLabel}</td>
-    </tr>`;
-  })();
-
-  // ── Design images (one row per version with pricing) ────────────────────
-  const allVersionImagesHtml = (await Promise.all(allVersionColumns.map(async col => {
-    const design = col.version;
-    if (!design?.Images || !Array.isArray(design.Images) || design.Images.length === 0) {
-      return `<tr><td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${col.label}</td>
-        <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;color:#999;">No image available</td></tr>`;
-    }
-    const rows = await Promise.all(design.Images.map(async (img, idx) => {
-      const imgUrl = await getImageUrl(img);
-      const desc = img.Description || img.description || `${col.label} ${idx + 1}`;
-      if (!imgUrl) return '';
-      return `<tr>
-        <td style="padding:8px;border:1px solid #e0e0e0;font-weight:bold;color:#555;width:120px;vertical-align:top;">${idx === 0 ? col.label : ''}</td>
-        <td style="padding:8px;border:1px solid #e0e0e0;text-align:center;">
-          <img src="${imgUrl}" alt="${desc}" style="max-width:200px;max-height:200px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);" />
-          ${design.Version ? `<br><span style="font-size:11px;color:#999;">Version ${design.Version}</span>` : ''}
-          ${design.CoralCode ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CoralCode}</span>` : ''}
-          ${design.CadCode   ? `<br><span style="font-size:11px;color:#666;">Code: ${design.CadCode}</span>`   : ''}
-        </td>
-      </tr>`;
-    }));
-    return rows.filter(Boolean).join('');
-  }))).filter(Boolean).join('');
-
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; padding: 24px; color: #2B3735; font-size: 13px; }
-    .hdr { text-align: center; border-bottom: 3px solid #143F46; padding-bottom: 16px; margin-bottom: 20px; }
-    .hdr h1 { color: #143F46; margin: 0; font-size: 24px; }
-    .hdr p { color: #BFA26C; margin: 4px 0; font-size: 12px; }
-    .sec-title { background: #143F46; color: #fff; padding: 8px 12px; font-weight: 900; margin: 18px 0 10px; font-size: 14px; border-left: 4px solid #BFA26C; }
-    table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
-    th { background: #143F46; color: #fff; padding: 8px; text-align: center; border: 1px solid #BFA26C; font-size: 12px; font-weight: 900; }
-    td { padding: 7px; border: 1px solid #BFA26C; }
-    .grid { width: 100%; margin-bottom: 8px; }
-    .grid-row { display: flex; padding: 6px 0; border-bottom: 1px solid #BFA26C; }
-    .grid-lbl { font-weight: 800; color: #2B3735; width: 180px; flex-shrink: 0; }
-    .grid-val { color: #2B3735; flex: 1; }
-    .footer { text-align: center; margin-top: 32px; padding-top: 16px; border-top: 2px solid #BFA26C; color: #BFA26C; font-size: 11px; }
-    .remark-box { padding: 12px; background: #f9f9f9; border-radius: 6px; line-height: 1.6; color: #555; margin: 10px 0; }
-    .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; color: #fff; font-size: 11px; font-weight: bold; }
-    @media print { body { padding: 10px; } }
-  </style></head><body>
-  <div class="hdr">
-    <h1>Chandra Jewels</h1>
-    <p>Final Look Report</p>
-    <p>${date}</p>
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=0.6, maximum-scale=3.0, user-scalable=yes" name="viewport"/>
+<title>Chandra Jewels - Final Look Report</title>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300;400;500;600;700&amp;family=Playfair+Display:wght@700&amp;display=swap" rel="stylesheet"/>
+<style>
+  body {
+    font-family: 'Hanken Grotesk', sans-serif;
+    color: #1a2e35;
+    margin: 0;
+    padding: 0;
+  }
+</style>
+</head>
+<body>
+<main>
+<!-- Header -->
+<header style="text-align:center;padding:24px 0 16px;">
+  ${logoSrc ? `<div style="margin-bottom:12px;"><img src="${logoSrc}" style="height:44px;width:auto;" /></div>` : ''}
+  <div>
+    <h1 style="font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:#0d3b4c;letter-spacing:-0.5px;margin-bottom:4px;">CHANDRA JEWELS</h1>
+    <div style="height:1px;width:100%;background-color:#d4af37;margin:8px 0;"></div>
+    <p style="font-size:14px;color:#6B7280;text-transform:uppercase;letter-spacing:3px;margin-bottom:8px;">Final Look Report</p>
+    <p style="font-size:14px;color:#6B7280;margin-bottom:8px;">${date}</p>
+    <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:8px;">
+      <div style="height:1px;width:48px;background-color:#d4af37;"></div>
+      <div style="width:8px;height:8px;transform:rotate(45deg);border:1px solid #d4af37;"></div>
+      <div style="height:1px;width:48px;background-color:#d4af37;"></div>
+    </div>
+    <h2 style="font-size:24px;font-weight:700;color:#000;margin-bottom:12px;">${name}</h2>
+    <span style="background:${pColor.bg};color:${pColor.text};border:1px solid ${pColor.border};padding:4px 20px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;">${priority} Priority</span>
   </div>
+</header>
 
-  <div style="text-align:center;margin-bottom:16px;">
-    <h2 style="color:#333;font-size:20px;font-weight:900;margin-bottom:6px;">${name}</h2>
-    <span class="badge" style="background:#BFA26C;">${priority.toUpperCase()} Priority</span>
-  </div>
-
-  <div class="sec-title">Enquiry Details</div>
-  <div class="grid">
-    <div class="grid-row"><div class="grid-lbl">Client</div><div class="grid-val">${clientName}</div></div>
-    <div class="grid-row"><div class="grid-lbl">Category</div><div class="grid-val">${category}</div></div>
-    ${styleNumber ? `<div class="grid-row"><div class="grid-lbl">Style Number</div><div class="grid-val">${styleNumber}</div></div>` : ''}
-    <div class="grid-row"><div class="grid-lbl">Stone Type</div><div class="grid-val">${stoneType}</div></div>
-    ${metalQuality ? `<div class="grid-row"><div class="grid-lbl">Metal Quality</div><div class="grid-val">${metalColor ? `${metalColor} — ` : ''}${metalQuality}</div></div>` : ''}
-    ${stamping ? `<div class="grid-row"><div class="grid-lbl">Stamping</div><div class="grid-val">${stamping}</div></div>` : ''}
-    <div class="grid-row"><div class="grid-lbl">Quantity</div><div class="grid-val">${quantity}</div></div>
-    <div class="grid-row"><div class="grid-lbl">Budget</div><div class="grid-val">${budget}</div></div>
-    <div class="grid-row"><div class="grid-lbl">Remarks</div><div class="grid-val">${remarks || '—'}</div></div>
-  </div>
-
-  ${refImagesHtml ? `
-  <div class="sec-title">Reference Images</div>
-  <table>
-    <thead><tr><th style="width:120px;">Label</th><th>Image</th></tr></thead>
-    <tbody>${refImagesHtml}</tbody>
-  </table>` : ''}
-
-  ${allVersionColumns.length > 0 ? `
-  <div class="sec-title">Design Versions</div>
-  <table>
-    <thead><tr><th style="width:120px;">Stage</th><th>Image</th></tr></thead>
+<!-- Enquiry Details -->
+<section style="margin:0 24px 24px;">
+  <div style="background-color:#235A63;color:#ffffff;font-size:11px;font-weight:700;padding:6px 12px;border-radius:6px 6px 0 0;">01 ENQUIRY DETAILS</div>
+  <table style="width:100%;border-collapse:collapse;border:1px solid #d1d5db;font-size:10px;text-align:center;">
+    <thead>
+      <tr style="background-color:#f3f4f6;">
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#6B7280;font-size:9px;">Client</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#6B7280;font-size:9px;">Category</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#6B7280;font-size:9px;">Style #</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#6B7280;font-size:9px;">Stone Type</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#6B7280;font-size:9px;">Metal</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#6B7280;font-size:9px;">Qty</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#6B7280;font-size:9px;">Budget</td>
+      </tr>
+    </thead>
     <tbody>
-      ${allVersionImagesHtml}
+      <tr>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#111827;">${clientName}</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#111827;">${category}</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#111827;">${styleNumber || 'N/A'}</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#111827;">${stoneType}</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#111827;">${metalQuality || 'N/A'}</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#111827;">${quantity}</td>
+        <td style="border:1px solid #d1d5db;padding:6px 4px;color:#111827;">${budget}</td>
+      </tr>
     </tbody>
-  </table>` : ''}
-
-  <div class="sec-title">Pricing Comparison</div>
-  ${allVersionColumns.length > 0 ? `
-  <table>
-    <thead><tr>
-      <th style="text-align:left;">Item</th>
-      ${versionColHeaders}
-    </tr></thead>
-    <tbody>
-      ${comparisonHtml}
-      ${budgetRow}
-    </tbody>
-  </table>` : '<p style="color:#999;padding:12px;">No pricing data available for comparison.</p>'}
-
-  <div class="sec-title">Checklist</div>
-  <p style="font-size:11px;color:#999;margin-bottom:6px;">Generated: ${generatedAt}</p>
-  <table>
-    <tbody>${checklistHtml}</tbody>
   </table>
+</section>
 
-  <div class="footer">
-    <p>Generated on ${new Date().toLocaleString()}</p>
-    <p>Chandra Jewels — Enquiry Management System</p>
-  </div>
-  </body></html>`;
+<!-- Customer Remark (full width) -->
+<section style="margin:0 24px 24px;">
+  <table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr>
+        <th colspan="2" style="background-color:#D4AF37;color:#1A1A1A;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">02 CUSTOMER REMARK</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td colspan="2" style="padding:12px 16px;border:1px solid #d1d5db;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div style="flex:1;margin-right:24px;font-size:11px;line-height:1.6;color:#374151;">
+              ${remarkLines}
+            </div>
+       
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Special Remarks (full width) -->
+${specialRemarks ? `
+<section style="margin:0 24px 24px;">
+  <table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr>
+        <th colspan="2" style="background-color:#D4AF37;color:#1A1A1A;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">02b SPECIAL REMARKS</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td colspan="2" style="padding:12px 16px;border:1px solid #d1d5db;">
+          <div style="font-size:11px;line-height:1.6;color:#374151;">
+            ${specialRemarks.split('<br>').filter(r => r.trim()).map(r =>
+              `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;">
+                <span style="display:inline-block;width:6px;height:6px;min-width:6px;background-color:#C68C53;border-radius:50%;margin-top:5px;"></span>
+                <span>${r.trim()}</span>
+              </div>`
+            ).join('')}
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>` : ''}
+
+<!-- Grid Sections -->
+<table style="width:100%;border-collapse:collapse;margin:0 24px 24px;">
+  <tr>
+    <!-- Section 03: Reference Images -->
+    <td style="width:30%;vertical-align:top;padding-right:16px;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="background-color:#235A63;color:#ffffff;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">03 REFERENCE IMAGES</th>
+          </tr>
+        </thead>
+        <tbody style="border:1px solid #d1d5db;">${refImagesHtml || '<tr><td style="padding:12px;text-align:center;font-size:10px;color:#9CA3AF;">No reference images available</td></tr>'}</tbody>
+      </table>
+    </td>
+
+    <!-- Section 04: Checklist -->
+    <td style="width:40%;vertical-align:top;padding-right:16px;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th colspan="2" style="background-color:#235A63;color:#ffffff;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">04 CHECKLIST</th>
+          </tr>
+        </thead>
+        <tbody style="border:1px solid #d1d5db;">
+          <tr style="background-color:#235A63;color:#ffffff;">
+            <td style="padding:4px 8px;font-size:8px;font-weight:700;border:1px solid #0F3236;width:25%;">Point</td>
+            <td style="padding:4px 8px;font-size:8px;font-weight:700;border:1px solid #0F3236;width:75%;">Value</td>
+          </tr>
+          ${checklistFields.map((f, i) => {
+            const rowBg = i % 2 === 0 ? '#f9fafb' : '#ffffff';
+            const val = checklist[f.key] || 'N/A';
+            return `<tr style="background-color:${rowBg};">
+              <td style="padding:4px 8px;font-size:8px;border:1px solid #d1d5db;font-weight:500;">${f.label}</td>
+              <td style="padding:4px 8px;font-size:8px;border:1px solid #d1d5db;white-space:pre-line;line-height:1.4;font-weight:700;word-break:break-word;">${val}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      <p style="font-size:7px;color:#9CA3AF;margin:4px 0 0;">Generated: ${generatedAt}</p>
+    </td>
+
+    <!-- Section 05: Design Versions -->
+    <td style="width:30%;vertical-align:top;padding-left:16px;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="background-color:#235A63;color:#ffffff;text-align:left;font-size:10px;font-weight:700;padding:6px 12px;border:1px solid #0F3236;">05 DESIGN VERSIONS</th>
+          </tr>
+        </thead>
+        <tbody style="border:1px solid #d1d5db;">
+          ${[...coralVersions.map(v => ({ label: `Coral${v.Version ? ` (V${v.Version})` : ''}`, version: v })),
+             ...cadVersions.map(v => ({ label: `${v.IsFinalVersion === true || v.IsFinalVersion === 'true' ? 'CAD Final' : 'CAD'}${v.Version ? ` (V${v.Version})` : ''}`, version: v }))].length > 0
+            ? (await Promise.all([...coralVersions.map(v => ({ label: `Coral${v.Version ? ` (V${v.Version})` : ''}`, version: v })),
+             ...cadVersions.map(v => ({ label: `${v.IsFinalVersion === true || v.IsFinalVersion === 'true' ? 'CAD Final' : 'CAD'}${v.Version ? ` (V${v.Version})` : ''}`, version: v }))].map(async col => {
+                const design = col.version;
+                const hasImages = design?.Images && Array.isArray(design.Images) && design.Images.length > 0;
+                const imgUrl = hasImages ? await getImageUrl(design.Images[0]) : '';
+                const code = design.CoralCode || design.CadCode || '';
+                const imgTag = imgUrl
+                  ? `<img alt="${col.label}" style="max-width:100%;max-height:340px;border:1px solid #d1d5db;border-radius:6px;display:block;margin:0 auto;" src="${imgUrl}"/>`
+                  : '<div style="width:100px;height:100px;border:1px dashed #d1d5db;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#9CA3AF;">No image</div>';
+                return `<tr>
+                  <td style="padding:8px;vertical-align:middle;text-align:center;">${imgTag}
+                    <p style="font-size:10px;color:#1a3c3c;font-weight:700;margin:4px 0 0;">${col.label}</p>
+                    ${code ? `<p style="font-size:9px;color:#6B7280;margin:2px 0 0;">Code: ${code}</p>` : ''}
+                  </td>
+                </tr>`;
+              }))).filter(Boolean).join('')
+            : '<tr><td style="padding:12px;text-align:center;font-size:10px;color:#9CA3AF;">No design versions</td></tr>'
+          }
+        </tbody>
+      </table>
+    </td>
+  </tr>
+</table>
+
+</main>
+</body>
+</html>`;
 
   return html;
 };
@@ -1689,11 +1642,7 @@ export const generateEnquiriesListHTML = async (enquiries) => {
           return imageUrl;
         }));
         
-        if (__DEV__) {
-          const successCount = resolvedImageUrls.filter(img => img !== '').length;
-        }
         
-        let rowsGenerated = 0;
         const rows = enquiries.map((enquiry, index) => {
           // Safety check: skip invalid enquiries
           if (!enquiry || typeof enquiry !== 'object') {
@@ -1743,8 +1692,6 @@ export const generateEnquiriesListHTML = async (enquiries) => {
             const assignedToId = normalizedEnquiry?.AssignedTo || originalData?.AssignedTo || normalizedEnquiry?.assignedTo || '';
             // Resolve user ID to name
             const assignedToName = assignedToId ? getUserName(assignedToId) : 'N/A';
-            
-            rowsGenerated++;
             
             return `
         <tr>
@@ -1811,7 +1758,6 @@ export const downloadAllEnquiriesPDF = async (enquiries) => {
     if (__DEV__) {
       console.log('HTML preview (first 500 chars):', htmlContent.substring(0, 500));
       // Check if table has rows
-      const tableRowsMatch = htmlContent.match(/<tr>/g);
     }
 
     // Create filename

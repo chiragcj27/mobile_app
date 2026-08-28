@@ -46,6 +46,7 @@ const BrandedAlert = ({
   checklist,
   buttons,
   onClose,
+  fullScreen = false,
 }) => {
   const resolvedButtons =
     buttons && buttons.length > 0
@@ -77,12 +78,12 @@ const BrandedAlert = ({
     <Modal
       visible={visible}
       animationType="fade"
-      transparent
+      transparent={!fullScreen}
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.overlay}>
-        <View style={styles.card}>
+      <View style={[styles.overlay, fullScreen && styles.overlayFullScreen]}>
+        <View style={[styles.card, fullScreen && styles.cardFullScreen]}>
           <View style={styles.iconRow}>
             <Icon name={iconName} size={40} color={iconColor} />
           </View>
@@ -92,7 +93,7 @@ const BrandedAlert = ({
 
           {checklist && checklist.length > 0 && (
             <ScrollView
-              style={styles.checklist}
+              style={[styles.checklist, fullScreen && styles.checklistFullScreen]}
               contentContainerStyle={styles.checklistContent}
               showsVerticalScrollIndicator={false}
             >
@@ -142,6 +143,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 32,
   },
+  overlayFullScreen: {
+    backgroundColor: colors.background,
+    padding: 0,
+  },
   card: {
     backgroundColor: colors.background,
     borderRadius: 20,
@@ -150,6 +155,13 @@ const styles = StyleSheet.create({
     maxWidth: 340,
     elevation: 10,
     alignItems: 'center',
+  },
+  cardFullScreen: {
+    maxWidth: undefined,
+    borderRadius: 0,
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
   },
   iconRow: {
     marginBottom: 14,
@@ -173,6 +185,10 @@ const styles = StyleSheet.create({
     width: '100%',
     maxHeight: 180,
     marginBottom: 16,
+  },
+  checklistFullScreen: {
+    maxHeight: undefined,
+    flex: 1,
   },
   checklistContent: {
     gap: 8,

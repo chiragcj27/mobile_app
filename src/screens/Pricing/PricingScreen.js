@@ -1,14 +1,12 @@
-﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
   Text,
-  Switch,
   Modal,
   TextInput,
-  FlatList,
   Dimensions,
   InteractionManager,
 } from 'react-native';
@@ -20,7 +18,6 @@ import { CustomText, Heading } from '../../components/common/Text';
 import Icon from '../../components/common/Icon'; 
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { formatCurrency } from '../../utils/helpers';
 import { useGetMetalPricesQuery, useCalculatePricingMutation, useSavePricingMutation, useGetEnquiryByIdQuery, useGetStoneTypesQuery } from '../../store/api';
 import { API_BASE_URL } from '../../config/apiConfig';
 import RNFS from 'react-native-fs';
@@ -29,18 +26,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as XLSX from 'xlsx';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
 import { DUTY_FIELDS, computeApplicable, readDutyRates } from '../../utils/pricingDuties';
+import { extraChargesValue, extraChargesType, makeExtraCharges, formatExtraChargesLabel } from '../../utils/extraCharges';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const PricingScreen = ({ route, navigation }) => {
   const { enquiry: routeEnquiry, designType, enquiryId } = route.params || {}; // designType: 'coral' or 'cad'
-  const { isTablet, width } = useDeviceLayout();
+  const { isTablet } = useDeviceLayout();
   
   // Get enquiry ID
   const finalEnquiryId = enquiryId || routeEnquiry?.id || routeEnquiry?._id;
   
   // Fetch fresh enquiry data - this will refetch when cache is invalidated
-  const { data: fetchedEnquiry, refetch: refetchEnquiry, isLoading: isLoadingEnquiry } = useGetEnquiryByIdQuery(finalEnquiryId, {
+  const { data: fetchedEnquiry, refetch: refetchEnquiry } = useGetEnquiryByIdQuery(finalEnquiryId, {
     skip: !finalEnquiryId,
     refetchOnFocus: true, // Refetch when screen comes into focus
     refetchOnMountOrArgChange: true, // Refetch when enquiryId changes
@@ -114,7 +113,6 @@ const PricingScreen = ({ route, navigation }) => {
     return allPricingEntries.length > 0 ? allPricingEntries[allPricingEntries.length - 1] : {};
   }, [allPricingEntries]);
   
-  
   // Normalize stones data - map API field names to UI field names
   // Memoized with useCallback to prevent function recreation on every render
   const normalizeStones = useCallback((rawStones) => {
@@ -158,7 +156,8 @@ const PricingScreen = ({ route, navigation }) => {
         silverAndLabsDuties: rates.SilverAndLabsDuties.toString(),
         lossAndLabourDuties: rates.LossAndLabourDuties.toString(),
         dutiesAmount: (pricingEntry?.DutiesAmount || pricingEntry?.dutiesAmount || 0).toString(),
-        extraCharges: (pricingEntry?.ExtraCharges || pricingEntry?.extraCharges || 0).toString(),
+        extraCharges: extraChargesValue(pricingEntry?.ExtraCharges ?? pricingEntry?.extraCharges).toString(),
+        extraChargesType: extraChargesType(pricingEntry?.ExtraCharges ?? pricingEntry?.extraCharges),
         undercutPrice: (pricingEntry?.UndercutPrice || pricingEntry?.undercutPrice || 0).toString(),
         clientPricingMessage: pricingEntry?.ClientPricingMessage || '',
         metalQuality: entryMetalQuality,
@@ -214,20 +213,6 @@ const PricingScreen = ({ route, navigation }) => {
     dutiesAmount: '0', extraCharges: '0', undercutPrice: '0', clientPricingMessage: '',
     metalRateOverride: '',
   };
-  const stones = pricingEntriesState[latestEntryIndex]?.stones || [];
-  const undercutEnabled = pricingEntriesState[latestEntryIndex]?.undercutEnabled || false;
-
-  // Helper to update formData (updates latest entry)
-  const setFormData = (newFormData) => {
-    setPricingEntriesState(prev => {
-      const updated = [...prev];
-      updated[latestEntryIndex] = {
-        ...updated[latestEntryIndex],
-        formData: typeof newFormData === 'function' ? newFormData(updated[latestEntryIndex].formData) : newFormData,
-      };
-      return updated;
-    });
-  };
 
   // Helper to update stones (updates latest entry)
   const setStones = (newStones) => {
@@ -236,18 +221,6 @@ const PricingScreen = ({ route, navigation }) => {
       updated[latestEntryIndex] = {
         ...updated[latestEntryIndex],
         stones: typeof newStones === 'function' ? newStones(updated[latestEntryIndex].stones) : newStones,
-      };
-      return updated;
-    });
-  };
-
-  // Helper to set undercut enabled (updates latest entry)
-  const setUndercutEnabled = (value) => {
-    setPricingEntriesState(prev => {
-      const updated = [...prev];
-      updated[latestEntryIndex] = {
-        ...updated[latestEntryIndex],
-        undercutEnabled: typeof value === 'function' ? value(updated[latestEntryIndex].undercutEnabled) : value,
       };
       return updated;
     });
@@ -309,10 +282,7 @@ const PricingScreen = ({ route, navigation }) => {
   const [savePricing, { isLoading: isSaving }] = useSavePricingMutation();
   
   // Alert state for BrandedAlert
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
 
   // Sync client pricing loading state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -336,10 +306,6 @@ const PricingScreen = ({ route, navigation }) => {
   // Latest Metal Rate - always from current API call
   const latestMetalRate = apiMetalRate || 0;
 
-  // Duties amount considered for quotation - the persisted sum across all duty buckets.
-  const dutiesConsidered =
-    parseFloat(existingPricing?.DutiesAmount ?? existingPricing?.dutiesAmount ?? formData?.dutiesAmount ?? 0) || 0;
-  
   // Refetch metal prices when screen loads (when Pricing button is pressed)
   useEffect(() => {
     refetchMetalPrices();
@@ -359,8 +325,6 @@ const PricingScreen = ({ route, navigation }) => {
 
   // Debug: Log pricing data structure (after all useState hooks)
   useEffect(() => {
-    if (__DEV__) {
-    }
   }, [latestDesign, designType]);
 
   // Get design code for Excel filename
@@ -368,487 +332,9 @@ const PricingScreen = ({ route, navigation }) => {
     ? (originalData?.CoralCode || enquiry?.CoralCode || enquiry?.coralCode || '')
     : (originalData?.CadCode || enquiry?.CadCode || enquiry?.cadCode || '');
 
-  const handleInputChange = useCallback((field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  }, []);
-
-  const handleCalculate = async () => {
-    let payload = null; // Declare outside try block for error logging
-    
-    try {
-      // Get metal details from enquiry
-      const metalColor = originalData?.Metal?.Color || enquiry?.Metal?.Color || 'Gold';
-      const metalQuality = originalData?.Metal?.Quality || enquiry?.Metal?.Quality || '10K';
-      const metalWeight = parseFloat(formData.metalWeight) || 0;
-      
-      // Validate metal weight is a positive number
-      if (metalWeight < 0) {
-        showAlert('Validation Error', 'Metal weight cannot be negative', 'warning');
-        return;
-      }
-      
-      // Transform stones array to match API format with validation
-      const transformedStones = stones.map((stone, index) => {
-        // Validate stone type is provided
-        if (!stone.Type || stone.Type.trim() === '') {
-          
-          return null;
-        }
-        
-        // Validate stone type is a known type (optional check, but helps catch typos)
-        const validStoneTypes = [
-          'NaturalRegular', 'NaturalLower', 'NaturalHigher', 'Natural',
-          'CVDLabGrown', 'HPHTLabGrown', 'LabGrown',
-          'Moissanite', 'Diamond', 'Other'
-        ];
-        const stoneType = stone.Type.trim();
-        if (!validStoneTypes.some(valid => stoneType.toLowerCase().includes(valid.toLowerCase()))) {
-          
-        }
-        
-        // Parse and validate numeric fields
-        const ctWeight = parseFloat(stone.CaratWeight);
-        const weight = parseFloat(stone.Weight);
-        const pcs = parseInt(stone.Pieces);
-        const price = parseFloat(stone.Price);
-        
-        // Validate numeric values are valid numbers
-        if (isNaN(ctWeight) || ctWeight < 0) {
-          
-        }
-        if (isNaN(weight) || weight < 0) {
-          
-        }
-        if (isNaN(pcs) || pcs < 0) {
-          
-        }
-        if (isNaN(price) || price < 0) {
-          
-        }
-        
-        // Build transformed stone object - only include fields that have valid values
-        const transformed = {
-          Type: stone.Type.trim(),
-        };
-        
-        // Only include Color if it's not empty (backend may not accept empty strings)
-        if (stone.Color && stone.Color.trim() !== '') {
-          transformed.Color = stone.Color.trim();
-        }
-        
-        // Only include Shape if it's not empty
-        if (stone.Shape && stone.Shape.trim() !== '') {
-          transformed.Shape = stone.Shape.trim();
-        }
-        
-        // MmSize - ensure it's a string, default to '0' if empty
-        const mmSize = stone.MM ? stone.MM.toString().trim() : '';
-        transformed.MmSize = mmSize !== '' ? mmSize : '0';
-        
-        // Only include SieveSize if it's not empty
-        if (stone.Sieve && stone.Sieve.trim() !== '') {
-          transformed.SieveSize = stone.Sieve.trim();
-        }
-        
-        // Numeric fields - ensure they're valid numbers, default to 0 if invalid
-        transformed.CtWeight = (isNaN(ctWeight) || ctWeight < 0) ? 0 : Math.max(0, ctWeight);
-        transformed.Weight = (isNaN(weight) || weight < 0) ? 0 : Math.max(0, weight);
-        transformed.Pcs = (isNaN(pcs) || pcs < 0) ? 0 : Math.max(0, Math.floor(pcs)); // Ensure integer
-        transformed.Price = (isNaN(price) || price < 0) ? 0 : Math.max(0, price);
-        
-        return transformed;
-      }).filter(stone => stone !== null && stone.Type); // Remove null entries and ensure Type exists
-
-      if (metalWeight <= 0 && transformedStones.length === 0) {
-        showAlert('Missing Weight Data', 'Please provide either metal weight or stone information for pricing calculation.', 'warning');
-        return;
-      }
-
-      // Validate and parse numeric fields
-      const loss = parseFloat(formData.lossPercent);
-      const labour = parseFloat(formData.labour);
-      const extraCharges = parseFloat(formData.extraCharges);
-      const dutyRates = readDutyRates({
-        NaturalDuties: formData.naturalDuties,
-        LabDuties: formData.labDuties,
-        GoldDuties: formData.goldDuties,
-        SilverAndLabsDuties: formData.silverAndLabsDuties,
-        LossAndLabourDuties: formData.lossAndLabourDuties,
-      });
-      const undercutPriceValue = parseFloat(formData.undercutPrice) || 0;
-      const quantity = 1; //TODO fix
-
-      // Validate numeric values
-      if (isNaN(loss) || loss < 0) {
-        showAlert('Validation Error', 'Loss percentage must be a valid positive number', 'warning');
-        return;
-      }
-      if (isNaN(labour) || labour < 0) {
-        showAlert('Validation Error', 'Labour must be a valid positive number', 'warning');
-        return;
-      }
-      if (isNaN(extraCharges) || extraCharges < 0) {
-        showAlert('Validation Error', 'Extra charges must be a valid positive number', 'warning');
-        return;
-      }
-      if (Object.values(dutyRates).some((v) => v < 0)) {
-        showAlert('Validation Error', 'Duty rates must be valid positive numbers', 'warning');
-        return;
-      }
-      if (isNaN(quantity) || quantity <= 0) {
-        showAlert('Validation Error', 'Quantity must be a valid positive number greater than 0', 'warning');
-        return;
-      }
-
-      // Validate metal quality format (should be like "10K", "14K", "18K", "22K", "24K", etc.)
-      const qualityMatch = metalQuality.match(/^(\d+)K$/i);
-      if (!qualityMatch) {
-        
-      }
-
-      // Prepare payload with validated data
-      // Ensure all numeric values are properly formatted (no NaN, Infinity, etc.)
-      // Build Metal payload separately so we can optionally include numeric Rate
-      const metalPayload = {
-        Weight: Math.max(0, metalWeight), // Ensure non-negative
-        Quality: metalQuality.trim(), // Remove whitespace
-      };
-
-      // If user provided a metal rate override in the top-level form, include it as a number
-      let topMetalRate = null;
-      if (formData?.metalRateOverride && formData.metalRateOverride.trim() !== '') {
-        topMetalRate = parseFloat(formData.metalRateOverride);
-      }
-      if (topMetalRate !== null && !isNaN(topMetalRate)) {
-        metalPayload.Rate = topMetalRate;
-      }
-
-      payload = {
-        clientId: null, // Calculate button does not send client ID
-        details: {
-          Metal: metalPayload,
-          Stones: transformedStones,
-          Loss: Math.max(0, loss),
-          Labour: Math.max(0, labour),
-          ExtraCharges: Math.max(0, extraCharges),
-          UndercutPrice: Math.max(0, undercutPriceValue),
-          NaturalDuties: Math.max(0, dutyRates.NaturalDuties),
-          LabDuties: Math.max(0, dutyRates.LabDuties),
-          GoldDuties: Math.max(0, dutyRates.GoldDuties),
-          SilverAndLabsDuties: Math.max(0, dutyRates.SilverAndLabsDuties),
-          LossAndLabourDuties: Math.max(0, dutyRates.LossAndLabourDuties),
-          Quantity: Math.max(1, Math.floor(quantity)), // Ensure integer and at least 1
-        },
-      };
-      
-      console.log('🔵 CALCULATE BUTTON - Client ID Status:');
-      
-      // Final payload validation - check for any invalid values
-      if (!isFinite(payload.details.Metal.Weight) ||
-          !isFinite(payload.details.Loss) ||
-          !isFinite(payload.details.Labour) ||
-          !isFinite(payload.details.ExtraCharges) ||
-          !isFinite(payload.details.NaturalDuties) ||
-          !isFinite(payload.details.LabDuties) ||
-          !isFinite(payload.details.GoldDuties) ||
-          !isFinite(payload.details.SilverAndLabsDuties) ||
-          !isFinite(payload.details.LossAndLabourDuties) ||
-          !isFinite(payload.details.Quantity)) {
-        showAlert('Validation Error', 'One or more numeric fields contain invalid values (NaN or Infinity). Please check your inputs.', 'warning');
-        return;
-      }
-      
-      // Validate stones don't have invalid numeric values
-      const hasInvalidStone = transformedStones.some(stone => 
-        !isFinite(stone.CtWeight) || 
-        !isFinite(stone.Weight) || 
-        !isFinite(stone.Pcs) || 
-        !isFinite(stone.Price)
-      );
-      
-      if (hasInvalidStone) {
-        showAlert('Validation Error', 'One or more stones contain invalid numeric values. Please check stone data.', 'warning');
-        return;
-      }
-
-      // Final validation: ensure payload structure is correct
-      if (!payload.details.Metal.Weight && payload.details.Stones.length === 0) {
-        showAlert('Validation Error', 'At least one of Metal Weight or Stones must be provided', 'warning');
-        return;
-      }
-
-
-      // Call API
-      const response = await calculatePricing(payload).unwrap();
-
-      // Detailed TotalPrice logging
-      console.log('=== API RESPONSE RECEIVED (handleCalculate) ===');
-      console.log('Full Response:', JSON.stringify(response, null, 2));
-      console.log('=== TOTAL PRICE CHECK ===');
-      console.log('TotalPrice exists?', response ? ('TotalPrice' in response) : 'N/A (response is null)');
-      if (response) {
-        console.log('TotalPrice value:', response.TotalPrice);
-        console.log('TotalPrice type:', typeof response.TotalPrice);
-        console.log('TotalPrice is null?', response.TotalPrice === null);
-        console.log('TotalPrice is undefined?', response.TotalPrice === undefined);
-        console.log('TotalPrice is NaN?', isNaN(response.TotalPrice));
-        console.log('TotalPrice is finite?', isFinite(response.TotalPrice));
-        if (response.TotalPrice !== undefined && response.TotalPrice !== null) {
-          console.log('TotalPrice parsed:', parseFloat(response.TotalPrice));
-          console.log('TotalPrice formatted:', response.TotalPrice.toString());
-        } else {
-          console.log('⚠️ WARNING: TotalPrice is missing or null in response!');
-        }
-      } else {
-        console.log('⚠️ WARNING: Response is null or undefined!');
-      }
-      console.log('=== END TOTAL PRICE CHECK ===');
-
-      // Update form data with calculated values from response
-      // Backend returns: { MetalPrice, DiamondsPrice, TotalPrice, Metal, DiamondWeight, Client, Stones }
-      if (response) {
-        const updates = {};
-        
-        // Update metal price if in response
-        if (response.MetalPrice !== undefined) {
-          updates.metalPrice = response.MetalPrice.toString();
-        }
-        
-        // Update diamond price if in response (note: backend uses DiamondsPrice, not DiamondPrice)
-        if (response.DiamondsPrice !== undefined) {
-          updates.diamondPrice = response.DiamondsPrice.toString();
-        }
-        
-        // Update total price if in response
-        if (response.TotalPrice !== undefined) {
-          console.log('TotalPrice before update:', response.TotalPrice);
-          console.log('TotalPrice after toString:', response.TotalPrice.toString());
-          updates.totalPrice = response.TotalPrice.toString();
-        } else {
-        }
-        
-        // Update metal weight from response if provided
-        if (response.Metal?.Weight !== undefined) {
-          updates.metalWeight = response.Metal.Weight.toString();
-        }
-        
-        // Update diamond weight from response if provided
-        if (response.DiamondWeight !== undefined) {
-          updates.diamondWeight = response.DiamondWeight.toString();
-        }
-        
-        // Update client-specific values if provided
-        if (response.Client) {
-          if (response.Client.Loss !== undefined) {
-            updates.lossPercent = response.Client.Loss.toString();
-          }
-          if (response.Client.Labour !== undefined) {
-            updates.labour = response.Client.Labour.toString();
-          }
-          if (response.Client.ExtraCharges !== undefined) {
-            updates.extraCharges = response.Client.ExtraCharges.toString();
-          }
-          if (response.Client.UndercutPrice !== undefined) {
-            updates.undercutPrice = response.Client.UndercutPrice.toString();
-          }
-          if (response.Client.NaturalDuties !== undefined) {
-            updates.naturalDuties = response.Client.NaturalDuties.toString();
-          }
-          if (response.Client.LabDuties !== undefined) {
-            updates.labDuties = response.Client.LabDuties.toString();
-          }
-          if (response.Client.GoldDuties !== undefined) {
-            updates.goldDuties = response.Client.GoldDuties.toString();
-          }
-          if (response.Client.SilverAndLabsDuties !== undefined) {
-            updates.silverAndLabsDuties = response.Client.SilverAndLabsDuties.toString();
-          }
-          if (response.Client.LossAndLabourDuties !== undefined) {
-            updates.lossAndLabourDuties = response.Client.LossAndLabourDuties.toString();
-          }
-        }
-        if (response.DutiesAmount !== undefined) {
-          updates.dutiesAmount = parseFloat(response.DutiesAmount).toFixed(2);
-        }
-        
-        // Update stones with calculated prices if provided
-        // Backend returns full stone objects with calculated prices
-        if (response.Stones && Array.isArray(response.Stones) && response.Stones.length > 0) {
-          // Map backend stones to frontend format
-          const updatedStones = response.Stones.map((backendStone, index) => {
-            // Try to match with existing stone by index or find by matching properties
-            const existingStone = stones[index] || stones.find(s => 
-              s.Type === backendStone.Type && 
-              s.MM === backendStone.MmSize
-            ) || {};
-            
-            return {
-              ...existingStone,
-              Type: backendStone.Type || existingStone.Type,
-              Color: backendStone.Color || existingStone.Color || '',
-              Shape: backendStone.Shape || existingStone.Shape || '',
-              MM: backendStone.MmSize || existingStone.MM || '',
-              Sieve: backendStone.SieveSize || existingStone.Sieve || '',
-              CaratWeight: backendStone.CtWeight?.toString() || existingStone.CaratWeight || '0',
-              Weight: backendStone.Weight?.toString() || existingStone.Weight || '0',
-              Pieces: backendStone.Pcs?.toString() || existingStone.Pieces || '0',
-              Price: backendStone.Price?.toString() || existingStone.Price || '0',
-            };
-          });
-          setStones(updatedStones);
-        }
-
-        // Update form data
-        if (Object.keys(updates).length > 0) {
-          setFormData(prev => ({ ...prev, ...updates }));
-        }
-
-        // Stash Applicable map on the latest entry so the form can hide irrelevant duty inputs.
-        if (response.Applicable) {
-          setPricingEntriesState(prev => {
-            const updated = [...prev];
-            if (updated[latestEntryIndex]) {
-              updated[latestEntryIndex] = { ...updated[latestEntryIndex], applicable: response.Applicable };
-            }
-            return updated;
-          });
-        }
-
-        showAlert('Success', 'Pricing calculated successfully', 'success');
-      } else {
-        showAlert('Success', 'Calculation completed', 'success');
-      }
-    } catch (error) {
-      if (__DEV__) {
-        console.error('Full error:', JSON.stringify(error, null, 2));
-        console.error('Payload that was sent:', JSON.stringify(payload, null, 2));
-      }
-      
-      // Provide more detailed error message with actionable suggestions
-      let errorMessage = 'Failed to calculate pricing.';
-      let suggestions = [];
-      
-      if (error.status === 500) {
-        // Check for specific backend error about null client.Pricing
-        const errorDataStr = JSON.stringify(error.data || {});
-        const errorMessageStr = JSON.stringify(error.message || '');
-        const isClientNullError = 
-          errorDataStr.includes('Cannot read properties of null') ||
-          errorDataStr.includes("reading 'Pricing'") ||
-          errorMessageStr.includes('Cannot read properties of null') ||
-          errorMessageStr.includes("reading 'Pricing'");
-        
-        if (isClientNullError) {
-          // Specific error: Client is null or missing Pricing configuration
-          errorMessage = 'Client Configuration Error\n\n';
-          errorMessage += 'The backend cannot find the client or the client does not have pricing configuration set up.\n\n';
-          if (payload && payload.clientId) {
-            errorMessage += `Client ID: ${payload.clientId}\n\n`;
-          }
-          errorMessage += 'This is a backend configuration issue. Please:\n';
-          errorMessage += '1. Verify the client exists in the database\n';
-          errorMessage += '2. Ensure the client has pricing settings configured\n';
-          errorMessage += '3. Contact the administrator to set up client pricing\n\n';
-          errorMessage += 'Technical Details:\n';
-          errorMessage += 'Backend tried to access client.Pricing but client was null or missing pricing configuration.\n';
-          errorMessage += 'Location: enquiry.service.js:933';
-        } else {
-          // Generic 500 error
-          errorMessage = 'Server error (500). This usually indicates a backend issue.\n\n';
-          suggestions.push('Backend server may be experiencing issues');
-          suggestions.push('Check if the client exists in the database');
-          suggestions.push('Verify the client has pricing configuration');
-          suggestions.push('Check backend logs for detailed error information');
-          
-          // Check payload for common issues
-          if (payload) {
-            if (payload.details.Metal.Weight <= 0 && payload.details.Stones.length === 0) {
-              suggestions.push('Ensure at least Metal Weight or Stones are provided');
-            }
-            if (payload.details.Quantity <= 0) {
-              suggestions.push('Quantity must be greater than 0');
-            }
-            if (payload.details.Stones.some(s => !s.Type || s.Type.trim() === '')) {
-              suggestions.push('All stones must have a valid Type');
-            }
-          }
-          
-          errorMessage += 'Possible causes:\n';
-          suggestions.forEach((suggestion, index) => {
-            errorMessage += `${index + 1}. ${suggestion}\n`;
-          });
-          errorMessage += '\n';
-          
-          if (error.data) {
-            if (typeof error.data === 'string') {
-              errorMessage += `Backend error: ${error.data}`;
-            } else if (error.data.message) {
-              errorMessage += `Backend error: ${error.data.message}`;
-            } else if (error.data.error) {
-              errorMessage += `Backend error: ${error.data.error}`;
-            } else {
-              errorMessage += 'Please check backend server logs for detailed error information.';
-            }
-          } else {
-            errorMessage += 'Please check backend server logs for detailed error information.';
-          }
-        }
-      } else if (error.status === 400) {
-        errorMessage = 'Bad Request (400). Please check your input data:\n\n';
-        if (error.data) {
-          if (typeof error.data === 'string') {
-            errorMessage += error.data;
-          } else if (error.data.message) {
-            errorMessage += error.data.message;
-          } else if (error.data.error) {
-            errorMessage += error.data.error;
-          } else {
-            errorMessage += 'Invalid data format or missing required fields.';
-          }
-        }
-      } else if (error.status === 404) {
-        errorMessage = 'Not Found (404). The pricing calculation endpoint may not exist or the client may not be found.';
-      } else if (error.data) {
-        if (typeof error.data === 'string') {
-          errorMessage = error.data;
-        } else if (error.data.message) {
-          errorMessage = error.data.message;
-        } else if (error.data.error) {
-          errorMessage = error.data.error;
-        }
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      // Show detailed error alert
-      showAlert(
-        'Pricing Calculation Error',
-        errorMessage,
-        'error',
-        [
-          { text: 'OK' },
-          ...(payload && error.status === 500 ? [{
-            text: 'View Payload',
-            onPress: () => {
-              // Payload details available in error message
-              showAlert(
-                'Payload Details',
-                `Check console for full payload details.\n\nClient ID: ${payload.clientId}\nMetal Weight: ${payload.details.Metal.Weight}\nStones: ${payload.details.Stones.length}\nQuantity: ${payload.details.Quantity}`,
-                'info',
-                [{ text: 'OK' }]
-              );
-            }
-          }] : [])
-        ]
-      );
-    }
-  };
-
   // Stone type options from API
   const stoneTypeOptions = stoneTypesData || [];
 
-  // Individual stone filters for each pricing entry - { entryIndex: filterValue }
-  const [entryStoneFilters, setEntryStoneFilters] = useState({});
   // Individual dropdown visibility for each pricing entry - { entryIndex: isVisible }
   const [entryFilterDropdowns, setEntryFilterDropdowns] = useState({});
   const [entryMetalQualityDropdowns, setEntryMetalQualityDropdowns] = useState({});
@@ -862,24 +348,6 @@ const PricingScreen = ({ route, navigation }) => {
   const [originalEntrySnapshot, setOriginalEntrySnapshot] = useState(null);
   // Modal state for adding new pricing entry
   const [showAddModal, setShowAddModal] = useState(false);
-
-  const stoneFilterOptions = useMemo(
-    () => [{ label: 'All Stone Types', value: 'all' }, ...(stoneTypeOptions || [])],
-    [stoneTypeOptions]
-  );
-
-  // Helper to get filter value for a specific entry
-  const getEntryFilter = (entryIndex) => {
-    return entryStoneFilters[entryIndex] || 'all';
-  };
-
-  // Helper to set filter value for a specific entry
-  const setEntryFilter = (entryIndex, filterValue) => {
-    setEntryStoneFilters(prev => ({
-      ...prev,
-      [entryIndex]: filterValue,
-    }));
-  };
 
   // Helper to toggle dropdown for a specific entry
   const toggleEntryFilterDropdown = (entryIndex) => {
@@ -897,42 +365,6 @@ const PricingScreen = ({ route, navigation }) => {
     }));
   };
 
-  // Helper to get filtered stones for a given stones array and filter value
-  // Memoized to avoid recalculating on every render
-  const getFilteredStones = useCallback((stonesArray, filterValue = 'all') => {
-    if (filterValue === 'all') {
-      return stonesArray.map((stone, index) => ({ stone, originalIndex: index }));
-    }
-    return stonesArray
-      .map((stone, index) => ({ stone, originalIndex: index }))
-      .filter(({ stone }) => {
-        const typeValue = (stone?.Type || '').toString().toLowerCase();
-        return typeValue === filterValue.toLowerCase();
-      });
-  }, []);
-
-  // For the latest entry (backward compatibility)
-  const stonesToRender = useMemo(() => {
-    const latestFilter = getEntryFilter(pricingEntriesState.length - 1);
-    return getFilteredStones(stones, latestFilter);
-  }, [stones, entryStoneFilters, pricingEntriesState.length]);
-
-  const handleAddDiamond = useCallback(() => {
-    // Add a new stone row with default values
-    const newStone = {
-      Type: '',
-      Color: '',
-      Shape: '',
-      MM: '',
-      Sieve: '',
-      Weight: '0',
-      Pieces: '0',
-      CaratWeight: '0',
-      Price: '0',
-    };
-    setStones(prev => [...prev, newStone]);
-  }, []);
-
   const handleUpdateStone = useCallback((index, field, value) => {
     setStones(prev => {
       const updatedStones = [...prev];
@@ -942,24 +374,6 @@ const PricingScreen = ({ route, navigation }) => {
     };
       return updatedStones;
     });
-  }, []);
-
-  const handleDeleteStone = useCallback((index) => {
-    showAlert(
-      'Delete Stone',
-      'Are you sure you want to delete this stone?',
-      'warning',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            setStones(prev => prev.filter((_, i) => i !== index));
-          },
-        },
-      ]
-    );
   }, []);
 
   // State for dropdown modals - one per row
@@ -981,7 +395,6 @@ const PricingScreen = ({ route, navigation }) => {
         updatePricingEntryStone(entryIndex, stoneIndex, 'Type', value);
       } else {
         // Backward compatibility - update latest entry
-        const latestIndex = pricingEntriesState.length - 1;
         handleUpdateStone(stoneIndex !== null ? stoneIndex : parseInt(identifier), 'Type', value);
       }
     };
@@ -1037,37 +450,14 @@ const PricingScreen = ({ route, navigation }) => {
   const handleSave = async (shouldNavigateBack = true) => {
     // Prevent multiple simultaneous saves
     if (isSaving) {
-      if (__DEV__) {
-        console.warn('⚠️ [handleSave] Save already in progress, ignoring duplicate call');
-      }
       return;
-    }
-    
-    const startTime = Date.now();
-    
-    if (__DEV__) {
-      console.log('💾 [handleSave] ===== START SAVE PRICING =====');
-      console.log('💾 [handleSave] Timestamp:', new Date().toISOString());
-      console.log('💾 [handleSave] shouldNavigateBack:', shouldNavigateBack);
     }
     
     try {
       // Get enquiry ID
       const enquiryId = enquiry?.id || enquiry?._id;
       
-      if (__DEV__) {
-        console.log('💾 [handleSave] Enquiry ID check:', {
-          enquiryId,
-          enquiryIdFromEnquiry: enquiry?.id,
-          enquiryIdFromEnquiryUnderscore: enquiry?._id,
-          enquiryExists: !!enquiry,
-        });
-      }
-      
       if (!enquiryId) {
-        if (__DEV__) {
-          console.error('❌ [handleSave] Enquiry ID is missing');
-        }
         showAlert('Error', 'Enquiry ID is missing', 'error');
         return;
       }
@@ -1076,39 +466,10 @@ const PricingScreen = ({ route, navigation }) => {
       let version = latestDesign?.Version || latestDesign?.version || '1';
       
       // Log all available versions in the design data for debugging
-      if (__DEV__) {
-        console.log('💾 [handleSave] Available versions in designData:', {
-          designDataLength: designData?.length || 0,
-          allVersions: designData?.map((d, idx) => ({
-            index: idx,
-            Version: d?.Version,
-            version: d?.version,
-            hasPricing: !!(d?.Pricing || d?.pricing),
-          })) || [],
-          latestDesignIndex: designData?.indexOf(latestDesign),
-          latestDesignVersion: latestDesign?.Version || latestDesign?.version,
-        });
-        console.log('💾 [handleSave] Version extraction:', {
-          originalVersion: latestDesign?.Version || latestDesign?.version,
-          versionBeforeFormat: version,
-          latestDesignExists: !!latestDesign,
-          latestDesignKeys: latestDesign ? Object.keys(latestDesign) : [],
-        });
-      }
       
       // Send the full version string as-is (e.g., "Version 1")
       // The API expects the complete version string, not just the number
       const versionToSend = version;
-      
-      if (__DEV__) {
-        console.log('💾 [handleSave] Version processing:', {
-          originalVersion: version,
-          versionToSend,
-        });
-      }
-      
-      // Get metal details from enquiry (fallback only)
-      const metalColor = originalData?.Metal?.Color || enquiry?.Metal?.Color || 'Gold';
       
       // Get default metal rate for fallback (from latest entry or metalRateConsidered)
       const defaultMetalWeight = parseFloat(formData.metalWeight) || 0;
@@ -1119,14 +480,6 @@ const PricingScreen = ({ route, navigation }) => {
       }
       if (!defaultMetalRate || defaultMetalRate === 0) {
         defaultMetalRate = defaultMetalWeight > 0 ? defaultMetalPrice / defaultMetalWeight : 0;
-      }
-      
-      if (__DEV__) {
-        console.log('💾 [handleSave] Pricing entries state:', {
-          entriesCount: pricingEntriesState.length,
-          allPricingEntriesCount: allPricingEntries.length,
-          designType,
-        });
       }
       
       // Convert all pricing entries from state to API format
@@ -1192,7 +545,7 @@ const PricingScreen = ({ route, navigation }) => {
               Quality: entryMetalQuality,
               Rate: entryMetalRate,
           },
-          ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
+          ExtraCharges: makeExtraCharges(parseFloat(entryFormData.extraCharges) || 0, entryFormData.extraChargesType),
           NaturalDuties: parseFloat(entryFormData.naturalDuties) || 0,
           LabDuties: parseFloat(entryFormData.labDuties) || 0,
           GoldDuties: parseFloat(entryFormData.goldDuties) || 0,
@@ -1206,26 +559,15 @@ const PricingScreen = ({ route, navigation }) => {
         };
       });
       
-
-
       // Call API to save pricing
-      if (__DEV__) {
-        console.log('💾 [handleSave] Calling savePricing API with:', {
-          enquiryId,
-          designType,
-          version: versionToSend,
-          pricingDataEntriesCount: pricingArray.length,
-        });
-      }
       
-      const saveResult = await savePricing({
+      await savePricing({
         enquiryId,
         designType,
         version: versionToSend, // Send full version string (e.g., "Version 1")
         pricingData: pricingArray,
       }).unwrap();
       
-
       // Refetch enquiry data to get updated pricing before navigating back
       if (finalEnquiryId) {
         await refetchEnquiry();
@@ -1248,76 +590,20 @@ const PricingScreen = ({ route, navigation }) => {
         ]
       );
     } catch (error) {
-      const errorTime = Date.now() - startTime;
-      
-      if (__DEV__) {
-        console.error('❌ [handleSave] ===== SAVE PRICING FAILED =====');
-        console.error('❌ [handleSave] Error Type:', typeof error);
-        console.error('❌ [handleSave] Error Object:', error);
-        console.error('❌ [handleSave] Error Status:', error?.status);
-        console.error('❌ [handleSave] Error Message:', error?.message);
-        console.error('❌ [handleSave] Error Data:', error?.data);
-        console.error('❌ [handleSave] Error Stack:', error?.stack);
-        console.error('❌ [handleSave] Time taken before error:', `${errorTime}ms`);
-        
-        // Log full error details
-        try {
-          console.error('❌ [handleSave] Full error JSON:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-        } catch (jsonError) {
-          console.error('❌ [handleSave] Could not stringify error:', jsonError);
-        }
-        
-        // Log request details that were sent
-        console.error('❌ [handleSave] Request details:', {
-          enquiryId: enquiry?.id || enquiry?._id,
-          designType,
-          version,
-          pricingEntriesCount: pricingEntriesState.length,
-        });
-      }
-      
       let errorMessage = 'Failed to save pricing. Please try again.';
       
       if (error?.data?.message) {
         errorMessage = error.data.message;
-        if (__DEV__) {
-          console.error('❌ [handleSave] Error message from data.message:', error.data.message);
-        }
       } else if (error?.data?.error) {
         errorMessage = error.data.error;
-        if (__DEV__) {
-          console.error('❌ [handleSave] Error message from data.error:', error.data.error);
-        }
       } else if (error?.message) {
         errorMessage = error.message;
-        if (__DEV__) {
-          console.error('❌ [handleSave] Error message from error.message:', error.message);
-        }
       } else if (error?.status) {
         errorMessage = `Server error (${error.status}). Please try again.`;
-        if (__DEV__) {
-          console.error('❌ [handleSave] Error status code:', error.status);
-        }
-      }
-      
-      if (__DEV__) {
-        console.error('❌ [handleSave] Final error message to show user:', errorMessage);
-        console.error('❌ [handleSave] ===== END ERROR LOG =====');
       }
       
       showAlert('Save Failed', errorMessage, 'error');
     }
-  };
-
-  const handleDownloadExcel = () => {
-    if (!designCode) {
-      showAlert('Error', 'Design code not available', 'error');
-      return;
-    }
-    // TODO: Implement Excel download
-    const excelUrl = `${API_BASE_URL}/api/enquiries/files/${designCode}.xlsx?download=true`;
-    showAlert('Info', 'Download Excel functionality will be implemented', 'info');
-    
   };
 
   // Download pricing for a specific entry
@@ -1499,120 +785,11 @@ const PricingScreen = ({ route, navigation }) => {
     }
   };
 
-  const generateExcelFile = async () => {
-    if (stones.length === 0) {
-      showAlert('No Data', 'No stones data available', 'info');
-      return;
-    }
-
-    try {
-      // Prepare data array with headers matching the Excel structure
-      const excelData = [
-        ['Type', 'Color', 'Shape', 'MM Size', 'Sieve Size', 'Weight', 'Pieces', 'Carat Weight', 'Price']
-      ];
-
-      // Add stone data rows
-      stones.forEach(stone => {
-        excelData.push([
-          stone.Type || '',
-          stone.Color || '',
-          stone.Shape || '',
-          stone.MM || '',
-          stone.Sieve || '',
-          parseFloat(stone.Weight) || 0,
-          parseInt(stone.Pieces) || 0,
-          parseFloat(stone.CaratWeight) || 0,
-          parseFloat(stone.Price) || 0,
-        ]);
-      });
-
-      // Create workbook and worksheet
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.aoa_to_sheet(excelData);
-
-      // Set column widths for better readability
-      ws['!cols'] = [
-        { wch: 15 }, // Type
-        { wch: 10 }, // Color
-        { wch: 10 }, // Shape
-        { wch: 12 }, // MM Size
-        { wch: 15 }, // Sieve Size
-        { wch: 12 }, // Weight
-        { wch: 10 }, // Pieces
-        { wch: 15 }, // Carat Weight
-        { wch: 12 }, // Price
-      ];
-
-      // Add worksheet to workbook
-      XLSX.utils.book_append_sheet(wb, ws, 'Pricing');
-
-      // Generate Excel file buffer
-      const excelBuffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-
-      // Create filename
-      const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
-      const excelFilename = designCode 
-        ? `Pricing_${designCode}_${timestamp}.xlsx`
-        : `Pricing_${timestamp}.xlsx`;
-      
-      const downloadPath = `${RNFS.DownloadDirectoryPath}/${excelFilename}`;
-
-      // Convert array buffer to base64
-      const bytes = new Uint8Array(excelBuffer);
-      const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-      let base64 = '';
-      let i = 0;
-      
-      while (i < bytes.length) {
-        const a = bytes[i++];
-        const b = i < bytes.length ? bytes[i++] : 0;
-        const c = i < bytes.length ? bytes[i++] : 0;
-        
-        const bitmap = (a << 16) | (b << 8) | c;
-        
-        base64 += base64Chars.charAt((bitmap >> 18) & 63);
-        base64 += base64Chars.charAt((bitmap >> 12) & 63);
-        base64 += i - 2 < bytes.length ? base64Chars.charAt((bitmap >> 6) & 63) : '=';
-        base64 += i - 1 < bytes.length ? base64Chars.charAt(bitmap & 63) : '=';
-      }
-
-      // Write Excel file
-      await RNFS.writeFile(downloadPath, base64, 'base64');
-
-      // Share/open the file
-      try {
-        await Share.open({
-          url: `file://${downloadPath}`,
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          filename: excelFilename,
-          title: 'Open Excel File',
-          message: `Downloaded: ${excelFilename}`,
-        });
-      } catch (shareError) {
-        if (shareError.message !== 'User did not share') {
-          showAlert(
-            'Success',
-            `Excel file downloaded successfully!\n\nSaved to: Downloads/${excelFilename}`,
-            'success',
-            [{ text: 'OK' }]
-          );
-        }
-      }
-    } catch (error) {
-      showAlert('Error', `Failed to generate Excel file: ${error.message}`, 'error');
-    }
-  };
-
   // Calculate pricing for a specific entry
   const handleCalculateForEntry = async (entryIndex) => {
     // Log immediately when function is called
-    console.log('Entry Index:', entryIndex);
-    console.log('Pricing Entries State Length:', pricingEntriesState.length);
-    console.log('Entry Exists:', pricingEntriesState[entryIndex] ? 'YES' : 'NO');
     
     if (entryIndex === null || !pricingEntriesState[entryIndex]) {
-      console.log('Entry Index is null:', entryIndex === null);
-      console.log('Entry exists:', !!pricingEntriesState[entryIndex]);
       showAlert('Error', 'Invalid pricing entry', 'error');
       return;
     }
@@ -1624,20 +801,11 @@ const PricingScreen = ({ route, navigation }) => {
       const entryFormData = entryState.formData;
       const entryStones = entryState.stones;
       
-      console.log('=== CALCULATE BUTTON PRESSED ===');
-      console.log('Entry Index:', entryIndex);
-      console.log('Current Form Data:', JSON.stringify(entryFormData, null, 2));
-      console.log('Current Stones:', JSON.stringify(entryStones, null, 2));
-
       // Get metal details from enquiry
-      const metalColor = originalData?.Metal?.Color || enquiry?.Metal?.Color || 'Gold';
       // IMPORTANT: Use metal quality from formData (which client can change from dropdown)
       // This is the key - when client changes Metal Quality, it updates entryFormData.metalQuality
       const metalQuality = entryFormData.metalQuality || originalData?.Metal?.Quality || enquiry?.Metal?.Quality || '10K';
       const metalWeight = parseFloat(entryFormData.metalWeight) || 0;
-      
-      console.log('🔍 Using Metal Quality for calculation:', metalQuality);
-      console.log('🔍 Metal Quality source: formData =', entryFormData.metalQuality);
       
       // Get metal rate - use override if provided, otherwise calculate or use default
       let metalRate = null;
@@ -1683,7 +851,7 @@ const PricingScreen = ({ route, navigation }) => {
           Stones: transformedStones,
           Loss: parseFloat(entryFormData.lossPercent) || 0,
           Labour: parseFloat(entryFormData.labour) || 0,
-          ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
+          ExtraCharges: makeExtraCharges(parseFloat(entryFormData.extraCharges) || 0, entryFormData.extraChargesType),
           UndercutPrice: parseFloat(entryFormData.undercutPrice) || 0,
           NaturalDuties: parseFloat(entryFormData.naturalDuties) || 0,
           LabDuties: parseFloat(entryFormData.labDuties) || 0,
@@ -1695,74 +863,22 @@ const PricingScreen = ({ route, navigation }) => {
         },
       };
 
-      console.log('🔵 CALCULATE BUTTON (Entry-Specific) - Client ID Status:');
-      console.log('=== PAYLOAD BEING SENT ===');
-      console.log('Payload:', JSON.stringify(payload, null, 2));
-      console.log('Metal Payload:', JSON.stringify(metalPayload, null, 2));
-      console.log('Transformed Stones:', JSON.stringify(transformedStones, null, 2));
-
       // Call API to calculate pricing
-      console.log('📡 Calling API calculatePricing...',"data",payload);
-      console.log('Payload being sent:', JSON.stringify(payload, null, 2));
       
       let response;
       try {
-        console.log('⏳ Waiting for API response...');
         response = await calculatePricing(payload).unwrap();
-        console.log('Response type:', typeof response);
-        console.log('Response:', response);
       } catch (apiError) {
-        console.log('Error object:', apiError);
-        console.log('Error type:', typeof apiError);
-        console.log('Error message:', apiError?.message);
-        console.log('Error data:', apiError?.data);
-        console.log('Error status:', apiError?.status);
         throw apiError; // Re-throw to be caught by outer catch
       }
       
-      console.log('=== API RESPONSE RECEIVED ===');
-      console.log('Response is null?', response === null);
-      console.log('Response is undefined?', response === undefined);
-      console.log('Full Response:', JSON.stringify(response, null, 2));
-      
-      if (response) {
-        console.log('MetalPrice:', response.MetalPrice);
-        console.log('DiamondsPrice:', response.DiamondsPrice);
-        
-        // Detailed TotalPrice logging
-        console.log('=== TOTAL PRICE CHECK ===');
-        console.log('TotalPrice exists?', 'TotalPrice' in response);
-        console.log('TotalPrice value:', response.TotalPrice);
-        console.log('TotalPrice type:', typeof response.TotalPrice);
-        console.log('TotalPrice is null?', response.TotalPrice === null);
-        console.log('TotalPrice is undefined?', response.TotalPrice === undefined);
-        console.log('TotalPrice is NaN?', isNaN(response.TotalPrice));
-        console.log('TotalPrice is finite?', isFinite(response.TotalPrice));
-        if (response.TotalPrice !== undefined && response.TotalPrice !== null) {
-          console.log('TotalPrice parsed:', parseFloat(response.TotalPrice));
-          console.log('TotalPrice formatted:', parseFloat(response.TotalPrice).toFixed(2));
-        } else {
-          console.log('⚠️ WARNING: TotalPrice is missing or null in response!');
-        }
-        console.log('=== END TOTAL PRICE CHECK ===');
-        
-        console.log('Metal:', response.Metal);
-        console.log('DiamondWeight:', response.DiamondWeight);
-        console.log('Client:', response.Client);
-      } else {
-        console.log('⚠️ WARNING: Response is null or undefined!');
-      }
-
       // Update the specific entry's form data with ALL response fields
       if (response) {
-        console.log('=== UPDATING FORM DATA ===');
-        console.log('Before Update - Current Form Data:', JSON.stringify(entryFormData, null, 2));
         
         // Update all fields in a single state update to ensure UI refreshes
         setPricingEntriesState(prev => {
           const updated = [...prev];
           if (!updated[entryIndex]) {
-            console.log('ERROR: Entry index not found in state');
             return prev;
           }
           
@@ -1785,13 +901,6 @@ const PricingScreen = ({ route, navigation }) => {
             const totalPriceValue = parseFloat(response.TotalPrice);
             const totalPriceFormatted = totalPriceValue.toFixed(2);
             updatedFormData.totalPrice = totalPriceFormatted;
-            console.log('   - Original value:', response.TotalPrice);
-            console.log('   - Parsed value:', totalPriceValue);
-            console.log('   - Formatted value:', totalPriceFormatted);
-          } else {
-            console.log('   - TotalPrice value:', response.TotalPrice);
-            console.log('   - TotalPrice undefined?', response.TotalPrice === undefined);
-            console.log('   - TotalPrice null?', response.TotalPrice === null);
           }
           
           // Update Metal fields from response.Metal
@@ -1835,7 +944,8 @@ const PricingScreen = ({ route, navigation }) => {
 
             // Extra Charges (can be negative)
             if (response.Client.ExtraCharges !== undefined && response.Client.ExtraCharges !== null) {
-              updatedFormData.extraCharges = parseFloat(response.Client.ExtraCharges).toString();
+              updatedFormData.extraCharges = extraChargesValue(response.Client.ExtraCharges).toString();
+              updatedFormData.extraChargesType = extraChargesType(response.Client.ExtraCharges);
             }
 
             // Undercut price (per-carat cap)
@@ -1865,18 +975,7 @@ const PricingScreen = ({ route, navigation }) => {
           if (dutiesAmountValue !== null) {
             // Update dutiesAmount in formData
             updatedFormData.dutiesAmount = parseFloat(dutiesAmountValue).toFixed(2);
-            if (__DEV__) {
-            }
-          } else {
-            if (__DEV__) {
-              console.log('⚠️ DutiesAmount not found in response:', {
-                'response.DutiesAmount': response.DutiesAmount,
-                'response.Client?.DutiesAmount': response.Client?.DutiesAmount,
-              });
-            }
           }
-          
-          console.log('After Update - Updated Form Data:', JSON.stringify(updatedFormData, null, 2));
           
           // Update the entry with new form data - FORCE OVERWRITE all values
           updated[entryIndex] = {
@@ -1899,52 +998,19 @@ const PricingScreen = ({ route, navigation }) => {
               Price: (stone.Price || 0).toString(),
             }));
             
-            console.log('Updated Stones:', JSON.stringify(updatedStones, null, 2));
             updated[entryIndex].stones = updatedStones;
           }
-          
-          console.log('=== STATE UPDATE COMPLETE ===');
-          console.log('Final Entry State:', JSON.stringify(updated[entryIndex], null, 2));
-          console.log('Display Values:');
-          console.log('  Metal Price:', updatedFormData.metalPrice);
-          console.log('  Diamonds Price:', updatedFormData.diamondPrice);
-          console.log('  Total Price:', updatedFormData.totalPrice);
-          console.log('  Metal Weight:', updatedFormData.metalWeight);
-          console.log('  Metal Quality:', updatedFormData.metalQuality);
-          console.log('  Metal Rate:', updatedFormData.metalRateOverride);
-          console.log('  Diamond Weight:', updatedFormData.diamondWeight);
-          console.log('  Loss:', updatedFormData.lossPercent);
-          console.log('  Labour:', updatedFormData.labour);
-          console.log('  Extra Charges:', updatedFormData.extraCharges);
           
           return updated;
         });
         
         showAlert('Success', 'All fields updated with calculated values', 'success');
-      } else {
-        console.log('ERROR: Response is null or undefined');
       }
     } catch (error) {
-      console.log('=== CALCULATE ERROR ===');
-      console.log('Error Type:', typeof error);
-      console.log('Error Object:', error);
-      console.log('Error Stringified:', JSON.stringify(error, null, 2));
-      console.log('Error Message:', error?.message);
-      console.log('Error Data:', error?.data);
-      console.log('Error Status:', error?.status);
-      console.log('Error Stack:', error?.stack);
-      
-      // More detailed error logging
-      if (error?.data) {
-        console.log('Error Data Details:', JSON.stringify(error.data, null, 2));
-      }
-      
       const errorMessage = error?.data?.message || error?.data?.error || error?.message || 'Failed to calculate pricing';
-      console.log('Showing error alert:', errorMessage);
       showAlert('Error', errorMessage, 'error');
     } finally {
       // Note: isCalculating is managed by the mutation hook automatically
-      console.log('=== CALCULATE COMPLETE ===');
     }
   };
 
@@ -1978,7 +1044,6 @@ const PricingScreen = ({ route, navigation }) => {
       }
 
       // Get metal details from enquiry
-      const metalColor = originalData?.Metal?.Color || enquiry?.Metal?.Color || 'Gold';
       const metalQuality = originalData?.Metal?.Quality || enquiry?.Metal?.Quality || '24K';
       const metalWeight = parseFloat(entryFormData.metalWeight) || 0;
 
@@ -2011,32 +1076,20 @@ const PricingScreen = ({ route, navigation }) => {
         },
       };
 
-      console.log('🟢 SYNC CLIENT PRICING - Client ID Status:');
-      console.log('📋 Full payload:', JSON.stringify(payload, null, 2));
-
       // Call API to sync client pricing
       const response = await calculatePricing(payload).unwrap();
-
-      console.log('🟢 SYNC PRICING - API Response:');
-      console.log('📥 Full Response:', JSON.stringify(response, null, 2));
-      console.log('💎 DiamondsPrice:', response?.DiamondsPrice);
-      console.log('💎 DiamondPrice (alternative):', response?.DiamondPrice);
-      console.log('💎 DiamondWeight:', response?.DiamondWeight);
 
       // Update the specific entry's form data with response
       if (response) {
         // Update metal price - handle 0 as valid value
         if (response.MetalPrice !== undefined && response.MetalPrice !== null) {
           updatePricingEntryFormData(entryIndex, 'metalPrice', parseFloat(response.MetalPrice).toFixed(2));
-        } else {
-          console.log('⚠️ MetalPrice is undefined or null in response');
         }
 
         // Update diamonds price - handle 0 as valid value
         if (response.DiamondsPrice !== undefined && response.DiamondsPrice !== null) {
           updatePricingEntryFormData(entryIndex, 'diamondPrice', parseFloat(response.DiamondsPrice).toFixed(2));
         } else {
-          console.log('⚠️ DiamondsPrice is undefined or null in response');
           // Check for alternative field names
           if (response.DiamondPrice !== undefined && response.DiamondPrice !== null) {
             updatePricingEntryFormData(entryIndex, 'diamondPrice', parseFloat(response.DiamondPrice).toFixed(2));
@@ -2053,7 +1106,6 @@ const PricingScreen = ({ route, navigation }) => {
           const metalPrice = parseFloat(response.MetalPrice || 0);
           const diamondsPrice = parseFloat(response.DiamondsPrice || response.DiamondPrice || 0);
           const totalPrice = (metalPrice + diamondsPrice).toFixed(2);
-          console.log('⚠️ TotalPrice not in response, calculating:', totalPrice, 'from MetalPrice:', metalPrice, 'and DiamondsPrice:', diamondsPrice);
           updatePricingEntryFormData(entryIndex, 'totalPrice', totalPrice);
         }
 
@@ -2078,7 +1130,8 @@ const PricingScreen = ({ route, navigation }) => {
             updatePricingEntryFormData(entryIndex, 'labour', response.Client.Labour.toString());
           }
           if (response.Client.ExtraCharges !== undefined) {
-            updatePricingEntryFormData(entryIndex, 'extraCharges', response.Client.ExtraCharges.toString());
+            updatePricingEntryFormData(entryIndex, 'extraCharges', extraChargesValue(response.Client.ExtraCharges).toString());
+            updatePricingEntryFormData(entryIndex, 'extraChargesType', extraChargesType(response.Client.ExtraCharges));
           }
           if (response.Client.UndercutPrice !== undefined) {
             updatePricingEntryFormData(entryIndex, 'undercutPrice', response.Client.UndercutPrice.toString());
@@ -2107,7 +1160,6 @@ const PricingScreen = ({ route, navigation }) => {
             Price: (stone.Price || 0).toString(),
           }));
 
-          console.log('Updated Stones (sync):', JSON.stringify(updatedStones, null, 2));
           setPricingEntriesState(prev => {
             const updated = [...prev];
             if (updated[entryIndex]) {
@@ -2134,22 +1186,6 @@ const PricingScreen = ({ route, navigation }) => {
       showAlert('Error', errorMessage, 'error');
     } finally {
       setIsSyncing(false);
-    }
-  };
-
-  // Legacy handleSyncClientPricing - kept for backward compatibility but now uses entry-specific function
-  const handleSyncClientPricing = async () => {
-    // If we're in edit modal, use entry-specific function
-    if (editingEntryIndex !== null && pricingEntriesState[editingEntryIndex]) {
-      await handleSyncClientPricingForEntry(editingEntryIndex);
-      return;
-    }
-    
-    // Otherwise, use the first entry or show error
-    if (pricingEntriesState.length > 0) {
-      await handleSyncClientPricingForEntry(0);
-    } else {
-      showAlert('Error', 'No pricing entries available', 'error');
     }
   };
 
@@ -2262,9 +1298,7 @@ const PricingScreen = ({ route, navigation }) => {
   const renderEditablePricingEntry = (entryState, index, originalPricingEntry) => {
     const entryFormData = entryState.formData;
     const entryStones = entryState.stones;
-    const entryUndercutEnabled = entryState.undercutEnabled;
     const pricingMetalRate = originalPricingEntry?.Metal?.Rate || originalPricingEntry?.MetalRate || 0;
-    
     
     return (
       <Card key={index} style={[styles.pricingEntryCard, isTablet && styles.pricingEntryCardTablet]}>
@@ -2363,13 +1397,29 @@ const PricingScreen = ({ route, navigation }) => {
               keyboardType="numeric"
               style={[styles.gridInputQuarter, styles.compactInputField]}
             />
-            <Input
-              label="Extra Charges"
-              value={entryFormData.extraCharges}
-              onChangeText={(value) => updatePricingEntryFormData(index, 'extraCharges', value)}
-              keyboardType="numeric"
-              style={[styles.gridInputQuarter, styles.compactInputField]}
-            />
+            <View style={styles.gridInputQuarter}>
+              <Input
+                label={`Extra (${(entryFormData.extraChargesType || 'percentage') === 'fixed' ? '$' : '%'})`}
+                value={entryFormData.extraCharges}
+                onChangeText={(value) => updatePricingEntryFormData(index, 'extraCharges', value)}
+                keyboardType="numeric"
+                style={styles.compactInputField}
+              />
+              <View style={styles.extraChargesTypeRow}>
+                <TouchableOpacity
+                  style={[styles.extraChargesTypeBtn, (entryFormData.extraChargesType || 'percentage') === 'percentage' && styles.extraChargesTypeBtnActive]}
+                  onPress={() => updatePricingEntryFormData(index, 'extraChargesType', 'percentage')}
+                >
+                  <CustomText variant="label" style={[styles.extraChargesTypeText, (entryFormData.extraChargesType || 'percentage') === 'percentage' && styles.extraChargesTypeTextActive]}>%</CustomText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.extraChargesTypeBtn, entryFormData.extraChargesType === 'fixed' && styles.extraChargesTypeBtnActive]}
+                  onPress={() => updatePricingEntryFormData(index, 'extraChargesType', 'fixed')}
+                >
+                  <CustomText variant="label" style={[styles.extraChargesTypeText, entryFormData.extraChargesType === 'fixed' && styles.extraChargesTypeTextActive]}>$</CustomText>
+                </TouchableOpacity>
+              </View>
+            </View>
             <Input
               label="Undercut Price"
               value={entryFormData.undercutPrice}
@@ -2828,7 +1878,7 @@ const PricingScreen = ({ route, navigation }) => {
             <View style={styles.gridInputThird}>
               <CustomText variant="label" style={styles.pricingEntryLabel}>Extra Charges</CustomText>
               <CustomText variant="body" style={styles.pricingEntryValue}>
-                ${(pricingEntry?.ExtraCharges || pricingEntry?.extraCharges || 0).toFixed(2)}
+                {formatExtraChargesLabel(pricingEntry?.ExtraCharges ?? pricingEntry?.extraCharges)}
               </CustomText>
             </View>
           </View>
@@ -3081,7 +2131,7 @@ const PricingScreen = ({ route, navigation }) => {
                 SilverAndLabsDuties: parseFloat(entryFormData.silverAndLabsDuties) || 0,
                 LossAndLabourDuties: parseFloat(entryFormData.lossAndLabourDuties) || 0,
                 UndercutPrice: parseFloat(entryFormData.undercutPrice) || 0,
-                ExtraCharges: parseFloat(entryFormData.extraCharges) || 0,
+                ExtraCharges: makeExtraCharges(parseFloat(entryFormData.extraCharges) || 0, entryFormData.extraChargesType),
                 ClientPricingMessage: entryFormData.clientPricingMessage || '',
                 Stones: entryStones.map(stone => ({
                   Type: stone.Type || '',
@@ -3300,9 +2350,6 @@ const PricingScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={async () => {
-                    console.log('🔘 CALCULATE BUTTON PRESSED IN UI (Add Modal)');
-                    console.log('Editing Entry Index:', editingEntryIndex);
-                    console.log('Entry Exists:', pricingEntriesState[editingEntryIndex] ? 'YES' : 'NO');
                     if (editingEntryIndex !== null && pricingEntriesState[editingEntryIndex]) {
                       await handleCalculateForEntry(editingEntryIndex);
                     } else {
@@ -3336,6 +2383,14 @@ const PricingScreen = ({ route, navigation }) => {
               </View>
             </View>
           </View>
+          <BrandedAlert
+            visible={alertConfig.visible}
+            title={alertConfig.title}
+            message={alertConfig.message}
+            type={alertConfig.type}
+            buttons={alertConfig.buttons}
+            onClose={hideAlert}
+          />
         </Modal>
 
         {/* Modal for Adding New Pricing Entry */}
@@ -3426,9 +2481,6 @@ const PricingScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={async () => {
-                    console.log('🔘 CALCULATE BUTTON PRESSED IN UI (Edit Modal)');
-                    console.log('Editing Entry Index:', editingEntryIndex);
-                    console.log('Entry Exists:', pricingEntriesState[editingEntryIndex] ? 'YES' : 'NO');
                     if (editingEntryIndex !== null && pricingEntriesState[editingEntryIndex]) {
                       await handleCalculateForEntry(editingEntryIndex);
                     } else {
@@ -3462,6 +2514,14 @@ const PricingScreen = ({ route, navigation }) => {
               </View>
             </View>
           </View>
+          <BrandedAlert
+            visible={alertConfig.visible}
+            title={alertConfig.title}
+            message={alertConfig.message}
+            type={alertConfig.type}
+            buttons={alertConfig.buttons}
+            onClose={hideAlert}
+          />
         </Modal>
 
         {/* Pricing Input Fields - REMOVED (only shown in modals now) */}
@@ -3525,36 +2585,12 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     lineHeight: 16,
   },
-  pricingCard: {
-    marginBottom: 10,
-    padding: 12,
-    backgroundColor: colors.background,
-    borderRadius: 8,
-  },
-  sectionTitle: {
-    marginBottom: 10,
-    color: colors.textPrimary,
-    fontFamily: fonts.bold,
-    fontSize: fonts.base,
-  },
   pricingGrid: {
     gap: 6,
   },
   pricingGridTablet: {
     gap: 12,
     maxWidth: '100%',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  inputRowTablet: {
-    gap: 12,
-  },
-  gridInput: {
-    flex: 1,
-    minWidth: '30%',
   },
   inputRowThree: {
     flexDirection: 'row',
@@ -3568,10 +2604,6 @@ const styles = StyleSheet.create({
   gridInputThird: {
     flexBasis: '32%',
     marginBottom: 4,
-  },
-  gridInputThirdTablet: {
-    flexBasis: '32%',
-    marginBottom: 8,
   },
   inputRowFour: {
     flexDirection: 'row',
@@ -3589,31 +2621,30 @@ const styles = StyleSheet.create({
     fontSize: 10,
     minHeight: 28,
   },
-  undercutCard: {
-    marginBottom: 16,
-    padding: 20,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-  },
-  undercutHeader: {
+  extraChargesTypeRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
+    gap: 4,
+    marginTop: 4,
   },
-  undercutLabel: {
-    marginLeft: 12,
-    fontSize: fonts.base,
-    fontFamily: fonts.bold,
+  extraChargesTypeBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  extraChargesTypeBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  extraChargesTypeText: {
+    fontSize: 11,
     color: colors.textPrimary,
   },
-  undercutInput: {
-    marginTop: 8,
-  },
-  stonesCard: {
-    marginBottom: 16,
-    padding: 20,
-    backgroundColor: colors.background,
-    borderRadius: 12,
+  extraChargesTypeTextActive: {
+    color: colors.textWhite,
   },
   stonesHeader: {
     marginBottom: 6,
@@ -3621,12 +2652,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 8,
-  },
-  stonesButtonsContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-    flexWrap: 'wrap',
   },
   stoneFilterRow: {
     flexDirection: 'row',
@@ -3702,13 +2727,6 @@ const styles = StyleSheet.create({
   downloadButton: {
     backgroundColor: colors.primary,
   },
-  stonesTableContainer: {
-    marginTop: 12,
-  },
-  stonesTableContainerTablet: {
-    marginTop: 16,
-    width: '100%',
-  },
   tableScrollView: {
     maxHeight: 400,
   },
@@ -3765,21 +2783,8 @@ const styles = StyleSheet.create({
   tableHeaderTextTablet: {
     fontSize: 11,
   },
-  tableScrollContainer: {
-    // Removed - using flex layout instead
-  },
   tableBody: {
     backgroundColor: colors.background,
-  },
-  noFilteredDataRow: {
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  noFilteredDataText: {
-    color: colors.textSecondary,
-    fontFamily: fonts.medium,
   },
   tableRow: {
     flexDirection: 'row',
@@ -3839,27 +2844,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     fontSize: 11,
     minWidth: 50,
-  },
-  tableCellNumber: {
-    width: 25,
-    minWidth: 25,
-  },
-  tableCellType: {
-    width: 80,
-    minWidth: 80,
-  },
-  tableCellSmall: {
-    width: 50,
-    minWidth: 50,
-  },
-  tableCellMedium: {
-    width: 65,
-    minWidth: 65,
-  },
-  tableCellAction: {
-    width: 40,
-    minWidth: 40,
-    borderRightWidth: 0,
   },
   // Flex-based column widths for responsive table
   tableCellFlexNumber: {
@@ -3927,10 +2911,6 @@ const styles = StyleSheet.create({
   tableCellFlexPriceTablet: {
     flex: 1.5,
     maxWidth: 150,
-  },
-  tableCellCompact: {
-    minHeight: 20,
-    paddingVertical: 1,
   },
   // Compact styles for view mode table
   tableRowView: {
@@ -4000,34 +2980,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     color: colors.textPrimary,
   },
-  deleteStoneButton: {
-    padding: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 6,
-  },
-  emptyStonesContainer: {
-    padding: 40,
-    alignItems: 'center',
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-  },
-  emptyStonesText: {
-    color: colors.textSecondary,
-    fontSize: fonts.base,
-    fontFamily: fonts.bold,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyStonesSubtext: {
-    color: colors.textLight,
-    fontSize: fonts.sm,
-    fontFamily: fonts.regular,
-    textAlign: 'center',
-  },
   messageCard: {
     marginBottom: 10,
     padding: 10,
@@ -4058,66 +3010,6 @@ const styles = StyleSheet.create({
     minHeight: 60,
     textAlignVertical: 'top',
   },
-  messageDisplayBox: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.background,
-    minHeight: 60,
-    marginTop: 8,
-  },
-  messageDisplayText: {
-    fontSize: fonts.base,
-    fontFamily: fonts.regular,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  actionButtonsCard: {
-    marginTop: 6,
-    padding: 10,
-    backgroundColor: colors.background,
-    borderRadius: 8,
-  },
-  actionButtons: {
-    gap: 8,
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionBtn: {
-    borderRadius: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    minHeight: 38,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionBtnHalf: {
-    flex: 1,
-  },
-  btnContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  btnText: {
-    color: colors.textWhite,
-    fontFamily: fonts.bold,
-    fontSize: fonts.xs,
-    letterSpacing: 0.1,
-  },
-  saveBtn: {
-    backgroundColor: colors.primary,
-    width: '100%',
-  },
-  cancelBtn: {
-    backgroundColor: colors.textSecondary,
-    width: '100%',
-  },
   calculateBtn: {
     backgroundColor: colors.primary,
     shadowColor: colors.primary,
@@ -4136,14 +3028,6 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     shadowOpacity: 0.1,
     elevation: 1,
-  },
-  filterCard: {
-    marginBottom: 20,
-    padding: 16,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.primary,
   },
   allPricingEntriesContainer: {
     marginBottom: 12,
@@ -4289,15 +3173,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
-  modalFooterTopRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 6,
-  },
-  modalFooterActionRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
   modalFooterSingleRow: {
     flexDirection: 'row',
     gap: 4,
@@ -4343,9 +3218,6 @@ const styles = StyleSheet.create({
   },
   saveModalButtonText: {
     color: colors.textWhite,
-  },
-  disabledButtonText: {
-    opacity: 0.5,
   },
   modalActionButton: {
     flex: 1,
@@ -4421,6 +3293,3 @@ const styles = StyleSheet.create({
 });
 
 export default PricingScreen;
-
-
-

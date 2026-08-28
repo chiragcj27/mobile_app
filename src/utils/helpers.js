@@ -40,6 +40,16 @@ export const formatDateTime = (dateString) => {
   });
 };
 
+// Enquiries have no stored CreatedDate at the top level; the real creation
+// timestamp lives in the Mongo ObjectId (its first 4 bytes are a Unix time).
+export const objectIdToDate = (id) => {
+  const hex = String(id || '');
+  if (!/^[0-9a-fA-F]{24}$/.test(hex)) return null;
+  const seconds = parseInt(hex.substring(0, 8), 16);
+  if (isNaN(seconds)) return null;
+  return new Date(seconds * 1000).toISOString();
+};
+
 export const excelSerialToDate = (serial) => {
   if (serial == null || isNaN(serial)) return null;
   return new Date((Number(serial) - 25569) * 86400 * 1000);
@@ -99,15 +109,15 @@ export const getLoadColor = (pct) => {
 };
 
 export const getPriorityColor = (priority) => {
-  const priorityLower = (priority || '').toLowerCase();
+  const priorityLower = (priority || '').toLowerCase().trim();
   const priorityColors = {
     'normal': colors.success,
-    'high': colors.warning,
+    'high': colors.error,
     'super high': colors.error,
     // Legacy support
     'low': colors.success,
-    'medium': colors.success,
-    'urgent': colors.warning,
+    'medium': colors.warning,
+    'urgent': colors.error,
     'super urgent': colors.error,
   };
   return priorityColors[priorityLower] || colors.textSecondary;

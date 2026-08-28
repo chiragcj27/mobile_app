@@ -21,7 +21,9 @@ import {
   useGetEnquiryBucketsQuery,
   useGetEnquiryByIdQuery,
   useUpdateEnquiryMutation,
+  useReorderEnquiryMutation,
   useDeleteEnquiryMutation,
+  useUpdateAssetDataMutation,
 } from '../../store/api';
 import {
   setActiveTab,
@@ -33,16 +35,19 @@ import {
 import { TAB, SUBSTATUS, STATUS } from '../../constants/enquiry';
 
 import NewCard from '../../components/cards/NewCard';
+import ReorderableList from '../../components/common/ReorderableList';
 import { SearchInput, AnimatedLogoLoader } from '../../components/common';
 import TopNavbar from '../../components/common/TopNavbar';
 import Icon from '../../components/common/Icon';
 import EnquiryFiltersModal from '../../components/filters/EnquiryFiltersModal';
 import QuotationModal from '../../components/modals/QuotationModal';
 import FinalLookModal from '../../components/modals/FinalLookModal';
+import ShareEnquiryModal from '../../components/modals/ShareEnquiryModal';
 import CreateEnquiryModal from '../EditEnquiry/createEnquiryModal';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import useDeviceLayout from '../../hooks/useDeviceLayout';
+import { useEnquiryActions } from '../../hooks/useEnquiryActions';
 
 const PAGE_SIZE = 20;
 
@@ -76,10 +81,6 @@ const DESIGNER_TAB = {
   WIP: 'designer_wip',
 };
 
-const ORDER_PLACEMENT_TABS=[
-  { key: TAB.Order_Placement, label: 'Order Placement', bucketKey: 'orderPlacement' },
-]
-
 const buildArg = ({ role, userId, page, search, filters, sortBy, sortOrder, tabFilter }) => ({
   role,
   userId,
@@ -89,7 +90,8 @@ const buildArg = ({ role, userId, page, search, filters, sortBy, sortOrder, tabF
   filters: {
     ...filters,
     ...tabFilter,
-    sortBy,
+    // Backend keys the priority + saved-order (OrderKey) sort off lowercase 'priority'.
+    sortBy: sortBy === 'Priority' ? 'priority' : sortBy,
     sortOrder,
   },
 });
@@ -130,48 +132,6 @@ const enrich = (rows, clientNameMap) =>
     }
     return { ...e, clientId: idStr || e.clientId, clientName: name || 'Unknown Client' };
   });
-
-const renderMdSummary = (input, s) => {
-  if (!input) return null;
-  const text = (typeof input === 'string' ? input : String(input)).replace(/\\n/g, '\n');
-  const sections = [];
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (/^#{1,3}\s/.test(trimmed)) {
-      const level = trimmed.match(/^#+/)[0].length;
-      sections.push({ type: 'heading', text: trimmed.replace(/^#+\s*/, '').replace(/\*\*/g, ''), level });
-    } else if (/^\*\*.*\*\*:/.test(trimmed)) {
-      const parts = trimmed.match(/^\*\*(.+?)\*\*:\s*(.*)/);
-      sections.push(parts ? { type: 'row', label: parts[1].replace(/\*\*/g, ''), val: (parts[2] || '').replace(/\*\*/g, '') } : { type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    } else if (/^[-*•]\s/.test(trimmed)) {
-      sections.push({ type: 'bullet', text: trimmed.replace(/^[-*•]\s*/, '').replace(/\*\*/g, '') });
-    } else if (/^[A-Z][^:]+:/.test(trimmed) && !/^https?:\/\//i.test(trimmed) && trimmed.indexOf(':') < 60) {
-      const colonIdx = trimmed.indexOf(':');
-      sections.push({ type: 'row', label: trimmed.slice(0, colonIdx).replace(/\*\*/g, ''), val: trimmed.slice(colonIdx + 1).trim().replace(/\*\*/g, '') });
-    } else {
-      sections.push({ type: 'text', text: trimmed.replace(/\*\*/g, '') });
-    }
-  }
-  if (!sections.length) return null;
-  return (
-    <View style={s.mdContainer}>
-      {sections.map((sec, i) => {
-        switch (sec.type) {
-          case 'heading':
-            return <Text key={i} style={[s.mdHeading, sec.level <= 2 && s.mdHeadingLg]}>{sec.text}</Text>;
-          case 'row':
-            return <View key={i} style={s.mdRow}><Text style={s.mdKey} numberOfLines={2}>{sec.label}</Text><Text style={s.mdVal}>{sec.val}</Text></View>;
-          case 'bullet':
-            return <View key={i} style={s.mdBullet}><Text style={s.mdDot}>•</Text><Text style={s.mdBulletTxt}>{sec.text}</Text></View>;
-          default:
-            return <Text key={i} style={s.mdPara}>{sec.text}</Text>;
-        }
-      })}
-    </View>
-  );
-};
 
 const dedupeById = (rows) => {
   const seen = new Set();
@@ -227,12 +187,13 @@ export default function EnquiryListScreen({ navigation }) {
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [quotationEnquiry, setQuotationEnquiry] = useState(null);
   const [finalLookEnquiry, setFinalLookEnquiry] = useState(null);
-  const [isExpandedAll, setIsExpandedAll] = useState(true);
+  const [finalLookActionLoading, setFinalLookActionLoading] = useState(false);
+  const [shareEnquiry, setShareEnquiry] = useState(null);
+  const [shareEnquiryId, setShareEnquiryId] = useState(null);
+  const { data: shareFullEnquiry } = useGetEnquiryByIdQuery(shareEnquiryId, { skip: !shareEnquiryId });
   const [designerTab, setDesignerTab] = useState(DESIGNER_TAB.MINE);
+  const [unassignedSubFilter, setUnassignedSubFilter] = useState('unassigned');
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [summaryEnquiryId, setSummaryEnquiryId] = useState(null);
-  const { data: summaryData, isLoading: summaryLoading } = useGetEnquiryByIdQuery(summaryEnquiryId, { skip: !summaryEnquiryId });
-
   // When CH/Admin lands here via "ClientHandlerEnquiries" route with a selected client,
   // scope every query to that client only.
   const isUnassignedOnly = route.params?.filter === 'unassigned';
@@ -244,10 +205,6 @@ export default function EnquiryListScreen({ navigation }) {
   const selectedAssignedToRole = String(selectedAssignedTo?.role || '').toLowerCase();
   const isAssignedToOrderPlacement = selectedAssignedToRole === 'order_placement' || selectedAssignedToRole === 'op';
 
-  console.log('[EnquiryListScreen] assignedTo:', JSON.stringify(selectedAssignedTo));
-  console.log('[EnquiryListScreen] selectedAssignedToRole:', selectedAssignedToRole, 'isAssignedToOrderPlacement:', isAssignedToOrderPlacement);
-  console.log('[EnquiryListScreen] isAdminCh:', isAdminCh, 'isOrderPlacement:', isOrderPlacement, 'roleKind:', roleKind);
-  console.log('[EnquiryListScreen] activeTab:', activeTab);
 
   const scopedFilters = selectedClientId
     ? { ...filters, clientId: selectedClientId }
@@ -289,7 +246,10 @@ export default function EnquiryListScreen({ navigation }) {
       ...(unassignedQ1.data?.data || []),
       ...(unassignedQ2.data?.data || []),
       ...(unassignedQ3.data?.data || []),
-    ]).filter(r => (r.status || r.Status || '').toLowerCase() !== 'order placement');
+    ]).filter(r => {
+      const s = String(r.CurrentStatus || r.status || r.Status || '').toLowerCase();
+      return s !== 'order placement';
+    });
     return merged;
   }, [unassignedQ1.data, unassignedQ2.data, unassignedQ3.data]);
 
@@ -357,14 +317,19 @@ export default function EnquiryListScreen({ navigation }) {
       };
     }
     if (isUnassignedOnly) {
-      const rows = enrich(unassignedRowsAll, clientNameMap);
+      let rows;
+      if (unassignedSubFilter === 'order_placed') {
+        rows = enrich(orderPlacementQ.data?.data || [], clientNameMap);
+      } else {
+        rows = enrich(unassignedRowsAll, clientNameMap);
+      }
       return {
         rows,
         total: rows.length,
-        isLoading: unassignedQ1.isLoading || unassignedQ2.isLoading || unassignedQ3.isLoading,
-        isFetching: unassignedQ1.isFetching || unassignedQ2.isFetching || unassignedQ3.isFetching,
+        isLoading: unassignedQ1.isLoading || unassignedQ2.isLoading || unassignedQ3.isLoading || orderPlacementQ.isLoading,
+        isFetching: unassignedQ1.isFetching || unassignedQ2.isFetching || unassignedQ3.isFetching || orderPlacementQ.isFetching,
         refetch: () => {
-          unassignedQ1.refetch();          unassignedQ2.refetch();          unassignedQ3.refetch();
+          unassignedQ1.refetch(); unassignedQ2.refetch(); unassignedQ3.refetch(); orderPlacementQ.refetch();
         },
       };
     }
@@ -395,11 +360,33 @@ export default function EnquiryListScreen({ navigation }) {
       isFetching: approvalQ.isFetching,
       refetch: approvalQ.refetch,
     };
-  }, [isAdminCh, isClient, isOrderPlacement, activeTab, isUnassignedOnly, unassignedQ1, unassignedQ2, wipQ, approvalQ, orderPlacementQ, designerMineQ, designerWipQ, designerTab, clientQ, clientNameMap]);
+  }, [isAdminCh, isClient, isOrderPlacement, activeTab, isUnassignedOnly, unassignedSubFilter, unassignedQ1, unassignedQ2, wipQ, approvalQ, orderPlacementQ, designerMineQ, designerWipQ, designerTab, clientQ, clientNameMap]);
+
+  // Client-side priority sorting (backend sorts alphabetically, not by priority level)
+  const PRIORITY_ORDER = { 'super high': 0, 'high': 1, 'urgent': 1, 'medium': 2, 'normal': 3, 'low': 4, 'super urgent': 0 };
+  const sortedRows = useMemo(() => {
+    if (sortBy !== 'Priority') return activeQuery.rows;
+    const rows = [...(activeQuery.rows || [])];
+    const orderKeyOf = (x) => {
+      const k = x?.OrderKey ?? x?._originalData?.OrderKey;
+      return (k === null || k === undefined) ? Number.MAX_SAFE_INTEGER : Number(k);
+    };
+    rows.sort((a, b) => {
+      const aRaw = a?._originalData || a;
+      const bRaw = b?._originalData || b;
+      const aP = (aRaw?.Priority || a?.Priority || a?.priority || '').toLowerCase().trim();
+      const bP = (bRaw?.Priority || b?.Priority || b?.priority || '').toLowerCase().trim();
+      const aIdx = PRIORITY_ORDER[aP] ?? 5;
+      const bIdx = PRIORITY_ORDER[bP] ?? 5;
+      if (aIdx !== bIdx) return sortOrder === 'asc' ? aIdx - bIdx : bIdx - aIdx;
+      // Same priority — respect the saved drag order (OrderKey ascending).
+      return orderKeyOf(a) - orderKeyOf(b);
+    });
+    return rows;
+  }, [activeQuery.rows, sortBy, sortOrder]);
 
   useEffect(() => {
     if (__DEV__ && activeQuery.rows.length > 0) {
-      console.log('[EnquiryListScreen] enquiryData =', JSON.stringify(activeQuery.rows, null, 2));
     }
   }, [activeQuery.rows]);
 
@@ -417,7 +404,39 @@ export default function EnquiryListScreen({ navigation }) {
   }, [activeTab, isAdminCh, isDesigner]));
 
   const [updateEnquiry] = useUpdateEnquiryMutation();
+  const [reorderEnquiry] = useReorderEnquiryMutation();
   const [deleteEnquiry] = useDeleteEnquiryMutation();
+  const [updateAssetData] = useUpdateAssetDataMutation();
+  const { generateAndShareExcel } = useEnquiryActions({});
+
+  const idOf = (it) => it?._id || it?.Id || it?.id || it?._originalData?._id;
+  const keyOf = (it) => Number(it?.OrderKey ?? it?._originalData?.OrderKey);
+
+  // Persist a drag reorder to the backend (fractional OrderKey). Keeps the dropped
+  // order on screen and refetches after a short settle delay.
+  const handleReorder = useCallback(async ({ data, toIndex, changed }) => {
+    if (!changed || toIndex == null) return;
+    const dragged = data[toIndex];
+    const draggedId = idOf(dragged);
+    const draggedOrderKey = keyOf(dragged);
+    if (!draggedId || !Number.isFinite(draggedOrderKey)) return;
+    const previous = toIndex > 0 ? data[toIndex - 1] : null;
+    const next = toIndex < data.length - 1 ? data[toIndex + 1] : null;
+    const target = (next && previous && draggedOrderKey > keyOf(next)) ? next : (previous || next);
+    if (!target) return;
+    try {
+      await reorderEnquiry({
+        draggedId,
+        draggedOrderKey,
+        targetId: idOf(target),
+        targetOrderKey: keyOf(target),
+      }).unwrap();
+      setTimeout(() => { activeQuery.refetch(); }, 900);
+    } catch (e) {
+      console.warn('[EnquiryList] reorder failed:', e?.data?.message || e?.message);
+      activeQuery.refetch();
+    }
+  }, [reorderEnquiry, activeQuery]);
 
   const refreshAll = useCallback(() => {
     if (isAdminCh) refetchBuckets();
@@ -469,15 +488,11 @@ export default function EnquiryListScreen({ navigation }) {
   const [showSortModal, setShowSortModal] = useState(false);
 
   const sortOptions = [
-    { key: 'AssignedDate', label: 'Assigned Date', icon: 'schedule' },
     { key: 'CreatedDate', label: 'Date Created', icon: 'event' },
-    { key: 'Name', label: 'Name', icon: 'title' },
+    { key: 'ShippingDate', label: 'Shipping Date', icon: 'local-shipping' },
     { key: 'Priority', label: 'Priority', icon: 'priority-high' },
     { key: 'CurrentStatus', label: 'Status', icon: 'flag' },
     { key: 'Category', label: 'Category', icon: 'category' },
-    { key: 'ClientId', label: 'Client', icon: 'person' },
-    { key: 'StoneType', label: 'Stone Type', icon: 'diamond' },
-    { key: 'ShippingDate', label: 'Shipping Date', icon: 'local-shipping' },
   ];
 
   const currentSortLabel = useMemo(
@@ -490,7 +505,7 @@ export default function EnquiryListScreen({ navigation }) {
       const newOrder = sortOrder === 'asc' ? 'desc' : 'asc';
       dispatch(setSorting({ sortBy, sortOrder: newOrder }));
     } else {
-      const dateFields = ['AssignedDate', 'CreatedDate', 'ShippingDate'];
+      const dateFields = ['CreatedDate', 'ShippingDate'];
       const defaultOrder = dateFields.includes(newSortBy) ? 'desc' : 'asc';
       dispatch(setSorting({ sortBy: newSortBy, sortOrder: defaultOrder }));
     }
@@ -511,6 +526,7 @@ export default function EnquiryListScreen({ navigation }) {
       <TouchableOpacity
         style={[styles.tab, isActive && styles.tabActive]}
         onPress={() => handleTabChange(item.key)}
+        activeOpacity={0.8}
       >
         <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{item.label}</Text>
         <View style={[styles.countWrap, isActive && styles.countWrapActive]}>
@@ -526,16 +542,16 @@ export default function EnquiryListScreen({ navigation }) {
     { key: DESIGNER_TAB.WIP,  label: `All ${designerRoleLabel} (WIP)` },
   ], [designerRoleLabel]);
 
-  const renderItem = ({ item }) => {
+  const renderItem = ({ item, drag, isActive }) => {
     const id = item?._id || item?.Id || item?.id || item?._originalData?._id;
     return (
       <NewCard
         item={item}
         navigation={navigation}
         currentTab={isAdminCh ? activeTab : 'designer'}
-        isExpandedAll={isExpandedAll}
+        onLongPress={drag}
+        isDragActive={isActive}
         onViewQuotation={() => {
-          if (__DEV__) console.log('[List] View Quotation click; id=', id, 'item keys=', Object.keys(item || {}));
           setQuotationEnquiry({ ...item, _resolvedId: id });
         }}
         onFinalLook={() => setFinalLookEnquiry(item)}
@@ -545,7 +561,10 @@ export default function EnquiryListScreen({ navigation }) {
         })}
         onUpdateEnquiry={onUpdateEnquiry}
         onDeleteEnquiry={onDeleteEnquiry}
-        onSummary={(enq) => setSummaryEnquiryId(enq?._id || enq?.Id || enq?.id)}
+        onShare={(enq) => {
+          setShareEnquiryId(enq?._id || enq?.Id || enq?.id);
+          setShareEnquiry(enq);
+        }}
       />
     );
   };
@@ -572,7 +591,7 @@ export default function EnquiryListScreen({ navigation }) {
             <Icon name="arrow-back" size={22} color={colors.textWhite} />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
-            <Text style={styles.clientHeaderLabel}>Unassigned Enquiries</Text>
+            <Text style={styles.clientHeaderLabel}>Unassigned Enquiries & Orders Placed</Text>
             <Text style={styles.clientHeaderName}>All clients</Text>
           </View>
         </View>
@@ -671,6 +690,7 @@ export default function EnquiryListScreen({ navigation }) {
                     key={t.key}
                     style={[styles.tab, isActive && styles.tabActive]}
                     onPress={() => { setPage(1); setDesignerTab(t.key); }}
+                    activeOpacity={0.8}
                   >
                     <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{t.label}</Text>
                     <View style={[styles.countWrap, isActive && styles.countWrapActive]}>
@@ -700,18 +720,31 @@ export default function EnquiryListScreen({ navigation }) {
           <TouchableOpacity style={styles.iconBtn} onPress={() => setFilterModalVisible(true)}>
             <Icon name="tune" size={20} color={colors.primary} />
           </TouchableOpacity>
-          <View style={styles.expandToggleWrapper}>
-            <Text style={styles.expandToggleLabel}>
-              {isExpandedAll ? 'Collapse' : 'Expand'}
-            </Text>
-            <TouchableOpacity onPress={() => setIsExpandedAll(v => !v)} activeOpacity={0.8}>
-              <View style={[styles.expandToggleTrack, isExpandedAll && styles.expandToggleTrackOn]}>
-                <View style={[styles.expandToggleThumb, isExpandedAll && styles.expandToggleThumbOn]} />
-              </View>
-            </TouchableOpacity>
-          </View>
         </View>
       </View>
+
+      {isUnassignedOnly && (
+        <View style={styles.unassignedFilterBar}>
+          <TouchableOpacity
+            style={[styles.unassignedFilterTab, unassignedSubFilter === 'unassigned' && styles.unassignedFilterTabActive]}
+            onPress={() => setUnassignedSubFilter('unassigned')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.unassignedFilterTabText, unassignedSubFilter === 'unassigned' && styles.unassignedFilterTabTextActive]}>
+              Unassigned
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.unassignedFilterTab, unassignedSubFilter === 'order_placed' && styles.unassignedFilterTabActive]}
+            onPress={() => setUnassignedSubFilter('order_placed')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.unassignedFilterTabText, unassignedSubFilter === 'order_placed' && styles.unassignedFilterTabTextActive]}>
+              Order Placed
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.infoBar}>
         <Icon name="sort" size={12} color={colors.textSecondary} />
@@ -726,10 +759,11 @@ export default function EnquiryListScreen({ navigation }) {
       {activeQuery.isLoading ? (
         <View style={styles.loader}><AnimatedLogoLoader /></View>
       ) : (
-        <FlatList
-          data={activeQuery.rows}
+        <ReorderableList
+          data={sortedRows}
           renderItem={renderItem}
           keyExtractor={(item, idx) => item?._id || item?.Id || String(idx)}
+          onDragEnd={handleReorder}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={renderEmpty}
           refreshControl={
@@ -802,57 +836,90 @@ export default function EnquiryListScreen({ navigation }) {
         />
       )}
 
-      {finalLookEnquiry && (
-        <FinalLookModal
-          visible={!!finalLookEnquiry}
-          enquiryId={finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id}
-          clientName={finalLookEnquiry?.clientName || finalLookEnquiry?.ClientName || ''}
-          onClose={() => setFinalLookEnquiry(null)}
-          onApprove={async (enquiryId) => {
-            try {
-              await updateEnquiry({ id: enquiryId, Status: 'Production', ApprovedDate: new Date().toISOString() }).unwrap();
-              refreshAll();
-            } catch (e) {}
-          }}
+      {finalLookEnquiry && (() => {
+        const flRaw = finalLookEnquiry?._originalData || finalLookEnquiry || {};
+        const flSrc = finalLookEnquiry || {};
+        const currentStatus = (flRaw.CurrentStatus || flSrc.CurrentStatus || '').toLowerCase();
+        const targetType = currentStatus === 'coral' ? 'coral' : 'cad';
+        const isPlacementMode = currentStatus === 'order placement';
+        const rawObj = targetType === 'cad'
+          ? (flRaw.lastCad || flSrc.lastCad)
+          : (flRaw.lastCoral || flSrc.lastCoral);
+        const numericVersion = parseInt(rawObj?.Version || rawObj?.version || '1', 10);
+        return (
+          <FinalLookModal
+            visible={!!finalLookEnquiry}
+            enquiryId={finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id}
+            clientName={finalLookEnquiry?.clientName || finalLookEnquiry?.ClientName || ''}
+            onClose={() => setFinalLookEnquiry(null)}
+            showApprovalActions={!isPlacementMode}
+            shareExcelMode={isPlacementMode}
+            isActionLoading={finalLookActionLoading}
+            headerTitle={isPlacementMode ? 'Order Placement' : undefined}
+            onShareExcel={isPlacementMode ? async () => {
+              try {
+                const result = await generateAndShareExcel(finalLookEnquiry);
+                if (!result?.success) {
+                  // silently ignore - user can share from card
+                }
+              } catch (e) {}
+              setFinalLookEnquiry(null);
+            } : undefined}
+            onSendForApproval={!isPlacementMode ? async () => {
+              const eid = finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id;
+              setFinalLookActionLoading(true);
+              try {
+                await updateAssetData({
+                  enquiryId: eid,
+                  type: targetType,
+                  version: String(numericVersion),
+                  data: { SendForApproval: true },
+                }).unwrap();
+                setFinalLookEnquiry(null);
+                refreshAll();
+              } catch (e) {}
+              finally { setFinalLookActionLoading(false); }
+            } : undefined}
+            onReject={!isPlacementMode ? async (reason) => {
+              const eid = finalLookEnquiry?._id || finalLookEnquiry?.id || finalLookEnquiry?.Id;
+              setFinalLookActionLoading(true);
+              try {
+                await updateAssetData({
+                  enquiryId: eid,
+                  type: targetType,
+                  version: String(numericVersion),
+                  data: { IsApprovedVersion: false, ReasonForRejection: reason },
+                }).unwrap();
+                setFinalLookEnquiry(null);
+                refreshAll();
+              } catch (e) {}
+              finally { setFinalLookActionLoading(false); }
+            } : undefined}
+          />
+        );
+      })()}
+
+      {shareEnquiry && (
+        <ShareEnquiryModal
+          visible={!!shareEnquiry}
+          enquiry={(() => {
+            const base = shareFullEnquiry || shareEnquiry;
+            const idRaw = base?.clientId || base?.ClientId;
+            const idStr = idRaw ? String(idRaw).trim() : '';
+            let name = base?.clientName || base?.ClientName || base?.client;
+            if ((!name || name === 'Unknown Client') && idStr) {
+              name = clientNameMap.get(idStr);
+              if (!name) {
+                const cleanId = idStr.replace(/^ObjectId\(/, '').replace(/\)$/, '').trim();
+                name = clientNameMap.get(cleanId);
+              }
+            }
+            return { ...base, clientName: name || 'Unknown Client' };
+          })()}
+          onClose={() => { setShareEnquiry(null); setShareEnquiryId(null); }}
+          isDesigner={isDesigner}
         />
       )}
-
-      <Modal visible={!!summaryEnquiryId} transparent animationType="slide" onRequestClose={() => setSummaryEnquiryId(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox2}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Enquiry Summary</Text>
-              <TouchableOpacity onPress={() => setSummaryEnquiryId(null)}>
-                <Icon name="close" size={24} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            {summaryLoading ? (
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
-                {(() => {
-                  const summaryCandidates = [
-                    summaryData?.Summary,
-                    summaryData?.summary,
-                    summaryData?._originalData?.Summary,
-                    summaryData?._originalData?.summary,
-                    summaryData?.data?.Summary,
-                    summaryData?.data?.summary,
-                    summaryData?.enquiry?.Summary,
-                    summaryData?.enquiry?.summary,
-                  ];
-                  const sm = summaryCandidates.find(
-                    value => typeof value === 'string' && value.trim().length > 0,
-                  );
-                  return renderMdSummary(sm, styles) || <Text style={styles.noSummary}>No summary available for this enquiry.</Text>;
-                })()}
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
 
       <CreateEnquiryModal
         visible={showCreateModal}
@@ -951,42 +1018,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   loader: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  expandToggleWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    height: 48,
-    flexShrink: 0,
-  },
-  expandToggleLabel: {
-    fontSize: 11,
-    fontFamily: fonts.medium,
-    color: colors.primary,
-  },
-  expandToggleTrack: {
-    width: 36,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.border,
-    justifyContent: 'center',
-    paddingHorizontal: 2,
-  },
-  expandToggleTrackOn: { backgroundColor: colors.primary },
-  expandToggleThumb: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    elevation: 2,
-    alignSelf: 'flex-start',
-  },
-  expandToggleThumbOn: { alignSelf: 'flex-end' },
   clientHeaderBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1071,22 +1102,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
   },
   sortOrderIndicator: { marginLeft: 8 },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 8,
-    elevation: 6,
-  },
   infoBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1094,6 +1109,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 6,
     backgroundColor: colors.backgroundSecondary,
+  },
+  unassignedFilterBar: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 10,
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    overflow: 'hidden',
+  },
+  unassignedFilterTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unassignedFilterTabActive: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+  },
+  unassignedFilterTabText: {
+    fontSize: fonts.sm,
+    fontFamily: fonts.medium,
+    color: colors.textSecondary,
+  },
+  unassignedFilterTabTextActive: {
+    color: colors.textWhite,
+    fontFamily: fonts.bold,
   },
   infoBarText: {
     fontSize: 11,
@@ -1106,92 +1150,4 @@ const styles = StyleSheet.create({
     marginHorizontal: 2,
   },
 
-  modalBox2: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    width: '100%',
-    paddingBottom: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontFamily: fonts.bold,
-    color: colors.textPrimary,
-  },
-  noSummary: {
-    padding: 20,
-    textAlign: 'center',
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm,
-    color: colors.textSecondary,
-  },
-  mdContainer: { padding: 16, paddingBottom: 8 },
-  mdHeading: {
-    fontFamily: fonts.bold,
-    fontSize: fonts.sm || 13,
-    color: colors.primary,
-    marginTop: 14,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  mdHeadingLg: { fontSize: fonts.base || 14 },
-  mdRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || '#F0F0F0',
-  },
-  mdKey: {
-    flex: 1,
-    fontFamily: fonts.medium,
-    fontSize: fonts.sm || 13,
-    color: colors.textSecondary,
-    paddingRight: 8,
-  },
-  mdVal: {
-    flex: 1.5,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    textAlign: 'right',
-  },
-  mdBullet: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginVertical: 3,
-    paddingLeft: 4,
-  },
-  mdDot: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.base || 14,
-    color: colors.primary,
-    marginRight: 8,
-    lineHeight: 20,
-  },
-  mdBulletTxt: {
-    flex: 1,
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  mdPara: {
-    fontFamily: fonts.regular,
-    fontSize: fonts.sm || 13,
-    color: colors.textPrimary,
-    lineHeight: 20,
-    marginVertical: 4,
-  },
 });

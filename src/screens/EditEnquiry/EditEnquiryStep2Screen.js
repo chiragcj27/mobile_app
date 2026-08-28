@@ -16,8 +16,8 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useUploadImageMutation, useUpdateEnquiryMutation } from '../../store/api';
 import { useAuth } from '../../context/AuthContext';
-import { formatDate } from '../../utils';
 import BrandedAlert from '../../components/common/BrandedAlert';
+import { useBrandedAlert } from '../../hooks/useBrandedAlert';
 
 const EditEnquiryStep2Screen = ({ route, navigation }) => {
   const { formData, enquiry } = route.params;
@@ -42,10 +42,7 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
   
   const loading = isUploading || isUpdating;
 
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-  const showAlert = (title, message, type = 'info', buttons = []) =>
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  const hideAlert = () => setAlertConfig(prev => ({ ...prev, visible: false }));
+  const { alertConfig, showAlert, hideAlert } = useBrandedAlert();
 
   // Request camera permission for Android
   const requestCameraPermission = async () => {
@@ -198,14 +195,14 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
       const uploadedImages = [];
       for (const image of selectedImages) {
         try {
-          const formData = new FormData();
-          formData.append('image', {
+          const imageForm = new FormData();
+          imageForm.append('image', {
             uri: image.uri,
             type: image.type,
             name: image.name,
           });
 
-          const uploadResult = await uploadImage(formData).unwrap();
+          const uploadResult = await uploadImage(imageForm).unwrap();
           if (uploadResult.key || uploadResult.Key) {
             uploadedImages.push(uploadResult.key || uploadResult.Key);
           }
@@ -222,36 +219,14 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
         Id: enquiry.id,
         Name: formData.title,
         ClientId: clientIdForApi,
-        AssignedTo: formData.assignedTo || enquiry.AssignedTo || enquiry.assignedTo || null,
-        Status: formData.status || enquiry.Status || enquiry.status || 'Enquiry Created',
         Priority: priorityForAPI,
-        Quantity: formData.quantity && formData.quantity.trim() ? parseInt(formData.quantity) : null,
-        Metal: {
-          Color: formData.metalColor || null,
-          Quality: formData.metalQuality || '10K',
-        },
-        StyleNumber: formData.styleNumber && formData.styleNumber.trim() ? formData.styleNumber : null,
-        GatiOrderNumber: formData.gatiOrderNumber && formData.gatiOrderNumber.trim() ? formData.gatiOrderNumber : null,
         StoneType: formData.stoneType && formData.stoneType.trim() ? formData.stoneType.trim() : null,
-        MetalWeight: {
-          From: formData.metalWeightFrom && formData.metalWeightFrom.trim() ? formData.metalWeightFrom.toString() : null,
-          To: formData.metalWeightTo && formData.metalWeightTo.trim() ? formData.metalWeightTo.toString() : null,
-          Exact: formData.metalWeightExact && formData.metalWeightExact.trim() ? formData.metalWeightExact.toString() : null,
-        },
-        DiamondWeight: {
-          From: formData.diamondWeightFrom && formData.diamondWeightFrom.trim() ? formData.diamondWeightFrom.toString() : null,
-          To: formData.diamondWeightTo && formData.diamondWeightTo.trim() ? formData.diamondWeightTo.toString() : null,
-          Exact: formData.diamondWeightExact && formData.diamondWeightExact.trim() ? formData.diamondWeightExact.toString() : null,
-        },
-        Stamping: formData.stamping && formData.stamping.trim() ? formData.stamping : null,
         Remarks: formData.description && formData.description.trim() ? formData.description : null,
         ShippingDate: formData.deadline && formData.deadline.trim() ? formData.deadline : null,
         CoralCode: enquiry.CoralCode || enquiry.coralCode || null,
         CadCode: enquiry.CadCode || enquiry.cadCode || null,
-        Category: formData.category || 'Ring',
         Budget: formData.budget && formData.budget.trim() ? formData.budget.trim() : null,
         SpecialRemarks: formData.specialRemarks && formData.specialRemarks.trim() ? formData.specialRemarks.trim() : null,
-        ApprovedDate: formData.approvedDate && formData.approvedDate.trim() ? formData.approvedDate : null,
       };
 
       // Add uploaded images to existing images if any
@@ -264,66 +239,7 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
 
       await updateEnquiry({ id: enquiry.id, ...enquiryData }).unwrap();
       
-      // Construct updated enquiry object from form data
-      const updatedEnquiry = {
-        ...enquiry,
-        id: enquiry.id,
-        title: formData.title,
-        description: formData.description,
-        priority: formData.priority,
-        deadline: formData.deadline || null,
-        category: formData.category,
-        stoneType: formData.stoneType,
-        metalType: formData.metalColor ? `${formData.metalColor} (${formData.metalQuality || '10K'})` : null,
-        updatedAt: new Date().toISOString(),
-        Name: formData.title,
-        Remarks: formData.description,
-        Priority: priorityForAPI,
-        ShippingDate: formData.deadline || null,
-        Category: formData.category,
-        StoneType: formData.stoneType,
-        Quantity: formData.quantity ? parseInt(formData.quantity) : null,
-        Metal: {
-          Color: formData.metalColor || null,
-          Quality: formData.metalQuality || '10K',
-        },
-        MetalWeight: {
-          From: formData.metalWeightFrom || null,
-          To: formData.metalWeightTo || null,
-          Exact: formData.metalWeightExact || null,
-        },
-        DiamondWeight: {
-          From: formData.diamondWeightFrom || null,
-          To: formData.diamondWeightTo || null,
-          Exact: formData.diamondWeightExact || null,
-        },
-        Stamping: formData.stamping || null,
-        StyleNumber: formData.styleNumber || null,
-        GatiOrderNumber: formData.gatiOrderNumber || null,
-        ClientId: clientIdForApi,
-        AssignedTo: formData.assignedTo || enquiry.AssignedTo || enquiry.assignedTo,
-        Status: formData.status || enquiry.Status || enquiry.status,
-        CoralCode: enquiry.CoralCode || enquiry.coralCode,
-        CadCode: enquiry.CadCode || enquiry.cadCode,
-        clientName: enquiry.clientName,
-        clientId: clientIdForApi,
-        createdAt: enquiry.createdAt,
-        status: enquiry.status,
-        budget: formData.budget && formData.budget.trim() ? parseFloat(formData.budget) || null : (enquiry.budget || null),
-        specialRemarks: formData.specialRemarks && formData.specialRemarks.trim() ? formData.specialRemarks.trim() : (enquiry.specialRemarks || enquiry.SpecialRemarks || null),
-        approvedDate: formData.approvedDate && formData.approvedDate.trim() ? formData.approvedDate : (enquiry.approvedDate || enquiry.ApprovedDate || null),
-      };
       
-      if (__DEV__) {
-        console.log('updatedEnquiry:', {
-          id: updatedEnquiry.id,
-          StoneType: updatedEnquiry.StoneType,
-          StyleNumber: updatedEnquiry.StyleNumber,
-          GatiOrderNumber: updatedEnquiry.GatiOrderNumber,
-          MetalWeight: updatedEnquiry.MetalWeight,
-          DiamondWeight: updatedEnquiry.DiamondWeight,
-        });
-      }
       
       showAlert(
         'Enquiry Updated',
@@ -363,10 +279,6 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
           <BodyText style={styles.summaryLabel}>Title:</BodyText>
           <BodyText style={styles.summaryValue}>{formData.title}</BodyText>
         </View>
-        <View style={styles.summaryRow}>
-          <BodyText style={styles.summaryLabel}>Category:</BodyText>
-          <BodyText style={styles.summaryValue}>{formData.category}</BodyText>
-        </View>
         {!isClient && (
           <View style={styles.summaryRow}>
             <BodyText style={styles.summaryLabel}>Priority:</BodyText>
@@ -385,14 +297,6 @@ const EditEnquiryStep2Screen = ({ route, navigation }) => {
           <View style={styles.summaryRow}>
             <BodyText style={styles.summaryLabel}>Special Remarks:</BodyText>
             <BodyText style={styles.summaryValue}>{formData.specialRemarks}</BodyText>
-          </View>
-        )}
-        {formData.approvedDate && user?.role?.toLowerCase() !== 'client' && user?.roleId !== 4 && user?.roleNumber !== 4 && (
-          <View style={styles.summaryRow}>
-            <BodyText style={styles.summaryLabel}>Approved Date:</BodyText>
-            <BodyText style={styles.summaryValue}>
-              {formData.approvedDate ? formatDate(formData.approvedDate) : 'Not specified'}
-            </BodyText>
           </View>
         )}
         {existingImages.length > 0 && (
@@ -538,57 +442,95 @@ const styles = StyleSheet.create({
     backgroundColor: colors.backgroundSecondary,
   },
   header: {
-    padding: 20,
+    padding: 24,
     backgroundColor: colors.background,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    shadowColor: colors.shadow || '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   section: {
     padding: 20,
     backgroundColor: colors.background,
     marginBottom: 12,
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    shadowColor: colors.shadow || '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   sectionTitle: {
     marginBottom: 16,
     fontSize: fonts.base,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.3,
   },
   summaryCard: {
     backgroundColor: colors.background,
-    padding: 16,
-    margin: 20,
-    borderRadius: 8,
-    borderWidth: 1,
+    padding: 18,
+    margin: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: colors.border,
+    shadowColor: colors.shadow || '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   summaryTitle: {
-    marginBottom: 12,
+    marginBottom: 14,
     fontSize: fonts.base,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: colors.primary,
+    letterSpacing: 0.3,
   },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   summaryLabel: {
     color: colors.textSecondary,
+    fontWeight: '600',
+    fontSize: fonts.sm,
   },
   summaryValue: {
     color: colors.textPrimary,
-    fontWeight: '500',
+    fontWeight: '600',
+    fontSize: fonts.sm,
   },
   existingImagesContainer: {
-    marginBottom: 16,
+    marginBottom: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   existingImagesLabel: {
-    marginBottom: 8,
+    marginBottom: 10,
+    fontWeight: '600',
+    fontSize: fonts.sm,
   },
   selectedImagesContainer: {
-    marginBottom: 16,
+    marginBottom: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   selectedImagesLabel: {
-    marginBottom: 8,
+    marginBottom: 10,
+    fontWeight: '600',
+    fontSize: fonts.sm,
   },
   selectedImagesGrid: {
     flexDirection: 'row',
@@ -597,62 +539,94 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     position: 'relative',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   existingImage: {
     width: 100,
     height: 100,
-    borderRadius: 8,
+    borderRadius: 10,
     marginRight: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   selectedImage: {
     width: 100,
     height: 100,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: colors.primary,
   },
   removeButton: {
     position: 'absolute',
-    top: -8,
-    right: -8,
+    top: -10,
+    right: -10,
     backgroundColor: colors.error,
-    borderRadius: 12,
-    width: 24,
-    height: 24,
+    borderRadius: 14,
+    width: 28,
+    height: 28,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
   },
   uploadButtons: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 8,
+    marginTop: 12,
   },
   uploadButton: {
     flex: 1,
   },
   instructionsCard: {
     backgroundColor: colors.background,
-    padding: 16,
-    margin: 20,
-    borderRadius: 8,
-    borderWidth: 1,
+    padding: 18,
+    margin: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: colors.border,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.primary,
+    shadowColor: colors.shadow || '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   instructionsTitle: {
     marginBottom: 12,
     fontSize: fonts.base,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: colors.primary,
+    letterSpacing: 0.3,
   },
   instructionsText: {
     marginBottom: 8,
     color: colors.textSecondary,
     fontSize: fonts.sm,
+    fontWeight: '500',
+    lineHeight: 20,
   },
   footer: {
     padding: 20,
     backgroundColor: colors.background,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    shadowColor: colors.shadow || '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   submitButton: {
     marginBottom: 12,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
   },
   backButton: {
     marginTop: 8,

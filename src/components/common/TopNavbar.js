@@ -31,12 +31,6 @@ const TopNavbar = ({ navigation }) => {
   }
   
 
-  const handleSearchPress = () => {
-    if (navigationRef.isReady()) {
-      navigationRef.dispatch(CommonActions.navigate({ name: 'Search' }));
-    }
-  };
-
   const handleNotificationPress = () => {
     if (navigationRef.isReady()) {
       navigationRef.dispatch(CommonActions.navigate({ name: 'Notifications' }));
@@ -79,13 +73,6 @@ const TopNavbar = ({ navigation }) => {
         </View>
 
         <View style={styles.rightSection}>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={handleSearchPress}
-            activeOpacity={0.7}>
-            <Icon name="search" size={24} color={colors.textWhite} />
-          </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.iconButton}
             onPress={handleNotificationPress}

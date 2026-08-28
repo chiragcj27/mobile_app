@@ -9,7 +9,7 @@ import {
 import Icon from '../../components/common/Icon';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { useUploadDesignMutation } from '../../store/api';
+import { useUploadDesignMutation, useUpdateAssetDataMutation } from '../../store/api';
 import BrandedAlert from '../../components/common/BrandedAlert';
 
 let DocumentPicker;
@@ -25,10 +25,12 @@ const requestStoragePermission = async () => {
 };
 
 export default function UploadExcelScreen({ route, navigation }) {
-  const { enquiryId, designType, designCode, images, validationResul, cost, isFinalVersion, version } = route.params || {};
+  const { enquiryId, designType, designCode, images, validationResult, cost, isFinalVersion, version, designWithDiamonds } = route.params || {};
   const [selectedExcel, setSelectedExcel] = useState(null);
   const [uploadType, setUploadType] = useState(null);
+
   const [uploadDesign, { isLoading: isUploading }] = useUploadDesignMutation();
+  const [updateAssetData] = useUpdateAssetDataMutation();
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   const showAlert = (title, message, type = 'info', buttons = []) =>
     setAlertConfig({ visible: true, title, message, type, buttons });
@@ -174,10 +176,29 @@ export default function UploadExcelScreen({ route, navigation }) {
       return;
     }
 
+    if (isFinalVersion) {
+      showAlert(
+        'Move to Order Placement',
+        'On submitting, the enquiry will be moved to Order Placement. Do you want to continue?',
+        'warning',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Confirm', onPress: () => proceedUpload(skipExcel) },
+        ],
+      );
+      return;
+    }
+
+    proceedUpload(skipExcel);
+  };
+
+  const proceedUpload = async (skipExcel) => {
     setUploadType(skipExcel ? 'without' : 'excel');
 
     try {
-      const result = await uploadDesign({
+      const isOnlyMetalDesign = designWithDiamonds === false;
+
+      await uploadDesign({
         enquiryId,
         designType: designType,
         version: version,
@@ -185,25 +206,47 @@ export default function UploadExcelScreen({ route, navigation }) {
         excel: skipExcel ? null : selectedExcel,
         designCode: designCode || '',
         cost: cost || 0,
-        isFinalVersion: isFinalVersion || false,
+        isFinalVersion: false,
+        isOnlyMetalDesign,
       }).unwrap();
 
-      console.log('[uploadExcel] uploadDesign succeeded, isFinalVersion:', isFinalVersion, 'version:', version, 'result:', JSON.stringify(result));
 
-      showAlert(
-        'Success',
-        skipExcel ? 'Successfully uploaded design' : 'Successfully uploaded design with Excel file',
-        'success',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              setSelectedExcel(null);
-              navigation.pop(2);
+      if (isFinalVersion) {
+        try {
+          await updateAssetData({
+            enquiryId,
+            type: designType,
+            version: version,
+            data: { IsFinalVersion: true },
+          }).unwrap();
+        } catch (assetErr) {
+          console.error('[uploadExcel] updateAssetData failed:', assetErr);
+        }
+      }
+
+      if (isFinalVersion) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        setSelectedExcel(null);
+        navigation.navigate('MainTabs', {
+          screen: 'Enquiries',
+          params: { filter: 'Order Placement' },
+        });
+      } else {
+        showAlert(
+          'Success',
+          skipExcel ? 'Successfully uploaded design' : 'Successfully uploaded design with Excel file',
+          'success',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                setSelectedExcel(null);
+                navigation.pop(2);
+              },
             },
-          },
-        ],
-      );
+          ],
+        );
+      }
     } catch (error) {
       const errorMessage =
         error?.data?.message ||
@@ -281,6 +324,8 @@ export default function UploadExcelScreen({ route, navigation }) {
         buttons={alertConfig.buttons}
         onClose={hideAlert}
       />
+
+
     </View>
   );
 }
